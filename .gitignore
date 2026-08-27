@@ -1,0 +1,29 @@
+# ============ 依赖 ============
+node_modules/
+
+# ============ 运行时数据（含敏感信息，严禁提交）============
+# storage/ 包含账户 cookies、登录态、浏览器 profile、个人积分数据
+storage/
+storage-backup-migrate/
+
+# ============ 日志 ============
+logs/
+*.log
+
+# ============ WorkBuddy 工作区数据 ============
+.workbuddy/
+
+# ============ 系统/编辑器杂项 ============
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# ============ 临时文件 ============
+*.tmp
+*.bak
+*.old

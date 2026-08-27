@@ -1,0 +1,23 @@
+{
+  "name": "ms-rewards-auto",
+  "version": "2.0.0",
+  "description": "微软积分（Microsoft Rewards）自动任务独立软件 - 多账户隔离、干净浏览器、GUI",
+  "main": "src/electron-main.js",
+  "scripts": {
+    "start": "electron .",
+    "gui": "electron .",
+    "cli": "node src/main.js",
+    "install-browser": "playwright-core install chromium",
+    "postinstall": "playwright-core install chromium || exit 0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "playwright-core": "^1.45.0"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0"
+  },
+  "license": "MIT"
+}

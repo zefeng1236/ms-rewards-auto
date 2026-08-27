@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:" />
+  <title>Microsoft Rewards 自动任务</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="shell">
+    <!-- ============ 左侧导航 ============ -->
+    <nav class="sidenav">
+      <div class="nav-brand">
+        <div class="logo">R</div>
+        <div class="nav-brand-text">
+          <div class="nav-title">Rewards Auto</div>
+          <div class="nav-sub">Microsoft Rewards</div>
+        </div>
+      </div>
+
+      <div class="nav-group-label">工作台</div>
+      <div class="nav-items">
+        <button class="nav-item active" data-view="dashboard">
+          <span class="nav-ico">◫</span><span>仪表盘</span>
+        </button>
+        <button class="nav-item" data-view="account">
+          <span class="nav-ico">◉</span><span>账户详情</span>
+        </button>
+        <button class="nav-item" data-view="settings">
+          <span class="nav-ico">⚙</span><span>全局设置</span>
+        </button>
+      </div>
+
+      <div class="nav-foot">
+        <div id="chromium-badge" class="badge checking">检查中…</div>
+        <button id="btn-install-browser" class="btn ghost block" hidden>安装 Chromium</button>
+        <button id="btn-toggle-log" class="btn ghost block" title="显示/隐藏日志面板（Ctrl+`）">▤ 运行日志</button>
+      </div>
+    </nav>
+
+    <!-- ============ 右侧内容区 ============ -->
+    <div class="content">
+      <!-- 顶部条：标题 + 全局操作 -->
+      <header class="topbar">
+        <div class="topbar-text">
+          <h1 id="view-title">仪表盘</h1>
+          <p id="view-desc">所有账户的运行概况与今日进度。</p>
+        </div>
+        <div class="topbar-actions">
+          <button id="btn-refresh" class="btn ghost" title="重新读取账户数据">⟳ 刷新</button>
+          <button id="btn-run-all" class="btn primary">▶ 运行全部</button>
+          <button id="btn-stop" class="btn danger-inline" hidden>■ 停止</button>
+        </div>
+      </header>
+
+      <div class="scroll-area">
+        <!-- ---------- 视图1：仪表盘 ---------- -->
+        <section id="view-dashboard" class="view">
+          <div class="stat-row">
+            <div class="stat">
+              <div class="stat-label">账号数量</div>
+              <div id="d-total" class="stat-value">0</div>
+              <div class="stat-hint">已启用 <span id="d-enabled">0</span> 个</div>
+            </div>
+            <div class="stat">
+              <div class="stat-label">已登录</div>
+              <div id="d-loggedin" class="stat-value">0</div>
+              <div class="stat-hint">Cookie 有效的账号</div>
+            </div>
+            <div class="stat">
+              <div class="stat-label">今日积分</div>
+              <div id="d-today" class="stat-value">0</div>
+              <div class="stat-hint">所有账号今日合计</div>
+            </div>
+            <div class="stat">
+              <div class="stat-label">今日进度</div>
+              <div id="d-progress" class="stat-value">0/0</div>
+              <div class="stat-hint">已收工 / 已启用账号</div>
+            </div>
+          </div>
+
+          <div class="block">
+            <div class="block-head">
+              <div>
+                <div class="block-title">账户列表</div>
+                <div class="block-sub">账号、积分与调度状态均保存在本机 JSON</div>
+              </div>
+              <div class="block-actions">
+                <button id="btn-add" class="btn small primary">＋ 新增账号</button>
+              </div>
+            </div>
+            <div class="table-search">
+              <input id="acc-search" placeholder="搜索账号名称…" />
+            </div>
+            <div class="table-wrap">
+              <table class="dtable">
+                <thead>
+                  <tr>
+                    <th>账号</th>
+                    <th>状态</th>
+                    <th>今日积分</th>
+                    <th>总积分</th>
+                    <th>待办任务</th>
+                    <th>自动运行</th>
+                    <th>最近执行</th>
+                    <th class="col-act">操作</th>
+                  </tr>
+                </thead>
+                <tbody id="d-tbody"></tbody>
+              </table>
+              <div id="d-empty" class="table-empty" hidden>
+                <div class="empty-icon">🛰️</div>
+                <p>还没有账户</p>
+                <p class="empty-sub">点击「＋ 新增账号」创建第一个，每个账号拥有独立的登录状态与浏览器环境</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ---------- 视图2：账户详情 ---------- -->
+        <section id="view-account" class="view" hidden>
+          <div id="acc-none" class="table-empty" hidden>
+            <div class="empty-icon">🛰️</div>
+            <p>还没有账户</p>
+            <p class="empty-sub">先到仪表盘点「＋ 新增账号」创建一个</p>
+          </div>
+
+          <div id="acc-body" hidden>
+            <!-- 账户选择器 + 该账号的操作 -->
+            <div class="acc-bar">
+              <div class="acc-picker">
+                <label for="acc-select">当前账号</label>
+                <select id="acc-select"></select>
+              </div>
+              <div class="acc-bar-state">
+                <span id="acc-login-dot" class="dot"></span>
+                <span id="acc-login-text" class="muted">未登录</span>
+                <span id="sched-status" class="sched-status"></span>
+              </div>
+              <div class="acc-bar-actions">
+                <button id="btn-login" class="btn primary">授权登录</button>
+                <button id="btn-sync" class="btn ghost" title="重新读取浏览器 Cookie 并刷新登录状态">⟳ 刷新状态</button>
+                <button id="btn-run" class="btn accent">立即运行</button>
+              </div>
+            </div>
+
+            <!-- 今日任务进度 -->
+            <div class="block">
+              <div class="block-head">
+                <div>
+                  <div class="block-title">今日任务进度</div>
+                  <div class="block-sub">数据来自服务器权威值，跨天自动归零</div>
+                </div>
+              </div>
+              <section class="cards">
+                <div class="card">
+                  <div class="card-label">总积分</div>
+                  <div id="c-balance" class="card-value">--</div>
+                </div>
+                <div class="card">
+                  <div class="card-label">今日合计</div>
+                  <div id="c-today" class="card-value">--</div>
+                </div>
+                <div class="card">
+                  <div class="card-label">签入</div>
+                  <div id="c-sign" class="card-value small">--</div>
+                </div>
+                <div class="card">
+                  <div class="card-label">阅读</div>
+                  <div id="c-read" class="card-value small">--</div>
+                  <div id="c-read-sub" class="card-sub"></div>
+                </div>
+                <div class="card">
+                  <div class="card-label">活动</div>
+                  <div id="c-promos" class="card-value small">--</div>
+                </div>
+                <div class="card">
+                  <div class="card-label">搜索</div>
+                  <div id="c-search" class="card-value small">--</div>
+                  <div id="c-search-sub" class="card-sub"></div>
+                </div>
+                <div class="card">
+                  <div class="card-label">受限次数</div>
+                  <div id="c-restricted" class="card-value small">--</div>
+                </div>
+              </section>
+            </div>
+
+            <!-- 该账号的设置：遵循全局 or 独立 -->
+            <div class="block">
+              <div class="block-head">
+                <div>
+                  <div class="block-title">本账号设置</div>
+                  <div class="block-sub">默认与全局设置保持一致，关闭下方开关可为此账号单独配置</div>
+                </div>
+              </div>
+              <label class="toggle big" id="use-global-wrap">
+                <input type="checkbox" id="use-global" />
+                <span>遵循全局设置</span>
+              </label>
+              <div id="use-global-hint" class="sched-hint"></div>
+              <!-- 独立设置表单由 renderer 注入（与全局设置共用同一套控件工厂） -->
+              <div id="acc-settings" hidden></div>
+            </div>
+
+            <!-- 账号管理 -->
+            <div class="block danger">
+              <div class="block-head">
+                <div>
+                  <div class="block-title">账号管理</div>
+                  <div class="block-sub">删除后登录状态、配置与浏览器数据一并清除，不可恢复</div>
+                </div>
+              </div>
+              <div class="form-grid">
+                <label class="field inline">
+                  <span>重命名</span>
+                  <input type="text" id="acc-rename" />
+                </label>
+                <button id="btn-delete" class="btn danger-inline">删除此账户</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ---------- 视图3：全局设置 ---------- -->
+        <section id="view-settings" class="view" hidden>
+          <div class="block">
+            <div class="block-head">
+              <div>
+                <div class="block-title">全局设置</div>
+                <div class="block-sub">所有「遵循全局设置」的账号共用这份配置，改动立即生效</div>
+              </div>
+              <div class="block-actions">
+                <span id="global-apply-count" class="pill"></span>
+              </div>
+            </div>
+            <!-- 全局设置表单由 renderer 注入 -->
+            <div id="global-settings"></div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <div id="log-resizer" class="log-resizer" title="拖动调整日志窗口高度"></div>
+  <div class="log-console">
+    <div class="log-head">
+      <span>运行日志</span>
+      <div class="log-tools">
+        <input id="log-filter" placeholder="筛选关键字…" />
+        <button id="btn-clear-log" class="btn small ghost">清空</button>
+        <button id="btn-scroll-log" class="btn small ghost" title="自动滚动">⤓ 自动</button>
+      </div>
+    </div>
+    <div id="log-body"></div>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <!-- 自定义对话框（Electron 不支持原生 prompt/confirm） -->
+  <div id="modal-mask" class="modal-mask" hidden>
+    <div class="modal">
+      <div id="modal-title" class="modal-title">提示</div>
+      <div id="modal-msg" class="modal-msg"></div>
+      <input id="modal-input" type="text" class="modal-input" hidden />
+      <div class="modal-actions">
+        <button id="modal-cancel" class="btn ghost">取消</button>
+        <button id="modal-ok" class="btn primary">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
