@@ -4,9 +4,9 @@ const crypto = require("crypto");
 const { createConfig, DEFAULTS } = require("./config");
 const { createState } = require("./state");
 const { hasAuthCookies } = require("./browser");
+const sp = require("./storage-path");
 
-const ROOT = path.join(__dirname, "..");
-const ACCOUNTS_DIR = path.join(ROOT, "storage", "accounts");
+const ACCOUNTS_DIR = sp.accountsDir;
 const INDEX_FILE = path.join(ACCOUNTS_DIR, "index.json");
 
 function ensureDirs() {
@@ -262,7 +262,6 @@ function overview() {
 }
 
 module.exports = {
-  ROOT,
   ACCOUNTS_DIR,
   DEFAULTS,
   list,

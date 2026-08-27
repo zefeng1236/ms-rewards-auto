@@ -27,6 +27,8 @@
 │   ├── account.js          # 账户管理（创建/删除/状态/概览）
 │   ├── config.js           # 三层配置：DEFAULTS → 全局 → 账户覆盖
 │   ├── global-config.js    # 全局设置层（storage/global-config.json）
+│   ├── storage-path.js     # 存储目录统一解析（开发=项目根 / 打包=userData）
+│   ├── ensure-deps.js      # 运行时依赖自动补全（Playwright → chocolatey 回落）
 │   ├── state.js            # 账户状态（cookies/token/任务进度）
 │   ├── auth.js             # 微软登录授权码捕获
 │   ├── browser.js          # Playwright Chromium 管理
@@ -44,6 +46,7 @@
 │   ├── renderer.js         # 渲染逻辑（视图路由 + 表单工厂 + 事件绑定）
 │   └── style.css          # 样式（设计 token + 响应式三档）
 ├── 参考js脚本/             # 早期油猴脚本参考
+├── build/                  # 打包用构建资源（应用图标 256×256）
 ├── config.json             # CLI 默认配置模板
 ├── package.json
 ├── start.bat               # Windows 启动脚本
@@ -62,7 +65,27 @@ storage/
     └── profile/               # 该账户独立的浏览器会话数据
 ```
 
-## 快速开始
+## 安装使用（推荐：下载安装包）
+
+前往 [Releases](https://github.com/hermlt1236/ms-rewards-auto/releases) 下载最新的 `Microsoft-Rewards-Auto-Setup-<版本>.exe`，双击运行即可。
+
+- **可自选安装目录**：安装向导非一键式，可自定义路径，默认安装到当前用户目录（无需管理员权限）
+- **自动创建快捷方式**：桌面 + 开始菜单
+- **首次运行自动补全依赖**：应用启动时会检测 Chromium，缺失则自动后台下载（约 150MB）。下载链路：
+  1. 优先走 Playwright 官方源（可配 `PLAYWRIGHT_DOWNLOAD_HOST` 镜像加速）
+  2. 失败则回落调用 [chocolatey.org](https://chocolatey.org) API 查询并安装 Chromium
+  3. 两条链路都失败时 GUI 会给出提示，可手动点右上角「安装 Chromium」重试
+- **数据存放位置**：`%APPDATA%\Microsoft Rewards Auto\storage\`
+
+  安装目录（可能位于 `Program Files`）不写入任何运行时数据，所有账户配置、登录态、浏览器 profile 都在上述 userData 路径下，卸载时**默认不删除**，重装后账户仍在。
+
+> **首次使用需要重新添加账号并登录。** 安装版与源码版的存储目录是隔离的两份数据，不会互相读取。
+
+### 卸载
+
+从「设置 → 应用」或开始菜单卸载。账户数据不会被删除，如需彻底清理请手动删除 `%APPDATA%\Microsoft Rewards Auto\`。
+
+## 从源码运行（开发者）
 
 ### 1. 安装依赖（首次）
 
@@ -124,6 +147,40 @@ DEFAULTS（代码内置默认值）
 
 GUI 运行期间由主进程守护（每 30 秒巡检），也可纯后台运行 `node src/main.js daemon`。
 
+## 自行打包安装程序
+
+```bash
+npm run pack        # 完整打包，产出 dist/Microsoft-Rewards-Auto-Setup-<版本>.exe
+npm run pack:dir    # 只产出 dist/win-unpacked/（免安装，调试用，快得多）
+```
+
+打包配置在 `package.json` 的 `build` 字段，几个关键点：
+
+| 配置 | 作用 |
+| --- | --- |
+| `asarUnpack: playwright-core` | Playwright 要执行 Chromium 二进制，打进 asar 里会跑不起来，必须解压到 `app.asar.unpacked/` |
+| `signAndEditExecutable: false` | 跳过代码签名。winCodeSign 工具包含 macOS 符号链接，Windows 普通用户没有创建符号链接的权限，会导致解压失败 |
+| `nsis.oneClick: false` | 关掉一键安装，让用户能选安装目录 |
+| `nsis.perMachine: false` | 装到当前用户目录，不要求管理员权限 |
+| `nsis.deleteAppDataOnUninstall: false` | 卸载保留账户数据 |
+
+> 打包末尾如果出现清理临时文件失败的报错（`.nsis.7z` 无法删除），属于清理阶段的问题，**不影响产物** —— 检查 `dist/` 下 exe 是否已生成即可。
+
+### 存储路径的处理
+
+打包后 `__dirname` 指向 `app.asar/src/`，如果沿用 `path.join(__dirname, "..", "storage")` 会算到安装目录下（可能是 `Program Files`，无写权限），应用直接崩。
+
+解决方式是 `src/storage-path.js` 统一收口所有存储路径，它读取 `process.env.MS_REWARDS_STORAGE_DIR`，缺省回落到项目根目录的 `storage/`。`electron-main.js` 在 **require 任何业务模块之前**把该变量指向 `app.getPath("userData")/storage`：
+
+```js
+// electron-main.js 顶部，必须在 require ./account 等模块之前
+if (!process.env.MS_REWARDS_STORAGE_DIR && app.isPackaged) {
+  process.env.MS_REWARDS_STORAGE_DIR = path.join(app.getPath("userData"), "storage");
+}
+```
+
+顺序不能颠倒 —— `account.js` / `config.js` / `global-config.js` / `state.js` / `logger.js` 都在模块加载时就计算好了路径常量。
+
 ## CLI 备用入口
 
 ```bash
@@ -157,6 +214,9 @@ node src/main.js browser        # 检查 Chromium
 | 授权登录后仍显示未登录 | 检查网络是否被代理干扰，重新点「授权登录」 |
 | 修改全局设置后某些账户没生效 | 检查该账户是否关闭了「遵循全局设置」开关 |
 | 从旧版升级后配置丢失 | 旧版账户配置已自动迁移：全局文件不存在时提升为全局设置 |
+| 安装版看不到源码版的账号 | 两者存储目录隔离，安装版数据在 `%APPDATA%\Microsoft Rewards Auto\storage\`，需重新添加账号 |
+| 安装版首次启动卡在下载 Chromium | 约 150MB，取决于网速；也可关掉应用后手动 `choco install chromium` 再启动 |
+| 打包时报 winCodeSign 符号链接失败 | 确认 `build.win.signAndEditExecutable` 为 `false`（本仓库已配置） |
 
 ## 技术栈
 

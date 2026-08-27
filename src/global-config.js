@@ -9,10 +9,13 @@
  */
 const path = require("path");
 const fs = require("fs");
+const sp = require("./storage-path");
 
-const ROOT = path.join(__dirname, "..");
-const STORAGE_DIR = path.join(ROOT, "storage");
-const GLOBAL_FILE = path.join(STORAGE_DIR, "global-config.json");
+// 注意：electron-main.js 必须在 require 本模块之前设好
+// process.env.MS_REWARDS_STORAGE_DIR（打包环境指向 userData），
+// 否则这里算出来的就是项目根目录下的 storage/。
+const STORAGE_DIR = sp.storageRoot;
+const GLOBAL_FILE = sp.globalConfigFile;
 
 // 全局设置的默认值。注意这里不包含 useGlobal —— 那是账户级的标志。
 const GLOBAL_DEFAULTS = {

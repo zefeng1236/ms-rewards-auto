@@ -1,8 +1,9 @@
 const path = require("path");
 const fs = require("fs");
+const sp = require("./storage-path");
 
-const ROOT = path.join(__dirname, "..");
-const LOG_DIR = path.join(ROOT, "logs");
+// 日志跟 storage 放在一起（打包后落在 userData 下，见 storage-path.js）
+const LOG_DIR = path.join(sp.storageRoot, "..", "logs");
 const LOG_FILE = path.join(LOG_DIR, "app.log");
 
 if (!fs.existsSync(LOG_DIR)) fs.mkdirSync(LOG_DIR, { recursive: true });

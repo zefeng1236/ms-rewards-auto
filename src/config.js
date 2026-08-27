@@ -1,8 +1,10 @@
 const path = require("path");
 const fs = require("fs");
 const globalConfig = require("./global-config");
+const sp = require("./storage-path");
 
-const ROOT = path.join(__dirname, "..");
+// 存储根（打包环境指向 userData/storage，见 storage-path.js）
+const ROOT = sp.storageRoot;
 
 const DEFAULTS = {
   // 是否遵循全局设置。

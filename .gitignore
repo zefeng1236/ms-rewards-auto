@@ -27,3 +27,11 @@ desktop.ini
 *.tmp
 *.bak
 *.old
+
+# ============ 打包产物 ============
+# dist/ 是 electron-builder 的输出目录（安装包 77M，走 GitHub Release 分发）
+dist/
+
+# 注意：build/ 不能忽略。它是 electron-builder 的 buildResources 目录，
+# 里面的 icon.ico / icon.png 是打包必需的输入，忽略了别人 clone 后
+# 执行 npm run pack 会因找不到 build/icon.ico 直接失败。

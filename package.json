@@ -1,14 +1,16 @@
 {
   "name": "ms-rewards-auto",
-  "version": "2.0.0",
-  "description": "微软积分（Microsoft Rewards）自动任务独立软件 - 多账户隔离、干净浏览器、GUI",
+  "version": "0.0.1-beta",
+  "description": "微软积分（Microsoft Rewards）自动任务独立软件 - 多账户隔离、干净浏览器、Electron GUI、三层配置模型",
   "main": "src/electron-main.js",
   "scripts": {
     "start": "electron .",
     "gui": "electron .",
     "cli": "node src/main.js",
     "install-browser": "playwright-core install chromium",
-    "postinstall": "playwright-core install chromium || exit 0"
+    "postinstall": "playwright-core install chromium || exit 0",
+    "pack": "electron-builder --win nsis",
+    "pack:dir": "electron-builder --win nsis --dir"
   },
   "engines": {
     "node": ">=18.0.0"
@@ -17,7 +19,57 @@
     "playwright-core": "^1.45.0"
   },
   "devDependencies": {
-    "electron": "^31.0.0"
+    "electron": "^31.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.hermlt.msrewards",
+    "productName": "Microsoft Rewards Auto",
+    "copyright": "MIT License",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "gui/**/*",
+      "config.json",
+      "package.json",
+      "package-lock.json",
+      "start.bat",
+      "参考js脚本/**/*"
+    ],
+    "extraResources": [],
+    "asarUnpack": [
+      "node_modules/playwright-core/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "artifactName": "Microsoft-Rewards-Auto-Setup-${version}.exe",
+      "signAndEditExecutable": false,
+      "verifyUpdateCodeSignature": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Microsoft Rewards Auto",
+      "perMachine": false,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "deleteAppDataOnUninstall": false
+    },
+    "publish": null
   },
   "license": "MIT"
 }

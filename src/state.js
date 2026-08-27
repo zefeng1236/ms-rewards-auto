@@ -1,7 +1,9 @@
 const path = require("path");
 const fs = require("fs");
+const sp = require("./storage-path");
 
-const ROOT = path.join(__dirname, "..");
+// 存储根（打包环境指向 userData/storage，见 storage-path.js）
+const ROOT = sp.storageRoot;
 
 const DEFAULT_STATE = {
   cookies: [],        // 浏览器会话 Cookie（含 domain / name / value / expires 等）

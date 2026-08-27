@@ -3,6 +3,13 @@ const path = require("path");
 const fs = require("fs");
 const { spawn } = require("child_process");
 
+// ⚠️ 必须在 require 任何业务模块之前确定存储目录。
+// 打包后安装目录（Program Files）没有写权限，数据必须落在 userData 下；
+// account/config/global-config/state 都在 require 时就读这个环境变量算路径。
+if (!process.env.MS_REWARDS_STORAGE_DIR && app.isPackaged) {
+  process.env.MS_REWARDS_STORAGE_DIR = path.join(app.getPath("userData"), "storage");
+}
+
 const accounts = require("./account");
 const globalConfig = require("./global-config");
 const browser = require("./browser");
@@ -11,6 +18,8 @@ const runner = require("./runner");
 const rewards = require("./rewards");
 const logger = require("./logger");
 const cancel = require("./cancel");
+const ensureDeps = require("./ensure-deps");
+const sp = require("./storage-path");
 
 const ROOT = path.join(__dirname, "..");
 const IS_SMOKE = process.argv.includes("--smoke");
@@ -470,19 +479,17 @@ function registerIpc() {
   ipcMain.handle("app:installBrowser", async () => {
     if (running) return { ok: false, error: "已有任务正在运行，请稍候" };
     setRunning(true);
+    // 把安装进度实时推到渲染进程
+    ensureDeps.onProgress((p) => {
+      try { mainWindow?.webContents?.send("install-progress", p); } catch {}
+    });
     try {
-      const npx = process.platform === "win32" ? "npx.cmd" : "npx";
-      logger.info("开始安装 Chromium（首次约 150MB，请耐心等待）...");
-      await new Promise((resolve) => {
-        const child = spawn(npx, ["playwright-core", "install", "chromium"], { cwd: ROOT, shell: process.platform === "win32" });
-        child.stdout.on("data", (d) => logger.log("安装", String(d).trim()));
-        child.stderr.on("data", (d) => logger.log("安装", String(d).trim()));
-        child.on("close", (code) => {
-          logger.log("安装", code === 0 ? "Chromium 安装完成" : `Chromium 安装失败(code=${code})`);
-          resolve(code);
-        });
-      });
-      return { ok: browser.isChromiumReady() };
+      const result = await ensureDeps.ensureChromium(browser);
+      logger.info(`Chromium 安装完成: method=${result.method}, ready=${result.ready}`);
+      return { ok: result.ready, method: result.method, error: result.error };
+    } catch (e) {
+      logger.error(`Chromium 安装失败: ${e.message}`);
+      return { ok: false, error: e.message };
     } finally {
       setRunning(false);
     }
@@ -511,6 +518,21 @@ app.whenReady().then(() => {
 
   // 启动账户数据周期推送（卡片自动刷新，无需手动点按钮）
   if (!IS_SMOKE) startAutoPush();
+
+  // 启动时自动检测 Chromium，未就绪则后台安装（不阻塞 UI）
+  if (!IS_SMOKE && !browser.isChromiumReady()) {
+    logger.info("检测到 Chromium 未安装，后台开始自动安装…");
+    ensureDeps.onProgress((p) => {
+      try { mainWindow?.webContents?.send("install-progress", p); } catch {}
+    });
+    ensureDeps.ensureChromium(browser)
+      .then((r) => {
+        logger.info(`后台 Chromium 安装结果: method=${r.method}, ready=${r.ready}`);
+        // 安装完推送一次账户数据，让「Chromium 已就绪」徽标刷新
+        pushAccounts();
+      })
+      .catch((e) => logger.error(`后台 Chromium 安装失败: ${e.message}`));
+  }
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
