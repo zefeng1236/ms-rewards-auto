@@ -2,7 +2,7 @@
 
 独立于浏览器油猴插件的微软积分（Microsoft Rewards）自动任务软件。基于 Electron + Playwright，提供多账户隔离、干净浏览器、图形界面与定时自动运行。
 
-> **当前版本：V0.8.6-Beta** · [下载安装包](https://github.com/hermlt1236/ms-rewards-auto/releases)
+> **当前版本：V0.8.6-Beta** · [下载安装包](https://github.com/zefeng1236/ms-rewards-auto/releases)
 >
 > ⚠️ 本软件为个人学习交流用途的开源工具，**非微软官方授权产品**，与 Microsoft Corporation 无任何关联。使用产生的风险请阅读文末免责声明。
 
@@ -82,7 +82,7 @@ storage/
 
 ## 安装使用（推荐：下载安装包）
 
-前往 [Releases](https://github.com/hermlt1236/ms-rewards-auto/releases) 下载最新的 `Microsoft-Rewards-Auto-Setup-<版本>.exe`，双击运行即可。
+前往 [Releases](https://github.com/zefeng1236/ms-rewards-auto/releases) 下载最新的 `Microsoft-Rewards-Auto-Setup-<版本>.exe`，双击运行即可。
 
 - **可自选安装目录**：安装向导非一键式，可自定义路径，默认安装到当前用户目录（无需管理员权限）
 - **自动创建快捷方式**：桌面 + 开始菜单
