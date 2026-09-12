@@ -142,7 +142,10 @@ function describe(id) {
   const rawM = st.m && typeof st.m === "object" ? st.m : { progress: 0, max: 0 };
   const searchPc = ranToday ? rawPc : { progress: 0, max: rawPc.max || 0 };
   const searchM = ranToday ? rawM : { progress: 0, max: rawM.max || 0 };
-  const searchDone = st.tasksDone?.search === dateNum;
+  // tasksDone 只在「今日实际跑过 runner」时才采信。
+  // 否则可能是手动改了 state.json、或 tasksDone 还没被 resetIfNewDay 清掉的脏值，
+  // 直接显示"✓ 完成"会误导用户（实际今天还没同步服务器状态）。
+  const searchDone = ranToday && st.tasksDone?.search === dateNum;
   const searchProgress = (searchPc.max || 0) + (searchM.max || 0) > 0
     ? `${searchPc.progress || 0}/${searchPc.max || 0}${searchM.max ? ` · M:${searchM.progress || 0}/${searchM.max}` : ""}`
     : "";
@@ -156,8 +159,8 @@ function describe(id) {
     ? ra.total
     : Math.ceil(READ_MAX_POINTS / POINTS_PER_ARTICLE);
   if (!ranToday) readArticlesDone = 0;
-  // 任务标记为今日完成时，篇数视为满额
-  const readDone = st.tasksDone?.read === dateNum;
+  // 任务标记为今日完成时，篇数视为满额（只在今天真的跑过 runner 时才相信）
+  const readDone = ranToday && st.tasksDone?.read === dateNum;
   if (readDone) readArticlesDone = readArticlesTotal;
   const readProgress = readArticlesTotal > 0 ? `${readArticlesDone}/${readArticlesTotal} 篇` : "";
 
@@ -195,9 +198,9 @@ function describe(id) {
       lastBalance: st.lastBalance || 0,
       lastResult: st.lastResult || "",
       lastRunDate: st.lastRunDate || 0,
-      signDone: st.tasksDone?.sign === dateNum,
+      signDone: ranToday && st.tasksDone?.sign === dateNum,
       readDone,
-      promosDone: st.tasksDone?.promos === dateNum,
+      promosDone: ranToday && st.tasksDone?.promos === dateNum,
       searchDone,
       signPoint: st.signPoint,
       readPoint: st.readPoint,

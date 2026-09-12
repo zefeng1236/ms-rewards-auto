@@ -1,14 +1,19 @@
 {
   "name": "ms-rewards-auto",
-  "version": "0.0.1-beta",
+  "version": "0.8.6-beta",
   "description": "微软积分（Microsoft Rewards）自动任务独立软件 - 多账户隔离、干净浏览器、Electron GUI、三层配置模型",
   "main": "src/electron-main.js",
   "scripts": {
     "start": "electron .",
+    "dev": "node scripts/dev.js",
     "gui": "electron .",
     "cli": "node src/main.js",
     "install-browser": "playwright-core install chromium",
     "postinstall": "playwright-core install chromium || exit 0",
+    "dev:web": "vite --config src-renderer/vite.config.ts",
+    "build:web": "vite build --config src-renderer/vite.config.ts",
+    "watch:web": "vite build --config src-renderer/vite.config.ts --watch",
+    "typecheck": "tsc --noEmit -p src-renderer/tsconfig.json",
     "pack": "electron-builder --win nsis",
     "pack:dir": "electron-builder --win nsis --dir"
   },
@@ -16,11 +21,19 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
-    "playwright-core": "^1.45.0"
+    "@ttqtt/liquid-glass-react": "^0.2.0",
+    "playwright-core": "^1.45.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^4.7.0",
     "electron": "^31.0.0",
-    "electron-builder": "^25.1.8"
+    "electron-builder": "^25.1.8",
+    "typescript": "^5.9.3",
+    "vite": "^5.4.21"
   },
   "build": {
     "appId": "com.hermlt.msrewards",
@@ -33,13 +46,19 @@
     "files": [
       "src/**/*",
       "gui/**/*",
+      "gui-react/**/*",
       "config.json",
       "package.json",
       "package-lock.json",
       "start.bat",
       "参考js脚本/**/*"
     ],
-    "extraResources": [],
+    "extraResources": [
+      {
+        "from": "build/icon.ico",
+        "to": "icon.ico"
+      }
+    ],
     "asarUnpack": [
       "node_modules/playwright-core/**/*"
     ],

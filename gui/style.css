@@ -664,16 +664,16 @@ body::before {
   margin-top: 4px;
   letter-spacing: -0.7px;
   line-height: 1.15;
-  background: linear-gradient(180deg, var(--text), #aeb8c8);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  color: var(--text);
+  -webkit-text-fill-color: currentColor;
 }
 .card-value.small { font-size: 16px; letter-spacing: -0.3px; }
+/* 完成态：绿色渐变 */
 .card-value.is-done {
   background: linear-gradient(180deg, #6ee7b7, var(--accent-2));
   -webkit-background-clip: text;
   background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 .card-value.is-empty {
   background: none;
@@ -863,7 +863,7 @@ body::before {
   flex: 1;
   overflow-y: auto;
   padding: 8px 14px 12px;
-  font-family: Consolas, "Cascadia Mono", monospace;
+  font-family: "Cascadia Mono", "Microsoft YaHei UI", "Microsoft YaHei", Consolas, ui-monospace, monospace;
   font-size: 11.5px;
   line-height: 1.7;
 }
@@ -979,3 +979,406 @@ body::before {
   .dtable th:nth-child(5), .dtable td:nth-child(5),
   .dtable th:nth-child(6), .dtable td:nth-child(6) { display: none; }
 }
+
+/* ==========================================================
+   个性化：主题变量与深浅模式
+   ========================================================== */
+:root {
+  --app-accent: #3b82f6;
+  --app-accent-hi: #60a5fa;
+  --app-accent-dim: #1d4ed8;
+  --app-accent-glow: rgba(59, 130, 246, 0.28);
+  --app-opacity: 1;
+  /* 强调色实时跟随主题色选择器 */
+  --accent: var(--app-accent);
+  --accent-hi: var(--app-accent-hi);
+  --accent-dim: var(--app-accent-dim);
+  --accent-glow: var(--app-accent-glow);
+}
+
+/* 浅色主题：覆盖基础 token（结构类选择器全部基于这些变量，无需逐组件改） */
+:root[data-theme="light"] {
+  --bg: #eaeef5;
+  --bg-deep: #dde3ee;
+  --panel: #ffffff;
+  --panel-2: #f3f6fb;
+  --panel-3: #e8edf5;
+  --border: #d6dde9;
+  --border-soft: #e4e9f1;
+  --border-strong: #c2cbd9;
+  --text: #1c2433;
+  --text-dim: #45506b;
+  --muted: #69748a;
+  --faint: #93a0b4;
+  --accent-2: #10b981;
+  --accent-2-glow: rgba(16, 185, 129, 0.18);
+  --warn: #d97706;
+  --danger: #dc2626;
+  --sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0) 42%);
+  --shadow-1: 0 1px 2px rgba(15, 23, 42, 0.10);
+  --shadow-2: 0 4px 16px rgba(15, 23, 42, 0.12);
+  --shadow-3: 0 12px 40px rgba(15, 23, 42, 0.16);
+}
+:root[data-theme="light"] body::before {
+  background:
+    radial-gradient(760px 420px at 12% -8%, rgba(59, 130, 246, 0.12), transparent 70%),
+    radial-gradient(680px 380px at 100% 108%, rgba(167, 139, 250, 0.10), transparent 72%);
+}
+:root[data-theme="light"] .log-console { background: var(--panel-2); border-top-color: var(--border); }
+:root[data-theme="light"] .topbar { background: rgba(255, 255, 255, 0.8); }
+
+/* ==========================================================
+   个性化：透明 / 毛玻璃类预设
+   窗体级材质（acrylic/mica/transparent）需主进程重启，
+   这里只负责 CSS 层面的半透明与模糊，切换即时可见。
+   ========================================================== */
+body.preset-transparent,
+body.preset-acrylic,
+body.preset-mica { background: transparent !important; }
+
+body.preset-transparent .shell,
+body.preset-acrylic .shell,
+body.preset-mica .shell {
+  background: rgba(11, 14, 19, calc(0.82 * var(--app-opacity)));
+}
+body.preset-transparent .shell { background: rgba(11, 14, 19, calc(0.5 * var(--app-opacity))); }
+body.preset-acrylic .shell,
+body.preset-mica .shell {
+  -webkit-backdrop-filter: blur(18px) saturate(135%);
+  backdrop-filter: blur(18px) saturate(135%);
+}
+
+/* 透明类预设下，内部面板一起半透明，露出模糊层 */
+body.preset-acrylic .sidenav, body.preset-mica .sidenav, body.preset-transparent .sidenav,
+body.preset-acrylic .block, body.preset-mica .block, body.preset-transparent .block,
+body.preset-acrylic .card, body.preset-mica .card, body.preset-transparent .card,
+body.preset-acrylic .stat, body.preset-mica .stat, body.preset-transparent .stat,
+body.preset-acrylic .topbar, body.preset-mica .topbar, body.preset-transparent .topbar,
+body.preset-acrylic .table-wrap, body.preset-mica .table-wrap, body.preset-transparent .table-wrap,
+body.preset-acrylic .log-console, body.preset-mica .log-console, body.preset-transparent .log-console,
+body.preset-acrylic .modal, body.preset-mica .modal, body.preset-transparent .modal {
+  background: rgba(18, 22, 31, calc(0.6 * var(--app-opacity)));
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+/* 不透明预设：强制实心，关掉任何残留的模糊 */
+body.preset-opaque .sidenav,
+body.preset-opaque .block,
+body.preset-opaque .card,
+body.preset-opaque .stat,
+body.preset-opaque .topbar,
+body.preset-opaque .table-wrap {
+  background: var(--panel) !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+/* 「正常 / 主题色自定义」预设下，透明度 < 100% 时也启用半透明毛玻璃，
+   让滑块在所有透明类预设里都能实时看到效果 */
+body.semi .sidenav,
+body.semi .block,
+body.semi .card,
+body.semi .stat,
+body.semi .topbar,
+body.semi .table-wrap,
+body.semi .log-console {
+  background: color-mix(in srgb, var(--panel) calc(var(--app-opacity) * 100%), transparent);
+  -webkit-backdrop-filter: blur(8px) saturate(1.25);
+  backdrop-filter: blur(8px) saturate(1.25);
+}
+
+/* 拖动透明度滑块时，背景平滑过渡，避免一格一格跳 */
+.sidenav, .block, .card, .stat, .topbar, .table-wrap, .log-console {
+  transition: background 0.12s var(--ease);
+}
+
+/* 氛围光开关 */
+body.no-glow::before { display: none; }
+
+/* ==========================================================
+   个性化视图样式
+   ========================================================== */
+.theme-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.theme-card {
+  text-align: left; padding: 12px 14px; border-radius: 12px;
+  background: var(--panel-2); border: 1px solid var(--border);
+  color: var(--text); cursor: pointer; transition: border-color .15s, transform .1s, box-shadow .15s;
+}
+.theme-card:hover { border-color: var(--border-strong); }
+.theme-card.active { border-color: var(--accent); box-shadow: var(--ring); }
+.theme-card-name { font-weight: 600; margin-bottom: 3px; }
+.theme-card-desc { font-size: 11.5px; color: var(--muted); }
+
+.swatches { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.swatch {
+  width: 24px; height: 24px; border-radius: 50%;
+  border: 2px solid var(--border-strong); cursor: pointer; padding: 0;
+  transition: transform .12s;
+}
+.swatch:hover { transform: scale(1.15); }
+
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.seg-item { display: flex; align-items: center; gap: 6px; padding: 8px 16px; cursor: pointer; color: var(--text-dim); border-right: 1px solid var(--border); user-select: none; }
+.seg-item:last-child { border-right: none; }
+.seg-item:has(input:checked) { background: var(--panel-2); color: var(--text); }
+.seg-item input { accent-color: var(--accent); }
+
+.form-actions { display: flex; align-items: center; gap: 10px; }
+
+/* 滑杆（背景模糊/暗化） */
+.rng {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 1;
+  min-width: 130px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--panel-3);
+  cursor: pointer;
+}
+.rng::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent-glow);
+  border: none;
+}
+.rng-val { font-size: 11px; color: var(--muted); min-width: 38px; text-align: right; }
+.range-field { display: flex; align-items: center; gap: 10px; }
+.range-field > span:first-child { font-size: 11px; color: var(--muted); white-space: nowrap; }
+
+/* ==========================================================
+   自定义背景层 + 液态玻璃（body.has-bg）
+   背景图固定在最底层，内容表面用 backdrop-filter 高斯模糊 +
+   饱和度提升 + 内侧高光边框，呈现苹果「液态玻璃」质感
+   ========================================================== */
+.bg-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.bg-image {
+  position: absolute;
+  inset: -48px; /* 四周外扩，避免模糊后边缘发虚 */
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  filter: blur(var(--bg-blur, 18px)) saturate(1.15);
+}
+.bg-tint {
+  position: absolute;
+  inset: 0;
+  background: rgba(7, 9, 16, var(--bg-dim, 0.45));
+}
+
+/* 侧边栏：最深的一层玻璃 */
+body.has-bg .sidenav {
+  background: linear-gradient(180deg, rgba(17, 21, 30, 0.52), rgba(9, 12, 18, 0.56));
+  border-right-color: rgba(255, 255, 255, 0.08);
+  -webkit-backdrop-filter: blur(28px) saturate(160%);
+  backdrop-filter: blur(28px) saturate(160%);
+}
+/* 内容区块：中等厚度玻璃 */
+body.has-bg .block {
+  background: rgba(20, 25, 35, 0.42);
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  -webkit-backdrop-filter: blur(24px) saturate(170%);
+  backdrop-filter: blur(24px) saturate(170%);
+}
+/* 小卡片：最亮的玻璃片，顶部一道内侧高光 */
+body.has-bg .card {
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.15), rgba(255, 255, 255, 0.05) 45%, rgba(255, 255, 255, 0.02));
+  border-color: rgba(255, 255, 255, 0.18);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  -webkit-backdrop-filter: blur(18px) saturate(180%);
+  backdrop-filter: blur(18px) saturate(180%);
+}
+body.has-bg .stat {
+  background: rgba(20, 25, 35, 0.4);
+  border-color: rgba(255, 255, 255, 0.14);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  -webkit-backdrop-filter: blur(18px) saturate(170%);
+  backdrop-filter: blur(18px) saturate(170%);
+}
+body.has-bg .table-wrap {
+  background: rgba(15, 19, 28, 0.3);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+body.has-bg .log-console {
+  background: rgba(10, 13, 20, 0.6);
+  border-color: rgba(255, 255, 255, 0.08);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+  backdrop-filter: blur(20px) saturate(150%);
+}
+body.has-bg .modal {
+  background: rgba(20, 25, 35, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  -webkit-backdrop-filter: blur(30px) saturate(170%);
+  backdrop-filter: blur(30px) saturate(170%);
+}
+
+/* 浅色主题下玻璃边框换成深色描边，避免和高亮背景糊在一起 */
+html[data-theme="light"] body.has-bg .block,
+html[data-theme="light"] body.has-bg .card,
+html[data-theme="light"] body.has-bg .stat {
+  border-color: rgba(255, 255, 255, 0.45);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+
+/* ==========================================================
+   液态玻璃表面（body.glass）— 移植 liquid-glass-react：
+   表面自身背景清空，由 ::after 玻璃层承载效果 ——
+   backdrop-filter 先做毛玻璃，filter:url(#lg-filter) 再对
+   毛玻璃结果做透镜位移（边缘折射）+ RGB 三通道错位（色散），
+   inset 高光模拟玻璃边缘描边。内容正常排在玻璃层之上。
+   ========================================================== */
+.glass-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
+
+body.glass .sidenav,
+body.glass .block,
+body.glass .card,
+body.glass .stat,
+body.glass .topbar,
+body.glass .table-wrap,
+body.glass .log-console,
+body.glass .modal {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  background: transparent !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+body.glass .sidenav::after,
+body.glass .block::after,
+body.glass .card::after,
+body.glass .stat::after,
+body.glass .topbar::after,
+body.glass .table-wrap::after,
+body.glass .log-console::after,
+body.glass .modal::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  /* 提升为独立合成层：滤镜结果走 GPU 纹理，鼠标悬停等不触发整页重绘 */
+  transform: translateZ(0);
+  will-change: backdrop-filter;
+  /* 先毛玻璃，再叠加 SVG 透镜位移/色散滤镜（与 liquid-glass-react 一致） */
+  -webkit-backdrop-filter: blur(6px) saturate(160%);
+  backdrop-filter: blur(6px) saturate(160%);
+  -webkit-filter: url(#lg-filter);
+  filter: url(#lg-filter);
+  /* 深色玻璃底（保证深色 UI 文字可读）+ 左上一道高光做玻璃质感 */
+  background:
+    linear-gradient(150deg, rgba(255,255,255,0.14), rgba(255,255,255,0.03) 32%, rgba(255,255,255,0) 58%),
+    linear-gradient(180deg, rgba(23,28,40,0.62), rgba(12,15,23,0.7));
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.45),
+    inset 0 -1px 2px rgba(255, 255, 255, 0.08),
+    inset 1px 0 1px rgba(255, 255, 255, 0.12),
+    inset -1px 0 1px rgba(255, 255, 255, 0.12);
+}
+
+/* 玻璃表面描边换成半透明白，避免实心边框割裂折射 */
+body.glass .block,
+body.glass .card,
+body.glass .stat,
+body.glass .modal { border-color: rgba(255, 255, 255, 0.22); }
+body.glass .sidenav { border-right-color: rgba(255, 255, 255, 0.16); }
+body.glass .topbar { border-bottom-color: rgba(255, 255, 255, 0.16); }
+body.glass .log-console { border-color: rgba(255, 255, 255, 0.16); }
+
+/* 卡片/统计块旧的顶部高光线由玻璃层接管，隐藏以免双重高光 */
+body.glass .card::before,
+body.glass .stat::before { display: none; }
+
+/* 浅色主题下玻璃色调压低、描边加重，保持可读 */
+html[data-theme="light"] body.glass .sidenav::after,
+html[data-theme="light"] body.glass .block::after,
+html[data-theme="light"] body.glass .card::after,
+html[data-theme="light"] body.glass .stat::after,
+html[data-theme="light"] body.glass .topbar::after,
+html[data-theme="light"] body.glass .table-wrap::after,
+html[data-theme="light"] body.glass .log-console::after,
+html[data-theme="light"] body.glass .modal::after {
+  background:
+    linear-gradient(150deg, rgba(255,255,255,0.65), rgba(255,255,255,0.15) 32%, rgba(255,255,255,0) 58%),
+    linear-gradient(180deg, rgba(255,255,255,0.55), rgba(240,243,248,0.6));
+}
+
+/* ============ 背景：随机美图二级菜单 ============ */
+.bg-random { margin-top: 12px; }
+.bg-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.bg-chip {
+  padding: 7px 13px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--text-dim);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: border-color .15s var(--ease), color .15s, background .15s, box-shadow .15s;
+}
+.bg-chip:hover { border-color: var(--border-strong); color: var(--text); }
+.bg-chip.active {
+  color: #fff;
+  border-color: var(--accent);
+  background: linear-gradient(180deg, var(--accent-hi), var(--accent));
+  box-shadow: 0 4px 14px var(--accent-glow);
+}
+.bg-random-actions { display: flex; gap: 8px; margin-top: 12px; align-items: center; }
+.btn[disabled] { opacity: 0.45; cursor: not-allowed; }
+.bg-note { margin: 10px 0 0; font-size: 11px; color: var(--faint); line-height: 1.5; }
+
+/* ============ 第三方图片免责弹窗 ============ */
+.disclaimer p { margin: 0 0 9px; font-size: 12.5px; line-height: 1.65; color: var(--text-dim); }
+.disclaimer ul { margin: 0 0 9px; padding-left: 18px; }
+.disclaimer li { font-size: 12.5px; line-height: 1.7; color: var(--text-dim); margin-bottom: 5px; }
+.disclaimer b { color: var(--text); font-weight: 600; }
+.disclaimer-foot { color: var(--muted) !important; font-size: 12px !important; margin-bottom: 0 !important; }
+/* 倒计时期间确定按钮置灰 */
+#modal-ok:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ============ 背景：预览/下载/轮换控件 ============ */
+.bg-ctrl { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-soft); }
+.bg-preview-row { display: flex; gap: 12px; align-items: center; }
+.bg-thumb {
+  width: 96px; height: 56px; flex: 0 0 96px;
+  border-radius: 8px; border: 1px solid var(--border-strong);
+  background: var(--panel-3) center/cover no-repeat;
+  cursor: zoom-in; padding: 0; position: relative; overflow: hidden;
+}
+.bg-thumb:not(.has)::after { content: "暂无"; position: absolute; inset: 0; display: grid; place-items: center; font-size: 11px; color: var(--faint); }
+.bg-thumb:hover { border-color: var(--accent); }
+.bg-preview-info { flex: 1; min-width: 0; }
+.bg-preview-title { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+.bg-preview-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.rng-num {
+  width: 80px; padding: 6px 9px; border-radius: 7px;
+  background: var(--panel-3); border: 1px solid var(--border); color: var(--text);
+  font-size: 12.5px; font-variant-numeric: tabular-nums;
+}
+.rng-num:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
+.link-btn {
+  background: none; border: none; padding: 0; margin-left: 6px;
+  color: var(--accent-hi); cursor: pointer; font-size: 11px; text-decoration: underline;
+}
+
+/* 免责声明：收紧行距/段距，重点内容高亮变色 */
+.disclaimer p { margin: 0 0 7px; font-size: 12.5px; line-height: 1.5; color: var(--text-dim); }
+.disclaimer ul { margin: 0 0 7px; padding-left: 16px; }
+.disclaimer li { font-size: 12.5px; line-height: 1.55; color: var(--text-dim); margin-bottom: 4px; }
+.disclaimer .hl { color: var(--warn); font-weight: 600; }
+
+/* 壁纸大图预览：弹窗加宽，图片自适应 */
+.modal:has(.bg-preview-img) { width: min(840px, 94vw); }
+.bg-preview-img { display: block; width: 100%; max-height: 66vh; object-fit: contain; border-radius: 8px; }

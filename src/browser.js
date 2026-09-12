@@ -212,12 +212,33 @@ async function loginInteractive(ctx) {
   }
 }
 
+/**
+ * 清理该账户浏览器的 HTTP 缓存（不删 Cookie，保持登录态）。
+ * 每次执行签到任务后调用：无头开一次持久化上下文，走 CDP 清缓存后关闭。
+ * 任何异常都吞掉——清缓存失败不应影响任务流程。
+ */
+async function clearBrowserCache(ctx) {
+  let context = null;
+  try {
+    ({ context } = await openContext(ctx, true));
+    const page = context.pages()[0] || (await context.newPage());
+    const client = await context.newCDPSession(page);
+    await client.send("Network.clearBrowserCache");
+    logger.success("浏览器缓存已清理（登录 Cookie 保留）");
+  } catch (e) {
+    logger.warn(`清理浏览器缓存失败（不影响任务）: ${e.message}`);
+  } finally {
+    if (context) await context.close().catch(() => {});
+  }
+}
+
 module.exports = {
   ROOT,
   AUTH_COOKIE_NAMES,
   hasAuthCookies,
   chromiumExecutablePath,
   isChromiumReady,
+  clearBrowserCache,
   openContext,
   syncCookies,
   loginInteractive,

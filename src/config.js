@@ -49,9 +49,18 @@ const DEFAULTS = {
   notice: {
     wework: "",
     dingding: "",
+    dingdingKeyword: "",
     feishu: "",
     pushme: "",
     bark: "",
+  },
+  // 积分目标。可配多个，按账户总积分余额判断，可选设置奖品与详情页显示。
+  // 达成判定：当前余额 >= target；奖品数量按 floor(余额 / target) 计算。
+  goals: {
+    enable: true,
+    items: [
+      // { name: "积分目标", scope: "balance", target: 300, rewardName: "", showDashboard: true }
+    ],
   },
 };
 

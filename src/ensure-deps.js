@@ -10,10 +10,17 @@
  *   2. 调 Playwright 内部 API 下载（最可靠，自带版本匹配）
  *   3. 上面失败 → 查 chocolatey 是否可用，choco install chromium 作为系统 channel
  *      （通过 chromium.launch({ channel: 'chromium' }) 调用系统装的 chromium）
+ *
+ * 编码说明：
+ *   所有 spawn/execSync 都通过 chcp 65001 强制子进程输出 UTF-8，
+ *   避免中文 Windows 默认 GBK 编码导致日志乱码。
  */
 
 const { spawn, execSync } = require("child_process");
 const logger = require("./logger");
+
+const IS_WIN = process.platform === "win32";
+const UTF8_CP = IS_WIN ? "chcp 65001 >nul && " : "";
 
 let progressCb = null;
 
@@ -45,7 +52,7 @@ function findChoco() {
   }
   // 试 PATH
   try {
-    const out = execSync("where choco 2>nul", { encoding: "utf8", shell: "cmd.exe" });
+    const out = execSync(UTF8_CP + "where choco 2>nul", { encoding: "utf8", shell: "cmd.exe" });
     const first = out.split(/\r?\n/)[0].trim();
     if (first) return first;
   } catch {}
@@ -97,7 +104,13 @@ async function installChromiumViaChoco() {
     const child = spawn(choco, ["install", "chromium", "-y", "--no-progress"], {
       shell: true,
       stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env },
     });
+    // Windows 下强制子进程输出 UTF-8，避免中文 GBK 乱码
+    if (IS_WIN) {
+      child.stdout.setEncoding("utf8");
+      child.stderr.setEncoding("utf8");
+    }
     child.stdout.on("data", (d) => report("choco", String(d).trim()));
     child.stderr.on("data", (d) => report("choco", String(d).trim()));
     child.on("close", (code) => {

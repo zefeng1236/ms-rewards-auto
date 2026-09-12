@@ -6,9 +6,48 @@ const notify = require("./notify");
 const rewards = require("./rewards");
 const tasks = require("./tasks");
 const cancel = require("./cancel");
+const goals = require("./goals");
 
 function pad2(n) {
   return String(n).padStart(2, "0");
+}
+
+/** [min,max] 之间的随机整数（含端点） */
+function randomBetween(min, max) {
+  const lo = Math.ceil(Math.min(min, max));
+  const hi = Math.floor(Math.max(min, max));
+  if (hi <= lo) return lo;
+  return lo + Math.floor(Math.random() * (hi - lo + 1));
+}
+
+/**
+ * 运行单个账号（含日志上下文、取消作用域、异常归一化），不抛出。
+ *
+ * 抽出来给手动批处理与自动守护共用，保证两条路径行为一致：
+ *  - 进入时设置取消作用域与日志归属，退出时清理；
+ *  - 单账号中止（e.all===false）只让该账号失败，批处理继续；
+ *  - 全局中止（e.all）向上传播，由调用方决定停止整个批次。
+ *
+ * @returns {Promise<{result?:object, aborted?:boolean, abortAll?:boolean, error?:string}>}
+ */
+async function runAccountGuarded(ctx, opts) {
+  cancel.setActiveScope(ctx.id);
+  cancel.clearScope(ctx.id);
+  logger.setContext(ctx.id, ctx.name);
+  try {
+    const result = await runOnce(ctx, opts);
+    return { result };
+  } catch (e) {
+    if (e && e.isAbort) {
+      if (e.all) return { aborted: true, abortAll: true, error: "已手动停止" };
+      return { aborted: true, error: "此账号任务已被手动停止" };
+    }
+    logger.error(`账户「${ctx.name}」运行出错: ${e.message}`);
+    return { error: e.message };
+  } finally {
+    logger.clearContext();
+    cancel.setActiveScope(null);
+  }
 }
 
 /**
@@ -92,6 +131,9 @@ async function runOnce(ctx, opts = {}) {
   result.tasks.sign = rSign;
   persistSummary();
   cancel.throwIfAborted();
+  // 签到任务执行成功后清理浏览器缓存（保留登录 Cookie）；跳过/失败时不清。
+  // best-effort：失败仅告警，不影响后续任务
+  if (token && rSign && rSign.status === "done") await browser.clearBrowserCache(ctx);
   const rRead = token ? await tasks.taskRead(ctx, token) : { status: "skip", point: 0, unauthorized: true };
   result.tasks.read = rRead;
   persistSummary();
@@ -124,14 +166,78 @@ async function runOnce(ctx, opts = {}) {
   const todayTotal = serverToday > 0 ? serverToday : localTotal;
 
   const lines = [];
-  lines.push(`📅 签入: ${signPoint >= 0 ? signPoint + " 分" : rSign.unauthorized ? "跳过(未授权)" : "未运行"}`);
-  lines.push(`📖 阅读: ${readPoint > 0 ? readPoint + " 分" : rRead.unauthorized ? "跳过(未授权)" : "未运行"}`);
+
+  // 签入：以「今日是否已完成」为准，不要只看分数。
+  // signPoint 为 0 是合法结果（当天已签过、无二次奖励），
+  // 只有真的没跑过才算「未运行」。
+  const signDone = state.isTaskDoneToday("sign");
+  lines.push(
+    `📅 签入: ${
+      signDone
+        ? signPoint > 0
+          ? `已签入 +${signPoint} 分`
+          : "已签入（无额外奖励）"
+        : rSign.unauthorized
+        ? "跳过(未授权)"
+        : "未运行"
+    }`
+  );
+
+  // 阅读：按需求改成显示篇数而不是分数
+  const ra = state.get().readArticles || {};
+  const raDone = Number(ra.done) || 0;
+  const raTotal = Number(ra.total) || 0;
+  const readDone = state.isTaskDoneToday("read");
+  lines.push(
+    `📖 阅读: ${
+      readDone || raDone > 0
+        ? raTotal > 0
+          ? `${raDone}/${raTotal} 篇`
+          : `${raDone} 篇`
+        : rRead.unauthorized
+        ? "跳过(未授权)"
+        : "未运行"
+    }`
+  );
+
   lines.push(`🧩 活动: ${promosPoint > 0 ? promosPoint + " 分(累计)" : "未运行"}`);
-  lines.push(`🔍 搜索: ${rSearch.status === "skip" ? "已完成/跳过" : rSearch.status === "done" ? "已完成" : `${rSearch.status}(${rSearch.searched || 0}次)`}`);
+
+  // 搜索：显示「已完成多少、还剩多少」，而不是只说「已完成」
+  const sp2 = (rSearch && rSearch.progress) || tasks.searchProgressSnapshot(state);
+  const searchDone = state.isTaskDoneToday("search");
+  let searchText;
+  if (sp2 && sp2.total > 0) {
+    const detail =
+      sp2.m.max > 0
+        ? `PC ${sp2.pc.progress}/${sp2.pc.max}，移动 ${sp2.m.progress}/${sp2.m.max}`
+        : `PC ${sp2.pc.progress}/${sp2.pc.max}`;
+    searchText =
+      sp2.left > 0
+        ? `${sp2.done}/${sp2.total} 分，还剩 ${sp2.left} 分（${detail}）`
+        : `已完成 ${sp2.done}/${sp2.total} 分（${detail}）`;
+  } else if (searchDone) {
+    searchText = "已完成";
+  } else if (rSearch.status === "restricted") {
+    searchText = "已中断(收入受限)";
+  } else if (rSearch.status === "error") {
+    searchText = `失败(${rSearch.error || "未知错误"})`;
+  } else {
+    searchText = `${rSearch.status}(${rSearch.searched || 0}次)`;
+  }
+  lines.push(`🔍 搜索: ${searchText}`);
+
   lines.push(`📊 今日合计: ${todayTotal} 分${serverToday > 0 ? "" : "(本地估算)"}`);
   if (balance > 0) lines.push(`💰 总积分: ${balance} 分`);
 
-  const summaryText = lines.join("\n");
+  // 积分目标：放在末尾，逐条显示还差多少 / 已达成
+  try {
+    const goalLines = goals.formatLines(cfg.goals, { today: todayTotal, balance });
+    if (goalLines.length) lines.push(...goalLines);
+  } catch (e) {
+    logger.warn(`积分目标计算失败: ${e.message}`);
+  }
+
+  const summaryText = [`用户名：${ctx.name}`, ...lines].join("\n");
   state.get().lastResult = summaryText;
   state.get().todayPoints = todayTotal;
   if (serverToday > 0) state.get().todayPointsServer = serverToday;
@@ -156,30 +262,124 @@ async function runOnce(ctx, opts = {}) {
 }
 
 /**
- * 依次运行所有启用账户
+ * 串行运行一批账户（账号间不并发），一个账号跑完后随机等待 20–60 秒再跑下一个。
+ *
+ * 等待期间该账号不算「正在工作」，主进程可把后续账号标记为 waiting（排队）。
+ * 单账号被单独停止时不影响批次；全局停止或等待期间被停止则结束整个批次。
+ *
+ * @param {string[]} ids 要运行的账户 id（按给定顺序）
+ * @param {object} [opts]
+ * @param {boolean} [opts.interactive]
+ * @param {number} [opts.minGap=20] 账号间最小间隔（秒）
+ * @param {number} [opts.maxGap=60] 账号间最大间隔（秒）
+ * @param {(id:string,name:string,phase:"start"|"end"|"waiting",info?:object)=>void} [opts.onPhase]
+ *        start: 某账号开始执行；end: 某账号结束（info.ok/info.reason/info.result）；
+ *        waiting: 进入账号间随机等待（info.seconds）。
+ * @returns {Promise<Array>} 每个账号一个结果对象（{account, ok, reason, ...}）
  */
-async function runAll(opts = {}) {
-  const enabled = accounts.list().filter((a) => a.enabled);
+async function runBatch(ids, opts = {}) {
+  const minGap = Number.isFinite(opts.minGap) ? opts.minGap : 20;
+  const maxGap = Number.isFinite(opts.maxGap) ? opts.maxGap : 60;
+  const emit = typeof opts.onPhase === "function" ? opts.onPhase : () => {};
   const results = [];
-  if (enabled.length === 0) {
-    logger.warn("没有已启用的账户，请在 GUI 中添加账户。");
+
+  // 规整出仍存在的账户，缺 id/已删除的直接跳过
+  const queue = [];
+  for (const id of ids || []) {
+    const acc = accounts.get(id);
+    if (acc) queue.push(acc);
+  }
+  if (queue.length === 0) {
+    logger.warn("没有可运行的账户，请先选择账户。");
     return results;
   }
-  for (const acc of enabled) {
-    const ctx = accounts.context(acc.id);
+
+  for (let i = 0; i < queue.length; i++) {
+    const acc = queue[i];
+
+    // 排队等待期间用户单独停止了该账号：轮到时直接跳过，不执行
+    if (typeof opts.shouldSkip === "function" && opts.shouldSkip(acc.id)) {
+      logger.info(`账户「${acc.name}」已被取消排队，跳过。`);
+      results.push({ account: { id: acc.id, name: acc.name }, ok: false, reason: "已取消" });
+      emit(acc.id, acc.name, "end", { ok: false, reason: "已取消", skipped: true });
+      continue;
+    }
+
+    let ctx;
     try {
-      results.push(await runOnce(ctx, opts));
+      ctx = accounts.context(acc.id);
+    } catch (e) {
+      logger.warn(`账户「${acc.name}」上下文缺失，已跳过: ${e.message}`);
+      results.push({ account: { id: acc.id, name: acc.name }, ok: false, reason: "账户缺失" });
+      continue;
+    }
+
+    emit(acc.id, acc.name, "start");
+    const r = await runAccountGuarded(ctx, { interactive: opts.interactive });
+    if (r.result) {
+      results.push(r.result);
+      emit(acc.id, acc.name, "end", {
+        ok: r.result.ok !== false,
+        reason: r.result.reason || "",
+        result: r.result,
+        aborted: false,
+        abortAll: false,
+      });
+    } else {
+      results.push({ account: { id: acc.id, name: acc.name }, ok: false, reason: r.error || "运行失败" });
+      emit(acc.id, acc.name, "end", {
+        ok: false,
+        reason: r.error || "运行失败",
+        aborted: !!r.aborted,
+        abortAll: !!r.abortAll,
+        error: r.error || "",
+      });
+    }
+
+    // 全局停止：不再执行剩余账号
+    if (r.abortAll) {
+      logger.warn("已手动停止全部任务，剩余账户不再执行。");
+      for (const rest of queue.slice(i + 1)) {
+        results.push({ account: { id: rest.id, name: rest.name }, ok: false, reason: "已取消" });
+        emit(rest.id, rest.name, "end", { ok: false, reason: "已取消" });
+      }
+      break;
+    }
+
+    // 最后一个账号跑完不再等待；maxGap<=0（runAll 兼容路径）也不等待
+    if (i === queue.length - 1 || maxGap <= 0) continue;
+
+    const waitSec = randomBetween(minGap, maxGap);
+    emit(acc.id, acc.name, "waiting", { seconds: waitSec });
+    logger.info(`账户「${acc.name}」已完成，随机等待 ${waitSec} 秒后再运行下一个账户…`);
+    cancel.setActiveScope(null);
+    try {
+      // 账号间等待不受单账号中止影响，只响应全局停止
+      await cancel.sleep(waitSec * 1000);
     } catch (e) {
       if (e && e.isAbort) {
-        logger.warn(`已手动停止，剩余账户不再执行。`);
-        results.push({ account: { id: acc.id, name: acc.name }, ok: false, reason: "已手动停止" });
+        logger.warn("等待期间收到停止指令，剩余账户不再执行。");
+        for (const rest of queue.slice(i + 1)) {
+          results.push({ account: { id: rest.id, name: rest.name }, ok: false, reason: "已取消" });
+          emit(rest.id, rest.name, "end", { ok: false, reason: "已取消" });
+        }
         break;
       }
-      logger.error(`账户「${acc.name}」运行出错: ${e.message}`);
-      results.push({ account: { id: acc.id, name: acc.name }, ok: false, reason: e.message });
     }
   }
   return results;
+}
+
+/**
+ * 依次运行所有启用账户（无间隔，供旧调用/守护外的场景使用）
+ */
+async function runAll(opts = {}) {
+  const enabled = accounts.list().filter((a) => a.enabled);
+  if (enabled.length === 0) {
+    logger.warn("没有已启用的账户，请在 GUI 中添加账户。");
+    return [];
+  }
+  return runBatch(enabled.map((a) => a.id), { ...opts, minGap: 0, maxGap: 0 });
 }
 
 /* ================= 调度 ================= */
@@ -352,6 +552,9 @@ function startDaemon(opts = {}) {
     busy = true;
     try {
       const now = new Date();
+      // 先判定本轮要跑哪些账号（判定不产生副作用之外的 IO），再串行执行，
+      // 账号之间随机等待 20–60 秒，绝不并发。
+      const due = [];
       for (const acc of accounts.list()) {
         if (!acc.enabled) continue;
         let ctx;
@@ -367,33 +570,56 @@ function startDaemon(opts = {}) {
           logger.warn(`账户「${acc.name}」调度判断出错: ${e.message}`);
           continue;
         }
-        if (!decision.run) continue;
+        if (decision.run) due.push({ acc, ctx, reason: decision.reason });
+      }
 
+      for (let i = 0; i < due.length; i++) {
+        const { acc, ctx, reason } = due[i];
         const round = ctx.state.bumpAutoRound();
-        logger.info(`账户「${acc.name}」自动运行第 ${round} 轮（${decision.reason}）`);
+        logger.info(`账户「${acc.name}」自动运行第 ${round} 轮（${reason}）`);
         // 上一轮若被手动停止，中止标志还留着，不重置会导致本轮立刻抛 AbortError
         cancel.reset();
         if (typeof opts.onRunStart === "function") opts.onRunStart(acc);
+        const gr = await runAccountGuarded(ctx, { interactive: false });
         try {
-          await runOnce(ctx, { interactive: false });
-          // 跑完立刻判断今日是否已收工
-          const cfg = ctx.config.get();
-          const sc = normalizeSchedule(cfg);
-          const ev = ctx.state.evaluateDayDone(cfg);
-          if (ev.done) {
-            if (sc.stopWhenDone && ctx.state.markDayComplete()) {
-              logger.success(`账户「${acc.name}」今日全部任务已完成（共 ${round} 轮），本日自动运行结束`);
-            }
+          if (gr.abortAll) {
+            logger.warn(`账户「${acc.name}」自动运行被手动停止`);
+          } else if (gr.aborted) {
+            logger.warn(`账户「${acc.name}」自动运行被单独停止`);
+          } else if (gr.error) {
+            // runAccountGuarded 内部已记录错误，这里只负责调度层收尾
           } else {
-            logger.info(
-              `账户「${acc.name}」仍有未完成任务：${ev.pending.join("、")}，约 ${sc.intervalMinutes} 分钟后重试`
-            );
+            // 跑完立刻判断今日是否已收工
+            const cfg = ctx.config.get();
+            const sc = normalizeSchedule(cfg);
+            const ev = ctx.state.evaluateDayDone(cfg);
+            if (ev.done) {
+              if (sc.stopWhenDone && ctx.state.markDayComplete()) {
+                logger.success(`账户「${acc.name}」今日全部任务已完成（共 ${round} 轮），本日自动运行结束`);
+              }
+            } else {
+              logger.info(
+                `账户「${acc.name}」仍有未完成任务：${ev.pending.join("、")}，约 ${sc.intervalMinutes} 分钟后重试`
+              );
+            }
           }
-        } catch (e) {
-          if (e && e.isAbort) logger.warn(`账户「${acc.name}」自动运行被手动停止`);
-          else logger.error(`账户「${acc.name}」自动运行失败: ${e.message}`);
         } finally {
-          if (typeof opts.onRunEnd === "function") opts.onRunEnd(acc);
+          if (typeof opts.onRunEnd === "function") opts.onRunEnd(acc, gr);
+        }
+
+        // 全局停止：不再执行本轮剩余账号
+        if (gr.abortAll) break;
+
+        // 后面还有账号要跑：随机等待 20–60 秒，不并发
+        if (i < due.length - 1) {
+          const waitSec = randomBetween(20, 60);
+          logger.info(`账户「${acc.name}」已完成，随机等待 ${waitSec} 秒后再运行下一个账户…`);
+          cancel.setActiveScope(null);
+          try {
+            await cancel.sleep(waitSec * 1000);
+          } catch (e) {
+            if (e && e.isAbort) break; // 全局停止：结束本轮巡检
+          }
         }
       }
     } finally {
@@ -409,6 +635,8 @@ function startDaemon(opts = {}) {
 module.exports = {
   runOnce,
   runAll,
+  runBatch,
+  runAccountGuarded,
   startDaemon,
   nextRunTime,
   shouldRunNow,

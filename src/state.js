@@ -153,6 +153,10 @@ function createState(dir) {
     g.restrictedTimes = 0;
     g.pc = { progress: 0, max: 0 };
     g.m = { progress: 0, max: 0 };
+    // 本地任务完成标记：跨天清零。
+    // 原本依赖 === getDateNum() 比较也能正确判「未完成」，但遗留的旧日期
+    // 会让 describe() 看起来脏，也和 GUI 「跨天自动归零」的提示对不上。
+    g.tasksDone = { sign: 0, read: 0, promos: 0, search: 0 };
     // 自动循环相关也一并归零，否则昨天的「已完成」会挡住今天的循环
     g.dayCompleteDate = 0;
     g.autoRounds = 0;

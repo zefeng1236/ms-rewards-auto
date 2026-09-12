@@ -1,6 +1,8 @@
-const { app, BrowserWindow, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, ipcMain, shell, Menu, Tray, dialog, nativeImage } = require("electron");
 const path = require("path");
 const fs = require("fs");
+const crypto = require("crypto");
+const { pathToFileURL, fileURLToPath } = require("url");
 const { spawn } = require("child_process");
 
 // ⚠️ 必须在 require 任何业务模块之前确定存储目录。
@@ -17,15 +19,224 @@ const auth = require("./auth");
 const runner = require("./runner");
 const rewards = require("./rewards");
 const logger = require("./logger");
+const notify = require("./notify");
 const cancel = require("./cancel");
 const ensureDeps = require("./ensure-deps");
+const appearance = require("./appearance");
+const uapi = require("./uapi");
+const launch = require("./launch");
+const setup = require("./setup");
 const sp = require("./storage-path");
 
 const ROOT = path.join(__dirname, "..");
 const IS_SMOKE = process.argv.includes("--smoke");
+const DEV_SERVER = "http://localhost:5173/";
 let mainWindow = null;
 let running = false;
 let daemonStop = null;
+let tray = null;
+/** 托盘「退出」时置位，允许窗口真正关闭（否则会被 close 拦截到托盘） */
+let forceQuit = false;
+/** 后台工作（守护/自动推送/Chromium 安装）是否已启动，避免重复启动 */
+let backgroundStarted = false;
+
+// 单实例锁：避免「开机自启已在托盘驻留 + 又双击图标」时出现多进程
+// （否则会有多个托盘图标、多个守护进程重复跑任务）。--smoke 冒烟测试豁免，
+// 以免被机器上残留的实例干扰导致直接退出。
+if (!IS_SMOKE) {
+  const gotLock = app.requestSingleInstanceLock();
+  if (!gotLock) {
+    app.quit();
+  } else {
+    app.on("second-instance", () => {
+      // 第二实例尝试启动：把已在托盘驻留的主窗口唤到前台
+      forceQuit = false;
+      activateApp(false);
+    });
+  }
+}
+
+/** 探测 Vite dev server 是否已就绪（短超时，避免拖慢启动） */
+function devServerReady() {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (v) => {
+      if (!settled) {
+        settled = true;
+        resolve(v);
+      }
+    };
+    try {
+      const req = require("http").get(DEV_SERVER, (res) => {
+        res.resume();
+        done(res.statusCode < 500);
+      });
+      req.setTimeout(800, () => {
+        req.destroy();
+        done(false);
+      });
+      req.on("error", () => done(false));
+    } catch {
+      done(false);
+    }
+  });
+}
+
+/**
+ * 选择渲染进程入口：
+ *   打包后     -> gui-react/index.html
+ *   开发且 Vite 在跑 -> dev server（热更新）
+ *   开发但 Vite 没跑 -> 回落到已构建产物，避免 ERR_CONNECTION_REFUSED 白屏
+ */
+async function loadRenderer() {
+  const prod = path.join(__dirname, "..", "gui-react", "index.html");
+  const legacy = path.join(__dirname, "..", "gui", "index.html");
+
+  if (app.isPackaged) {
+    mainWindow.loadFile(prod);
+    return;
+  }
+
+  if (await devServerReady()) {
+    mainWindow.loadURL(DEV_SERVER);
+    return;
+  }
+
+  // dev server 没起，优先用构建产物，其次退回旧版原生界面
+  if (fs.existsSync(prod)) {
+    logger.warn(
+      "Vite dev server 未运行，已加载构建产物 gui-react/；改 src-renderer/ 后需 npm run build:web 才生效（或 npm run dev 同时启动两者）"
+    );
+    mainWindow.loadFile(prod);
+  } else if (fs.existsSync(legacy)) {
+    logger.warn("Vite dev server 未运行，且 gui-react/ 不存在，已回退到旧版原生界面");
+    mainWindow.loadFile(legacy);
+  } else {
+    logger.error("既没有 Vite dev server，也没有可用的构建产物");
+    mainWindow.loadFile(prod);
+  }
+}
+
+/**
+ * 下载图片（跟随 302 重定向）。
+ * destFile 为 null 时只探测不落盘；否则写入该路径。返回状态/类型/大小。
+ */
+async function downloadImage(url, destFile, opts = {}) {
+  const { maxBytes = 60 * 1024 * 1024, headOnly = false } = opts;
+  const res = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(20000) });
+  const ct = res.headers.get("content-type") || "";
+  const isImage = /^image\//.test(ct);
+  if (!res.ok) return { ok: false, status: res.status, contentType: ct, finalUrl: res.url, error: `HTTP ${res.status}` };
+  if (!isImage) return { ok: false, status: res.status, contentType: ct, finalUrl: res.url, error: `返回类型不是图片（${ct || "未知"}）` };
+  if (headOnly) { res.body.cancel(); return { ok: true, status: res.status, contentType: ct, finalUrl: res.url }; }
+  const buf = Buffer.from(await res.arrayBuffer());
+  if (buf.length > maxBytes) return { ok: false, status: res.status, contentType: ct, finalUrl: res.url, error: "图片过大" };
+  fs.writeFileSync(destFile, buf);
+  return { ok: true, status: res.status, contentType: ct, finalUrl: res.url, bytes: buf.length };
+}
+
+/** 当前背景下应请求的原始远程/本地地址（不含缓存逻辑） */
+async function rawBackgroundSrc(cfg) {
+  switch (cfg.bgType) {
+    case "bing":
+      return uapi.resolveBingDailyUrl();
+    case "uapi":
+      return uapi.randomImageUrl(cfg.bgCategory);
+    case "qy98":
+      return uapi.qy98WallpaperUrl();
+    case "unsplash": {
+      const key = (process.env.UNSPLASH_ACCESS_KEY || cfg.bgUnsplashKey || "").trim();
+      return uapi.unsplashRandom(key); // 无 key / 失败时抛错，由 IPC 兜底为 ""
+    }
+    default:
+      return appearance.backgroundSrc();
+  }
+}
+
+/** 壁纸本地缓存目录（storage/cache），用于固定「当前这一张」 */
+const BG_CACHE_DIR = path.join(path.dirname(appearance.FILE), "cache");
+
+/**
+ * 当前背景应显示的图片地址。
+ *
+ * 随机图源（uapi/qy98/unsplash）每次请求都会返回不同的图，若直接把接口地址
+ * 丢给渲染端，背景层、缩略图、预览弹窗会各自请求一次，看到的是三张不同的图。
+ * 所以远程图源一律先下载到本地缓存，再返回稳定的 file:// 地址；
+ * 只有明确要求 fresh（换一张 / 自动轮换到期）时才重新下载。
+ */
+async function backgroundSrc(opts = {}) {
+  const { fresh = false } = opts || {};
+  const cfg = appearance.get();
+  const url = await rawBackgroundSrc(cfg);
+  if (!url) return "";
+  // 本地文件 / data: 本身就是稳定的，原样返回
+  if (!/^https?:/i.test(url)) return url;
+
+  const key = crypto
+    .createHash("md5")
+    .update(`${cfg.bgType}|${cfg.bgCategory}|${url}`)
+    .digest("hex")
+    .slice(0, 16);
+  const cacheFile = path.join(BG_CACHE_DIR, `bg-${key}.img`);
+
+  if (!fresh && fs.existsSync(cacheFile)) return pathToFileURL(cacheFile).href;
+
+  try {
+    fs.mkdirSync(BG_CACHE_DIR, { recursive: true });
+    const r = await downloadImage(url, cacheFile);
+    if (r.ok) return pathToFileURL(cacheFile).href;
+    logger.warn(`壁纸缓存失败: ${r.error || "未知错误"}`);
+  } catch (e) {
+    logger.warn(`壁纸缓存失败: ${e.message}`);
+  }
+
+  // 下载失败但有旧缓存就继续用旧的，避免整块背景突然消失
+  if (fs.existsSync(cacheFile)) return pathToFileURL(cacheFile).href;
+  return url;
+}
+
+/**
+ * 用主进程 nativeImage 采样壁纸平均亮度（0 全黑 – 1 全白）。
+ *
+ * 放在主进程而不是渲染端 canvas，是因为 canvas 对跨域图片与本地 file://
+ * 会被污染（getImageData 抛 SecurityError），而主进程拿到的要么是已下载到
+ * 本地的缓存文件、要么是能直接 fetch 的远程地址，不存在跨域限制。
+ * 远程地址会额外发一次请求取字节（已加 15s 超时），失败仅返回 null，
+ * 不影响背景显示。
+ */
+async function sampleLuminance(src) {
+  try {
+    const s = String(src || "");
+    let img;
+    if (/^https?:/i.test(s)) {
+      const res = await fetch(s, { redirect: "follow", signal: AbortSignal.timeout(15000) });
+      if (!res.ok) return null;
+      img = nativeImage.createFromBuffer(Buffer.from(await res.arrayBuffer()));
+    } else if (/^data:/i.test(s)) {
+      img = nativeImage.createFromDataURL(s);
+    } else {
+      img = nativeImage.createFromPath(s.replace(/^file:\/\//i, ""));
+    }
+    if (img.isEmpty()) return null;
+    // 缩到 32px 再取像素，开销可忽略
+    const bmp = img.resize({ width: 32 }).toBitmap();
+    // Windows 下 toBitmap() 返回 BGRA，macOS/Linux 通常为 RGBA，
+    // 加权亮度对 R/B 权重不同，必须按平台取对通道，否则采样会偏。
+    const isWin = process.platform === "win32";
+    let total = 0;
+    let n = 0;
+    for (let i = 0; i < bmp.length; i += 4) {
+      const r = isWin ? bmp[i + 2] : bmp[i];
+      const g = bmp[i + 1];
+      const b = isWin ? bmp[i] : bmp[i + 2];
+      total += 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      n += 1;
+    }
+    return n ? total / n / 255 : null;
+  } catch {
+    return null;
+  }
+}
 
 /** 向渲染进程广播运行状态，用于切换「停止任务」按钮显隐 */
 function setRunning(v) {
@@ -35,6 +246,122 @@ function setRunning(v) {
   }
   // 运行状态变化时立即推一次数据，让卡片及时反映最新结果
   pushAccounts();
+}
+
+/* ============ 每账号运行态（转圈 / 排队 / 橙感叹号 / 红错误） ============ */
+
+/**
+ * 账号 id -> { status, reason, at }
+ * status: "running" 正在工作 | "waiting" 排队等待 | "warning" 需要注意 | "error" 发生错误
+ * 空闲账号不在 Map 中（前端不显示任何标记）。
+ */
+const runStatus = new Map();
+/** 批次运行中、用户在排队阶段就要求「停止此账号」的 id 集合（轮到时直接跳过） */
+const batchSkip = new Set();
+
+/** 设置/清除某账号运行态并广播；status 传 "idle" 表示清除（不显示标记） */
+function setAccountStatus(id, status, reason) {
+  const key = String(id);
+  if (status === "idle" || !status) {
+    runStatus.delete(key);
+  } else {
+    runStatus.set(key, { status, reason: reason || "", at: Date.now() });
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("account-status", {
+      id: key,
+      status: status === "idle" || !status ? "idle" : status,
+      reason: reason || "",
+    });
+  }
+}
+
+/**
+ * 根据 runner 批次/单账号的结束信息判定终态。
+ * @returns {{status:"warning"|"error", reason:string}|null} null 表示回到空闲（不标记）
+ */
+function classifyOutcome(info) {
+  if (!info) return null;
+  // 用户主动停止（整批 / 单个 / 排队中跳过）不算错误，回到无标记
+  if (info.aborted || info.abortAll || info.skipped) return null;
+  // 业务阻断但拿到了 result（如 IP 非大陆）→ 橙色「需要注意」
+  if (info.ok === false) {
+    if (info.error && !info.result) return { status: "error", reason: info.reason || info.error || "运行失败" };
+    return { status: "warning", reason: info.reason || "需要注意" };
+  }
+  // 任务级状态：真正报错 → 红；需要人工介入（未授权/收入受限/需重试）→ 橙
+  const tasks = (info.result && info.result.tasks) || {};
+  for (const k of Object.keys(tasks)) {
+    const t = tasks[k];
+    if (t && t.status === "error") {
+      return { status: "error", reason: t.error || "任务执行出错" };
+    }
+  }
+  for (const k of Object.keys(tasks)) {
+    const t = tasks[k];
+    if (!t) continue;
+    if (t.unauthorized) return { status: "warning", reason: "未授权，请重新登录后再运行" };
+    if (t.status === "restricted") return { status: "warning", reason: "搜索任务收入受限" };
+    if (t.status === "retry") return { status: "warning", reason: "部分任务未完成，稍后会自动重试" };
+  }
+  return null;
+}
+
+/** 把 runner 的 end 信息落到账号状态上 */
+function applyOutcome(id, info) {
+  const verdict = classifyOutcome(info);
+  setAccountStatus(id, verdict ? verdict.status : "idle", verdict ? verdict.reason : "");
+}
+
+/**
+ * 串行运行一批账号（账号间随机 20–60 秒），统一维护每账号状态。
+ * 调用方需自行做 running 全局锁判断。
+ */
+async function runIds(ids, interactive) {
+  const valid = [];
+  for (const rawId of ids || []) {
+    const id = String(rawId);
+    if (accounts.get(id)) valid.push(id);
+  }
+  if (valid.length === 0) return { ok: false, error: "请先选择要运行的账户" };
+
+  cancel.reset();
+  batchSkip.clear();
+  // 预置：第一个立即工作，其余排队（轮到时 start 回调改为 working）
+  valid.forEach((id, i) => setAccountStatus(id, i === 0 ? "running" : "waiting"));
+  setRunning(true);
+  try {
+    const results = await runner.runBatch(valid, {
+      interactive,
+      minGap: 20,
+      maxGap: 60,
+      shouldSkip: (id) => batchSkip.has(String(id)),
+      onPhase: (id, _name, phase, info) => {
+        if (phase === "start") {
+          batchSkip.delete(String(id));
+          setAccountStatus(id, "running");
+        } else if (phase === "end") {
+          applyOutcome(id, info || {});
+        }
+        // phase === "waiting" 时其余账号保持 waiting，无需处理
+      },
+    });
+    return { ok: true, results };
+  } catch (e) {
+    if (e && e.isAbort) {
+      logger.warn("任务已被手动停止");
+      return { ok: false, aborted: true, error: "任务已停止" };
+    }
+    logger.error(`运行失败: ${e.message}`);
+    return { ok: false, error: e.message };
+  } finally {
+    // 兜底：批次结束后仍停留在 running/waiting 的账号复位（正常不会走到）
+    for (const id of valid) {
+      const s = runStatus.get(id);
+      if (s && (s.status === "running" || s.status === "waiting")) setAccountStatus(id, "idle");
+    }
+    setRunning(false);
+  }
 }
 
 /**
@@ -70,21 +397,43 @@ function stopAutoPush() {
   pushTimer = null;
 }
 
-function createWindow() {
-  mainWindow = new BrowserWindow({
+function createWindow(show = true) {
+  const opts = {
     width: 1180,
     height: 780,
     minWidth: 940,
     minHeight: 600,
     title: "Microsoft Rewards 自动任务",
     backgroundColor: "#11141a",
+    show,
     webPreferences: {
       preload: path.join(__dirname, "electron-preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
     },
+  };
+  // 显式给窗口/任务栏图标（signAndEditExecutable:false 时不能指望 exe 内嵌图标）
+  const winIcon = loadAppIcon();
+  if (winIcon) opts.icon = winIcon;
+
+  mainWindow = new BrowserWindow(opts);
+
+  // 去掉 File/Edit/View/Window/Help 默认菜单栏
+  mainWindow.setMenuBarVisibility(false);
+  mainWindow.setAutoHideMenuBar(true);
+
+  // 关闭窗口：若开启「最小化到托盘」则拦截并隐藏，实现驻留托盘。
+  // forceQuit 置位（托盘「退出」）时放行，允许真正关闭。
+  mainWindow.on("close", (e) => {
+    if (forceQuit) return;
+    if (launch.get().minimizeToTray) {
+      e.preventDefault();
+      mainWindow.hide();
+    }
   });
-  mainWindow.loadFile(path.join(ROOT, "gui", "index.html"));
+
+  // 开发模式优先走 Vite dev server（热更新），未运行时自动回落到构建产物
+  void loadRenderer();
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
@@ -243,6 +592,127 @@ function createWindow() {
       }
     });
   }
+}
+
+/**
+ * 确保主窗口存在（已存在则直接返回，避免重复创建）。
+ * @param {boolean} show 创建时是否立即显示（驻留托盘场景传 false）
+ */
+function ensureWindow(show = true) {
+  if (mainWindow && !mainWindow.isDestroyed()) return mainWindow;
+  createWindow(show);
+  return mainWindow;
+}
+
+/** 把已隐藏/最小化的窗口恢复到前台 */
+function showWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+/**
+ * 启动后台工作：自动运行守护、卡片周期推送、Chromium 缺失时后台安装。
+ * 只在首次激活时执行一次（backgroundStarted 守卫），避免重复启动定时器。
+ */
+function startBackgroundWork() {
+  if (backgroundStarted) return;
+  backgroundStarted = true;
+
+  // 启动自动运行守护（按各账户 schedule 模式循环触发）
+  daemonStop = runner.startDaemon({
+    isBusy: () => running,
+    onRunStart: (acc) => {
+      if (acc) setAccountStatus(acc.id, "running");
+      setRunning(true);
+    },
+    onRunEnd: (acc, gr) => {
+      if (acc) {
+        const info = gr && gr.result
+          ? { ok: gr.result.ok !== false, result: gr.result, reason: gr.result.reason || "", aborted: false }
+          : { ok: false, aborted: !!(gr && gr.aborted), abortAll: !!(gr && gr.abortAll), error: (gr && gr.error) || "运行失败" };
+        applyOutcome(acc.id, info);
+      }
+      setRunning(false);
+    },
+  });
+
+  // 启动账户数据周期推送（卡片自动刷新，无需手动点按钮）
+  if (!IS_SMOKE) startAutoPush();
+
+  // 启动时自动检测 Chromium，未就绪则后台安装（不阻塞 UI）
+  if (!IS_SMOKE && !browser.isChromiumReady()) {
+    logger.info("检测到 Chromium 未安装，后台开始自动安装…");
+    ensureDeps.onProgress((p) => {
+      try { mainWindow?.webContents?.send("install-progress", p); } catch {}
+    });
+    ensureDeps.ensureChromium(browser)
+      .then((r) => {
+        logger.info(`后台 Chromium 安装结果: method=${r.method}, ready=${r.ready}`);
+        // 安装完推送一次账户数据，让「Chromium 已就绪」徽标刷新
+        pushAccounts();
+      })
+      .catch((e) => logger.error(`后台 Chromium 安装失败: ${e.message}`));
+  }
+}
+
+/**
+ * 激活应用：建窗 + 显示（除非要求隐藏）+ 启动后台工作。
+ * @param {boolean} startHidden 是否以隐藏方式启动（驻留托盘场景）
+ */
+function activateApp(startHidden) {
+  ensureWindow(!startHidden);
+  if (!startHidden) showWindow();
+  startBackgroundWork();
+}
+
+/** 构建托盘右键菜单 */
+function buildTrayMenu() {
+  return Menu.buildFromTemplate([
+    { label: "显示主窗口", click: () => activateApp(false) },
+    { type: "separator" },
+    { label: "退出", click: () => { forceQuit = true; app.quit(); } },
+  ]);
+}
+
+/** 托盘/窗口图标路径候选：打包后取 resources 下经 extraResources 释放的 ico，
+ *  开发时回落项目 build/icon.ico。返回第一个存在且非空的图标。 */
+function loadAppIcon() {
+  const candidates = app.isPackaged
+    ? [path.join(process.resourcesPath, "icon.ico")]
+    : [path.join(ROOT, "build", "icon.ico")];
+  for (const p of candidates) {
+    try {
+      const img = nativeImage.createFromPath(p);
+      if (img && !img.isEmpty()) return img;
+    } catch {
+      /* 试下一个 */
+    }
+  }
+  return undefined;
+}
+
+/** 创建系统托盘（带图标与菜单）。图标缺失时跳过，返回 null */
+function createTray() {
+  if (tray) return tray;
+  const icon = loadAppIcon();
+  if (!icon) {
+    logger.warn("托盘图标缺失，跳过托盘创建");
+    return null;
+  }
+  tray = new Tray(icon);
+  tray.setToolTip("Microsoft Rewards 自动任务");
+  tray.setContextMenu(buildTrayMenu());
+  // 左键点击：窗口可见则收起到托盘，否则唤出（与多数桌面软件一致）
+  tray.on("click", () => {
+    if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) {
+      mainWindow.hide();
+    } else {
+      activateApp(false);
+    }
+  });
+  return tray;
 }
 
 /* ---------------- IPC ---------------- */
@@ -411,47 +881,33 @@ function registerIpc() {
     }
   });
 
+  // 运行单个账号（走统一的串行/状态编排，单账号无账号间等待）
   ipcMain.handle("account:run", async (_e, id) => {
     if (running) return { ok: false, error: "已有任务正在运行，请稍候" };
     const acc = accounts.get(id);
     if (!acc) return { ok: false, error: "账户不存在" };
-    cancel.reset();
-    setRunning(true);
-    try {
-      const result = await runner.runOnce(accounts.context(id), { interactive: true });
-      return { ok: true, result };
-    } catch (e) {
-      if (e && e.isAbort) {
-        logger.warn("任务已被手动停止");
-        return { ok: false, aborted: true, error: "任务已停止" };
-      }
-      logger.error(`运行失败: ${e.message}`);
-      return { ok: false, error: e.message };
-    } finally {
-      setRunning(false);
-    }
+    const r = await runIds([id], true);
+    const single = (r.results || [])[0];
+    if (r.ok && single) return { ok: single.ok !== false, result: single, aborted: single.reason === "已手动停止" || single.reason === "此账号任务已被手动停止" };
+    return r;
   });
 
+  // 运行全部已启用账号（串行 + 随机 20–60 秒）
   ipcMain.handle("app:runAll", async () => {
     if (running) return { ok: false, error: "已有任务正在运行，请稍候" };
-    cancel.reset();
-    setRunning(true);
-    try {
-      const results = await runner.runAll({ interactive: true });
-      return { ok: true, results };
-    } catch (e) {
-      if (e && e.isAbort) {
-        logger.warn("任务已被手动停止");
-        return { ok: false, aborted: true, error: "任务已停止" };
-      }
-      logger.error(`运行失败: ${e.message}`);
-      return { ok: false, error: e.message };
-    } finally {
-      setRunning(false);
-    }
+    const ids = accounts.list().filter((a) => a.enabled).map((a) => a.id);
+    if (ids.length === 0) return { ok: false, error: "没有已启用的账户" };
+    return runIds(ids, true);
   });
 
-  // 停止当前任务
+  // 运行选中的账号（复选框批量；串行 + 随机 20–60 秒）
+  ipcMain.handle("app:runSelected", async (_e, ids) => {
+    if (running) return { ok: false, error: "已有任务正在运行，请稍候" };
+    if (!Array.isArray(ids) || ids.length === 0) return { ok: false, error: "请先勾选要运行的账户" };
+    return runIds(ids, true);
+  });
+
+  // 停止当前任务（全部）
   ipcMain.handle("app:stop", () => {
     if (!running) return { ok: false, error: "当前没有正在运行的任务" };
     logger.warn("收到停止指令，正在中断当前任务...");
@@ -459,7 +915,43 @@ function registerIpc() {
     return { ok: true };
   });
 
+  // 只停止单个账号：正在执行则中断该账号作用域；仍在排队则标记轮到时跳过
+  ipcMain.handle("account:stop", (_e, id) => {
+    const key = String(id);
+    const acc = accounts.get(key);
+    if (!acc) return { ok: false, error: "账户不存在" };
+    const st = runStatus.get(key);
+    if (!st) return { ok: false, error: "该账号当前没有在执行的任务" };
+    if (st.status === "running") {
+      cancel.abortScope(key);
+      logger.warn(`正在停止账户「${acc.name}」的任务…`);
+    } else if (st.status === "waiting") {
+      batchSkip.add(key);
+      setAccountStatus(key, "idle");
+      logger.info(`账户「${acc.name}」已从排队中移除。`);
+    } else {
+      return { ok: false, error: "该账号当前没有在执行的任务" };
+    }
+    return { ok: true };
+  });
+
   ipcMain.handle("app:isRunning", () => running);
+
+  // 每账号运行态（渲染端打开界面时拉一次做初始化）
+  ipcMain.handle("app:getRunStatus", () => {
+    const out = {};
+    for (const [id, s] of runStatus.entries()) out[id] = s;
+    return out;
+  });
+
+  // 取某账号的最近日志（详情页只显示该账号）
+  ipcMain.handle("app:getAccountLogs", (_e, id) => {
+    try {
+      return logger.getAccountLogs(id);
+    } catch {
+      return [];
+    }
+  });
 
   ipcMain.handle("app:getLogs", () => {
     try {
@@ -475,6 +967,136 @@ function registerIpc() {
     ready: browser.isChromiumReady(),
     executable: browser.chromiumExecutablePath(),
   }));
+
+  // ---- 外观个性化 ----
+  ipcMain.handle("appearance:get", () => appearance.get());
+
+  // 当前背景图地址（bing 类型内部按天解析并缓存）。返回 { src, luma }，
+  // luma 为壁纸平均亮度（0–1），渲染端 autoTheme 据此模拟两套主题色合成后的
+  // 文字对比度，自动选深/浅主题保证文字可读。
+  ipcMain.handle("appearance:bg-src", async (_e, opts) => {
+    try {
+      // opts: { fresh } —— 换一张/轮换到期时强制重新拉取随机图
+      const src = await backgroundSrc(opts);
+      let luma = null;
+      if (src) {
+        try {
+          luma = await sampleLuminance(src);
+        } catch {
+          luma = null;
+        }
+      }
+      return { src, luma };
+    } catch (e) {
+      logger.warn(`背景图解析失败: ${e.message}`);
+      return { src: "", luma: null };
+    }
+  });
+
+  // 选择本地图片：弹原生文件框，选中后直接设为背景
+  ipcMain.handle("appearance:pickImage", async () => {
+    const r = await dialog.showOpenDialog(mainWindow, {
+      title: "选择背景图片",
+      properties: ["openFile"],
+      filters: [{ name: "图片", extensions: ["jpg", "jpeg", "png", "webp", "bmp", "gif", "avif"] }],
+    });
+    if (r.canceled || !r.filePaths.length) return { ok: false, canceled: true };
+    const next = appearance.set({ bgType: "file", bgFile: r.filePaths[0] });
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("appearance", next);
+    return { ok: true, appearance: next };
+  });
+
+  // 测试自定义图片地址：跟随重定向，返回最终状态与类型
+  ipcMain.handle("appearance:testUrl", async (_e, url) => {
+    try {
+      const r = await downloadImage(url, null, { maxBytes: 2 * 1024 * 1024, headOnly: true });
+      return { ok: r.ok, status: r.status, contentType: r.contentType, finalUrl: r.finalUrl, error: r.error };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
+
+  // 下载当前壁纸到本地（弹保存位置对话框）
+  ipcMain.handle("appearance:downloadWallpaper", async (_e, url) => {
+    if (!url) return { ok: false, error: "当前没有可下载的背景" };
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-");
+    const r0 = await dialog.showSaveDialog(mainWindow, {
+      title: "保存壁纸",
+      defaultPath: path.join(app.getPath("downloads") || app.getPath("home"), `wallpaper-${stamp}.jpg`),
+      filters: [
+        { name: "JPEG 图片", extensions: ["jpg", "jpeg"] },
+        { name: "PNG 图片", extensions: ["png"] },
+        { name: "WebP 图片", extensions: ["webp"] },
+        { name: "所有文件", extensions: ["*"] },
+      ],
+    });
+    if (r0.canceled || !r0.filePath) return { ok: false, canceled: true };
+    try {
+      // 远端图源已被缓存成本地文件（见 backgroundSrc），此时直接复制即可
+      if (/^file:/i.test(url)) {
+        const srcPath = fileURLToPath(url);
+        if (!fs.existsSync(srcPath)) return { ok: false, error: "缓存文件已丢失，请重新加载壁纸" };
+        fs.copyFileSync(srcPath, r0.filePath);
+        return { ok: true, path: r0.filePath, bytes: fs.statSync(srcPath).size };
+      }
+      const r = await downloadImage(url, r0.filePath);
+      if (!r.ok) return { ok: false, error: r.error || `HTTP ${r.status}` };
+      return { ok: true, path: r0.filePath, bytes: r.bytes };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle("appearance:set", (_e, patch) => {
+    // 切背景源后旧的 bing 缓存仍可复用（同一天），不必清
+    const next = appearance.set(patch || {});
+    // 所有外观项（预设/主题色/深浅模式/透明度/氛围光/背景图）都是 CSS 层
+    // 的变化，直接把最新外观推给渲染进程让它重画，热切换无需重启。
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("appearance", next);
+    }
+    return { ok: true, appearance: next, restartNeeded: false };
+  });
+
+  // ---- 启动与托盘 ----
+  ipcMain.handle("launch:get", () => launch.get());
+
+  ipcMain.handle("launch:set", (_e, patch) => {
+    const next = launch.set(patch || {});
+    // 立即把设置同步到系统登录项（注册/取消开机自启）
+    launch.syncLoginItems(app, next);
+    return next;
+  });
+
+  // ---- 首次启动向导 ----
+  ipcMain.handle("setup:get", () => setup.get());
+
+  ipcMain.handle("setup:set", (_e, patch) => {
+    const p = patch || {};
+    const next = setup.set(p);
+    // 向导里的初始选择要立刻落到对应子系统，而不是只记下来：
+    // 液态玻璃写进外观（并推给渲染端重画），开机自启同步到系统登录项。
+    if (p.liquidGlass !== undefined) {
+      const ap = appearance.set({ glass: next.liquidGlass });
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("appearance", ap);
+      }
+    }
+    if (p.autoLaunch !== undefined) {
+      launch.syncLoginItems(app, launch.set({ autoLaunch: next.autoLaunch }));
+    }
+    return next;
+  });
+
+  // ---- 推送测试 ----
+  ipcMain.handle("notify:test", async (_e, notice) => {
+    try {
+      return await notify.testPush(notice || {}, "界面");
+    } catch (e) {
+      logger.error(`推送测试失败: ${e.message}`);
+      return { ok: false, error: e.message };
+    }
+  });
 
   ipcMain.handle("app:installBrowser", async () => {
     if (running) return { ok: false, error: "已有任务正在运行，请稍候" };
@@ -498,44 +1120,56 @@ function registerIpc() {
 
 /* ---------------- 生命周期 ---------------- */
 app.whenReady().then(() => {
-  registerIpc();
-  createWindow();
+  // 彻底移除 File/Edit/View/Window/Help 菜单栏。
+  // setMenuBarVisibility(false) 只是隐藏，Alt 键仍能唤出；
+  // 把应用菜单整个置空才是真的没有。
+  Menu.setApplicationMenu(null);
 
-  // 日志实时推送到渲染进程
+  registerIpc();
+
+  const launchCfg = launch.get();
+  // 确保系统登录项与保存的设置一致（例如被其它方式改过注册表）
+  launch.syncLoginItems(app, launchCfg);
+
+  // 全局日志实时推送到渲染进程（外部全局日志面板）
   logger.onLog((line) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send("log", line);
     }
   });
 
-  // 启动自动运行守护（按各账户 schedule 模式循环触发）
-  // 自动运行开始/结束时同步广播 running 状态，让界面按钮与「停止任务」正确联动
-  daemonStop = runner.startDaemon({
-    isBusy: () => running,
-    onRunStart: () => setRunning(true),
-    onRunEnd: () => setRunning(false),
+  // 结构化日志（携带 accountId）推给渲染进程，详情页按账号过滤显示各自日志
+  logger.onEntry((entry) => {
+    if (mainWindow && !mainWindow.isDestroyed() && entry.accountId != null) {
+      mainWindow.webContents.send("account-log", entry);
+    }
   });
 
-  // 启动账户数据周期推送（卡片自动刷新，无需手动点按钮）
-  if (!IS_SMOKE) startAutoPush();
+  // 托盘：常驻，提供「显示主窗口 / 退出」入口；配合关闭到托盘实现驻留
+  createTray();
 
-  // 启动时自动检测 Chromium，未就绪则后台安装（不阻塞 UI）
-  if (!IS_SMOKE && !browser.isChromiumReady()) {
-    logger.info("检测到 Chromium 未安装，后台开始自动安装…");
-    ensureDeps.onProgress((p) => {
-      try { mainWindow?.webContents?.send("install-progress", p); } catch {}
-    });
-    ensureDeps.ensureChromium(browser)
-      .then((r) => {
-        logger.info(`后台 Chromium 安装结果: method=${r.method}, ready=${r.ready}`);
-        // 安装完推送一次账户数据，让「Chromium 已就绪」徽标刷新
-        pushAccounts();
-      })
-      .catch((e) => logger.error(`后台 Chromium 安装失败: ${e.message}`));
+  // 判断本次启动来源：是否由系统登录项触发
+  const loginInfo = app.getLoginItemSettings();
+  const launchedAtLogin = loginInfo.wasOpenedAtLogin;
+  // 以下任一为真则本次以隐藏方式启动（驻留托盘）：
+  //   1) 由登录项触发且配置了「开机后驻留托盘」
+  //   2) 系统判定为「以隐藏方式启动」（macOS openAsHidden）
+  //   3) 启动参数带 --hidden（Windows 下 openAsHidden 不生效时的兜底）
+  const startedHidden =
+    (launchedAtLogin && launchCfg.launchToTray) ||
+    loginInfo.wasOpenedAsHidden ||
+    process.argv.includes("--hidden");
+
+  if (launchedAtLogin && launchCfg.launchDelay > 0) {
+    // 随系统启动：延迟 launchDelay 秒再激活，错峰避免抢开机资源
+    logger.info(`随系统启动：延迟 ${launchCfg.launchDelay}s 后激活（驻留托盘=${launchCfg.launchToTray}）`);
+    setTimeout(() => activateApp(startedHidden), launchCfg.launchDelay * 1000);
+  } else {
+    activateApp(startedHidden);
   }
 
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (BrowserWindow.getAllWindows().length === 0) activateApp(false);
   });
 });
 

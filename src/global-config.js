@@ -44,6 +44,7 @@ const GLOBAL_DEFAULTS = {
   notice: {
     wework: "",
     dingding: "",
+    dingdingKeyword: "",
     feishu: "",
     pushme: "",
     bark: "",

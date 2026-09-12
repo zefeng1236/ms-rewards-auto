@@ -53,17 +53,21 @@ function mergeInto(base, patch) {
 
 /* ---------- 自定义对话框（Electron 不支持原生 prompt/confirm） ---------- */
 let modalResolve = null;
+let modalTimer = null;
 
 function closeModal(value) {
   const mask = $("#modal-mask");
   if (mask) mask.hidden = true;
+  if (modalTimer) { clearInterval(modalTimer); modalTimer = null; }
+  const okBtn = $("#modal-ok");
+  if (okBtn) okBtn.disabled = false;
   const r = modalResolve;
   modalResolve = null;
   if (r) r(value);
   else console.warn("[modal] closeModal called but no pending resolve; value=", value);
 }
 
-function openModal({ title, message = "", input = false, placeholder = "", okText = "确定" }) {
+function openModal({ title, message = "", html = "", input = false, placeholder = "", okText = "确定", cancelText = "取消", countdown = 0 }) {
   return new Promise((resolve) => {
     if (modalResolve) {
       console.warn("[modal] openModal called while another modal is pending, forcing close previous");
@@ -71,16 +75,38 @@ function openModal({ title, message = "", input = false, placeholder = "", okTex
     }
     modalResolve = resolve;
     $("#modal-title").textContent = title;
-    $("#modal-msg").textContent = message;
-    $("#modal-msg").hidden = !message;
+    const msg = $("#modal-msg");
+    if (html) { msg.innerHTML = html; msg.hidden = false; }
+    else { msg.textContent = message; msg.hidden = !message; }
     const inp = $("#modal-input");
     inp.hidden = !input;
     inp.value = "";
     inp.placeholder = placeholder;
-    $("#modal-ok").textContent = okText;
+    const cancel = $("#modal-cancel");
+    if (cancel) cancel.textContent = cancelText;
+    const okBtn = $("#modal-ok");
+    if (modalTimer) { clearInterval(modalTimer); modalTimer = null; }
+    if (countdown > 0) {
+      let n = countdown;
+      okBtn.disabled = true;
+      okBtn.textContent = `${okText}（${n}s）`;
+      modalTimer = setInterval(() => {
+        n -= 1;
+        if (n <= 0) {
+          clearInterval(modalTimer); modalTimer = null;
+          okBtn.disabled = false;
+          okBtn.textContent = okText;
+        } else {
+          okBtn.textContent = `${okText}（${n}s）`;
+        }
+      }, 1000);
+    } else {
+      okBtn.disabled = false;
+      okBtn.textContent = okText;
+    }
     $("#modal-mask").hidden = false;
     if (input) setTimeout(() => inp.focus(), 30);
-    else setTimeout(() => $("#modal-ok").focus(), 30);
+    else setTimeout(() => cancel.focus(), 30);
     console.log("[modal] opened:", title, "| hasResolve=", !!modalResolve);
   });
 }
@@ -226,9 +252,14 @@ function settingsFormHtml(ns) {
       <div class="form-grid">
         <label class="field"><span>企业微信 Webhook</span><input type="text" id="${p("n-wework")}" placeholder="https://qyapi.weixin.qq.com/..." /></label>
         <label class="field"><span>钉钉 Webhook</span><input type="text" id="${p("n-dingding")}" placeholder="https://oapi.dingtalk.com/robot/send?access_token=..." /></label>
+        <label class="field"><span>钉钉关键词（留空=未启用）</span><input type="text" id="${p("n-dingding-keyword")}" placeholder="机器人设置里的关键词，如 # 或 Rewards" /></label>
         <label class="field"><span>飞书 Webhook</span><input type="text" id="${p("n-feishu")}" placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..." /></label>
         <label class="field"><span>PushMe Key</span><input type="text" id="${p("n-pushme")}" placeholder="push_key" /></label>
         <label class="field"><span>Bark Key</span><input type="text" id="${p("n-bark")}" placeholder="https://api.day.app/XXXX" /></label>
+      </div>
+      <div class="form-actions" style="margin-top:10px">
+        <button type="button" id="${p("test")}" class="btn small accent">🔔 测试推送</button>
+        <span id="${p("test-hint")}" class="sched-hint"></span>
       </div>
     </div>
   `;
@@ -262,6 +293,7 @@ function fillSettingsForm(ns, cfg) {
   const n = c.notice || {};
   q("n-wework").value = n.wework || "";
   q("n-dingding").value = n.dingding || "";
+  q("n-dingding-keyword").value = n.dingdingKeyword || "";
   q("n-feishu").value = n.feishu || "";
   q("n-pushme").value = n.pushme || "";
   q("n-bark").value = n.bark || "";
@@ -433,6 +465,614 @@ function wireSettingsForm(ns) {
     const el = q("n-" + key);
     if (el) el.addEventListener("change", () => saveSettings(ns, { notice: { [key]: el.value.trim() } }));
   }
+  const kwEl = q("n-dingding-keyword");
+  if (kwEl) kwEl.addEventListener("change", () => saveSettings(ns, { notice: { dingdingKeyword: kwEl.value.trim() } }));
+
+  // 测试推送按钮（读取当前表单里填的 5 个 webhook 试发一遍）
+  wireNoticeTest(ns);
+}
+
+/* ==================== 外观个性化 ==================== */
+
+let appearanceCfg = null;
+
+/** #rrggbb → rgba(...,a)；非法输入回落默认蓝 */
+function hexToRgba(hex, a) {
+  const m = String(hex || "").match(/^#?([0-9a-f]{6})$/i);
+  if (!m) return `rgba(59,130,246,${a})`;
+  const n = parseInt(m[1], 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+function clampByte(v) { return Math.max(0, v); }
+function shiftColor(hex, amt) {
+  const m = String(hex || "").match(/^#?([0-9a-f]{6})$/i);
+  if (!m) return hex;
+  const n = parseInt(m[1], 16);
+  let r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  if (amt >= 0) { r += (255 - r) * amt; g += (255 - g) * amt; b += (255 - b) * amt; }
+  else { r *= 1 + amt; g *= 1 + amt; b *= 1 + amt; }
+  const c = (v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, "0");
+  return "#" + c(r) + c(g) + c(b);
+}
+
+/**
+ * 把外观配置落到 DOM：
+ *  - 主题色 → CSS 变量（强调色及其派生）
+ *  - 深浅模式 → <html data-theme="dark|light">（system 跟随系统）
+ *  - 透明度 → --app-opacity（面板半透明程度）
+ *  - 氛围光 → body 的 glow/no-glow 类
+ *  - 预设 → body 的 preset-* 类（决定窗体/面板是否透明、是否毛玻璃）
+ */
+function applyAppearance(cfg) {
+  if (!cfg) return;
+  const root = document.documentElement;
+
+  const accent = cfg.accent || "#3b82f6";
+  root.style.setProperty("--app-accent", accent);
+  root.style.setProperty("--app-accent-hi", shiftColor(accent, 0.18));
+  root.style.setProperty("--app-accent-dim", shiftColor(accent, -0.25));
+  root.style.setProperty("--app-accent-glow", hexToRgba(accent, 0.28));
+
+  let mode = cfg.mode || "system";
+  if (mode === "system") {
+    mode = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  }
+  root.setAttribute("data-theme", mode === "light" ? "light" : "dark");
+
+  root.style.setProperty("--app-opacity", String(cfg.opacity == null ? 1 : cfg.opacity));
+
+  // 只动这两个 class 族，避免清掉 body 上可能存在的其他类
+  document.body.className = document.body.className
+    .split(/\s+/)
+    .filter((c) => c && !c.startsWith("preset-") && c !== "glow" && c !== "no-glow" && c !== "semi")
+    .join(" ");
+  document.body.classList.add("preset-" + (cfg.preset || "normal"));
+  document.body.classList.add(cfg.glow === false ? "no-glow" : "glow");
+
+  // 面板半透明标志：normal/custom 预设下、透明度 < 1 时启用毛玻璃半透明。
+  // 透明/亚克力/毛玻璃三套用各自的 rgba 规则（已响应 --app-opacity），
+  // opaque 永远实心不受滑块影响。
+  const semiOn =
+    (cfg.preset === "normal" || cfg.preset === "custom") &&
+    (cfg.opacity == null ? 1 : cfg.opacity) < 0.999;
+  document.body.classList.toggle("semi", semiOn);
+  document.body.classList.toggle("glass", cfg.glass === true);
+
+  applyBackground(cfg);
+  startBgRotation(cfg);
+}
+
+/* ==================== 自定义背景 + 液态玻璃 ==================== */
+
+let bgAppliedKey = null; // 避免 appearance 推送风暴时重复解析背景图
+let bgNonce = 0;        // 随机图源换图种子（「换一张」时递增）
+let bgLastShuffle = 0;  // 上次手动换图时间戳，用于限流（≤30 QPS，最快约 2 秒一次）
+let bgRotateTimer = null; // 自动轮换定时器
+
+/** 第三方随机图源（切换这些时弹免责声明） */
+const RANDOM_BG_TYPES = ["uapi", "qy98", "unsplash"];
+
+/** 第三方随机图片免责声明（切换随机 API 源时弹窗，确定按钮 3 秒倒计时） */
+const BG_DISCLAIMER_HTML = `
+  <div class="disclaimer">
+    <p>您即将启用 <b>第三方随机图片</b> 作为应用背景，继续前请阅读：</p>
+    <ul>
+      <li>图片由第三方接口（<b>UAPI</b>、<b>98qy</b>、<b>Unsplash</b>）实时随机返回，<span class="hl">均来源于公共互联网</span>，本应用不托管、不存储、不加工这些图片。</li>
+      <li>作者 <span class="hl">未对图片内容做任何审核、筛选或背书</span>；图片版权归原作者及原网站所有。</li>
+      <li>图片为随机返回，<span class="hl">可能出现您不喜欢或引起不适的内容</span>；如遇不适，请点「换一张」或关闭该功能。</li>
+      <li>因使用第三方图片或服务产生的任何争议或损失，由相应第三方服务方及使用者自行承担。</li>
+    </ul>
+    <p class="disclaimer-foot">点「确定启用」即表示您已知晓并同意以上内容。</p>
+  </div>`;
+
+/** 弹出第三方图片免责声明，确定按钮 3 秒倒计时后可点；返回用户是否同意 */
+function confirmRandomBg() {
+  return openModal({
+    title: "第三方随机图片声明",
+    html: BG_DISCLAIMER_HTML,
+    okText: "确定启用",
+    cancelText: "不启用",
+    countdown: 3,
+  }).then((r) => r === true);
+}
+
+/**
+ * 「换一张」：递增种子并重取背景。
+ * 手动调用受 2 秒限流（不超过 30 QPS 的请求速度）；自动轮换传 force=true 跳过
+ * （轮换本身已受 ≥60s 间隔约束）。
+ */
+function shuffleBackground(force = false) {
+  const now = Date.now();
+  if (!force && bgLastShuffle && now - bgLastShuffle < 2000) {
+    toast("换图太快啦，请稍等再试", "err");
+    return;
+  }
+  bgLastShuffle = now;
+  bgNonce = now;
+  bgAppliedKey = null;
+  if (appearanceCfg) applyBackground(appearanceCfg);
+}
+
+/** 根据外观配置启停自动轮换（随机图源最低 60s，自定义链接不限；Bing/关闭不轮换） */
+function startBgRotation(cfg) {
+  if (bgRotateTimer) { clearInterval(bgRotateTimer); bgRotateTimer = null; }
+  const sec = Number(cfg && cfg.bgRotate) || 0;
+  if (sec <= 0 || !cfg || !cfg.bgType || cfg.bgType === "none" || cfg.bgType === "bing") return;
+  bgRotateTimer = setInterval(() => shuffleBackground(true), sec * 1000);
+}
+
+/** 刷新个性化页的当前壁纸缩略图 */
+function refreshBgPreview() {
+  const thumb = $("#pa-bg-thumb");
+  const bgImg = $("#bg-image");
+  if (!thumb || !bgImg) return;
+  const src = bgImg.dataset.src || "";
+  if (src) {
+    thumb.style.backgroundImage = `url("${src}")`;
+    thumb.classList.add("has");
+  } else {
+    thumb.style.backgroundImage = "";
+    thumb.classList.remove("has");
+  }
+}
+
+/** 应用内大图预览 */
+function previewWallpaper() {
+  const src = ($("#bg-image") || {}).dataset?.src;
+  if (!src) { toast("当前没有可预览的背景", "err"); return; }
+  openModal({
+    title: "壁纸预览",
+    html: `<img class="bg-preview-img" src="${src.replace(/"/g, "&quot;")}" alt="壁纸预览" />`,
+    okText: "关闭",
+    cancelText: "关闭",
+  });
+}
+
+/** 把背景配置落到 DOM：开/关背景层、模糊与暗化 CSS 变量、解析图片地址 */
+async function applyBackground(cfg) {
+  const layer = $("#bg-layer");
+  const img = $("#bg-image");
+  if (!layer || !img) return;
+  const root = document.documentElement;
+
+  const on = !!cfg.bgType && cfg.bgType !== "none";
+  document.body.classList.toggle("has-bg", on);
+  if (!on) {
+    layer.hidden = true;
+    img.style.backgroundImage = "";
+    bgAppliedKey = null;
+    return;
+  }
+  layer.hidden = false;
+  root.style.setProperty("--bg-blur", (Number(cfg.bgBlur) || 0) + "px");
+  root.style.setProperty("--bg-dim", String(Number(cfg.bgDim) || 0));
+
+  const isRandom = RANDOM_BG_TYPES.includes(cfg.bgType);
+  // bing 按天换图；随机图源按 nonce（换一张/切换时变）；自定义按地址
+  const key = [
+    cfg.bgType, cfg.bgCategory || "", cfg.bgUrl, cfg.bgFile,
+    isRandom ? bgNonce : new Date().toISOString().slice(0, 10),
+  ].join("|");
+  if (key === bgAppliedKey && img.style.backgroundImage) return;
+  bgAppliedKey = key;
+  try {
+    const r = await bridge.getBgSrc();
+    if (!r || !r.src) { layer.hidden = true; return; }
+    // uapi/qy98 返回的是 302 接口地址，加时间戳强制每次取新随机图；
+    // unsplash 主进程已返回具体图片地址，无需再加
+    let src = r.src;
+    if (cfg.bgType === "uapi" || cfg.bgType === "qy98") {
+      src += (src.includes("?") ? "&" : "?") + "_=" + (bgNonce || Date.now());
+    }
+    if (img.dataset.src !== src) {
+      img.dataset.src = src;
+      img.style.backgroundImage = `url("${src}")`;
+    }
+    if (document.body.classList.contains("has-bg")) layer.hidden = false;
+  } catch {
+    layer.hidden = true;
+  }
+}
+
+/** 进入个性化视图时渲染表单 */
+async function renderPersonalize() {
+  const root = $("#personalize-root");
+  if (!root) return;
+  if (!appearanceCfg) {
+    try { appearanceCfg = await bridge.getAppearance(); }
+    catch (e) { appearanceCfg = { preset: "normal", mode: "system", opacity: 1, accent: "#3b82f6", glow: true, glass: false }; }
+  }
+  const cfg = appearanceCfg;
+  const bgType = cfg.bgType || "none";
+  const isRandomBg = ["uapi", "qy98", "unsplash"].includes(bgType);
+  const bgGroup = bgType === "none" ? "none" : bgType === "bing" ? "bing" : isRandomBg ? "random" : "custom";
+  // 随机图源选项（已排除表情包与竖屏；acg→横屏 pc，福瑞→横屏 4k）
+  const RANDOM_SOURCES = [
+    { type: "uapi", cat: "acg", label: "ACG 动漫 · 横屏" },
+    { type: "uapi", cat: "furry", label: "福瑞 · 横屏" },
+    { type: "uapi", cat: "landscape", label: "风景" },
+    { type: "uapi", cat: "pc_wallpaper", label: "电脑壁纸" },
+    { type: "uapi", cat: "anime", label: "混合动漫" },
+    { type: "uapi", cat: "ai_drawing", label: "AI 绘画" },
+    { type: "qy98", label: "98qy 随机壁纸" },
+    { type: "unsplash", label: "Unsplash 摄影" },
+  ];
+  const chips = RANDOM_SOURCES.map((s) => {
+    const active = bgType === s.type && (s.type !== "uapi" || (cfg.bgCategory || "acg") === s.cat);
+    return `<button type="button" class="bg-chip ${active ? "active" : ""}" data-bgtype="${s.type}" ${s.cat ? `data-cat="${s.cat}"` : ""}>${escapeHtml(s.label)}</button>`;
+  }).join("");
+
+  // 窗口级材质预设（透明/亚克力/毛玻璃）暂不提供，需窗口透明配合、且
+  // 切换后要重启才生效，体验割裂；用户已决定「以后再说」，先只保留
+  // 不需要透桌面的三套。appearance.js 里的 PRESETS 与 CSS 透明规则保留，
+  // 日后恢复只需在此重新开放入口即可。
+  const PRESETS = [
+    { key: "normal", label: "正常", desc: "默认纯色，性能最佳" },
+    { key: "opaque", label: "不透明", desc: "完全实心面板" },
+    { key: "custom", label: "主题色自定义", desc: "自定义强调色" },
+  ];
+
+  const cards = PRESETS.map((p) => `
+    <button type="button" class="theme-card ${cfg.preset === p.key ? "active" : ""}" data-preset="${p.key}">
+      <div class="theme-card-name">${escapeHtml(p.label)}</div>
+      <div class="theme-card-desc">${escapeHtml(p.desc)}</div>
+    </button>`).join("");
+
+  const modeChecked = (m) => (cfg.mode === m ? "checked" : "");
+
+  root.innerHTML = `
+    <div class="block">
+      <div class="block-head">
+        <div>
+          <div class="block-title">外观预设</div>
+          <div class="block-sub">窗口级材质（亚克力/透明/毛玻璃）切换后需重启窗口才能看到效果</div>
+        </div>
+      </div>
+      <div class="theme-grid">${cards}</div>
+    </div>
+
+    <div class="block">
+      <div class="block-head">
+        <div>
+          <div class="block-title">主题色</div>
+          <div class="block-sub">强调色实时生效，可点色板快速选择</div>
+        </div>
+      </div>
+      <div class="form-grid">
+        <label class="field inline">
+          <span>主题色</span>
+          <input type="color" id="pa-accent" value="${cfg.accent || "#3b82f6"}" />
+        </label>
+        <div class="swatches" id="pa-swatches">
+          ${["#3b82f6", "#34d399", "#f0b429", "#f85149", "#a855f7", "#ec4899"].map((c) => `<button type="button" class="swatch" style="background:${c}" data-color="${c}" title="${c}"></button>`).join("")}
+        </div>
+      </div>
+    </div>
+
+    <div class="block">
+      <div class="block-head">
+        <div>
+          <div class="block-title">深浅模式</div>
+          <div class="block-sub">跟随系统会随操作系统外观自动切换</div>
+        </div>
+      </div>
+      <div class="seg">
+        <label class="seg-item"><input type="radio" name="pa-mode" value="dark" ${modeChecked("dark")} /><span>深色</span></label>
+        <label class="seg-item"><input type="radio" name="pa-mode" value="light" ${modeChecked("light")} /><span>浅色</span></label>
+        <label class="seg-item"><input type="radio" name="pa-mode" value="system" ${modeChecked("system")} /><span>跟随系统</span></label>
+      </div>
+    </div>
+
+    <div class="block">
+      <div class="block-head">
+        <div>
+          <div class="block-title">背景图片</div>
+          <div class="block-sub">支持内置必应每日一图、图片直链/API 或本地图片；开启后表面呈液态玻璃效果</div>
+        </div>
+      </div>
+      <div class="seg">
+        <label class="seg-item"><input type="radio" name="pa-bg" value="none" ${bgGroup === "none" ? "checked" : ""} /><span>关闭</span></label>
+        <label class="seg-item"><input type="radio" name="pa-bg" value="bing" ${bgGroup === "bing" ? "checked" : ""} /><span>Bing 每日一图</span></label>
+        <label class="seg-item"><input type="radio" name="pa-bg" value="random" ${bgGroup === "random" ? "checked" : ""} /><span>随机美图</span></label>
+        <label class="seg-item"><input type="radio" name="pa-bg" value="custom" ${bgGroup === "custom" ? "checked" : ""} /><span>自定义</span></label>
+      </div>
+
+      <!-- 随机美图二级菜单：第三方 API，切换时弹免责声明 -->
+      <div id="pa-bg-random" class="bg-random" ${bgGroup === "random" ? "" : "hidden"}>
+        <div class="bg-chips">${chips}</div>
+        <div id="pa-unsplash-wrap" style="margin-top:10px" ${bgType === "unsplash" ? "" : "hidden"}>
+          <label class="field">
+            <span>Unsplash Access Key（官方 API 必需；也可用环境变量 UNSPLASH_ACCESS_KEY）</span>
+            <input type="password" id="pa-unsplash-key" placeholder="粘贴你的 Access Key，应用内仅本地保存、用于服务端请求" value="${escapeHtml(cfg.bgUnsplashKey || "")}" />
+          </label>
+        </div>
+      </div>
+
+      <div id="pa-bg-url-wrap" class="form-grid" style="margin-top:10px" ${bgGroup === "custom" ? "" : "hidden"}>
+        <label class="field inline">
+          <span>图片链接</span>
+          <input type="text" id="pa-bg-url" placeholder="https://… 图片直链或返回图片的 API" value="${escapeHtml(cfg.bgUrl || "")}" />
+        </label>
+        <button type="button" class="btn ghost" id="pa-bg-test">测试链接</button>
+        <button type="button" class="btn ghost" id="pa-bg-pick">选择本地图片…</button>
+      </div>
+
+      <!-- 当前壁纸预览 + 下载 + 自动轮换（关闭时不显示；Bing 不提供轮换） -->
+      <div id="pa-bg-ctrl" class="bg-ctrl" ${bgGroup === "none" ? "hidden" : ""}>
+        <div class="bg-preview-row">
+          <button type="button" class="bg-thumb" id="pa-bg-thumb" title="点击查看大图"></button>
+          <div class="bg-preview-info">
+            <div class="bg-preview-title">当前壁纸</div>
+            <div class="bg-preview-btns">
+              <button type="button" class="btn small ghost" id="pa-bg-shuffle" ${isRandomBg ? "" : "disabled"}>🎲 换一张</button>
+              <button type="button" class="btn small ghost" id="pa-bg-download">⬇ 下载到本地</button>
+            </div>
+          </div>
+        </div>
+        <div id="pa-bg-rotate-wrap" class="range-field" ${bgGroup === "random" || bgGroup === "custom" ? "" : "hidden"} style="margin-top:10px">
+          <span>自动轮换</span>
+          <input type="number" class="rng-num" id="pa-bg-rotate" min="0" step="10" value="${Number(cfg.bgRotate) || 0}" />
+          <span class="rng-val">秒</span>
+          <span class="bg-note" style="margin:0">0=不轮换；随机图源最低 60 秒，自定义链接不限</span>
+        </div>
+        ${bgGroup === "random" ? `<p class="bg-note">随机图片均来自第三方公共接口（UAPI / 98qy / Unsplash），未经人工审核；不满意可「换一张」或切回其他来源。<button type="button" class="link-btn" id="pa-bg-disclaimer">查看第三方图片声明</button></p>` : ""}
+      </div>
+      <div class="form-grid" style="margin-top:10px">
+        <label class="range-field">
+          <span>高斯模糊</span>
+          <input type="range" class="rng" id="pa-bg-blur" min="0" max="40" step="1" value="${Number(cfg.bgBlur) || 0}" />
+          <span class="rng-val" id="pa-bg-blur-val">${Number(cfg.bgBlur) || 0}px</span>
+        </label>
+        <label class="range-field">
+          <span>背景暗化</span>
+          <input type="range" class="rng" id="pa-bg-dim" min="0" max="85" step="5" value="${Math.round((Number(cfg.bgDim) || 0) * 100)}" />
+          <span class="rng-val" id="pa-bg-dim-val">${Math.round((Number(cfg.bgDim) || 0) * 100)}%</span>
+        </label>
+      </div>
+      <label class="toggle big" style="margin-top:12px">
+        <input type="checkbox" id="pa-glass" ${cfg.glass ? "checked" : ""} />
+        <span>液态玻璃表面</span>
+        <span class="muted" style="font-size:11px">边缘折射与色散（配合背景图效果最佳，性能开销略高）</span>
+      </label>
+    </div>
+
+    <div class="block">
+      <div class="block-head">
+        <div><div class="block-title">氛围与操作</div></div>
+      </div>
+      <label class="toggle big">
+        <input type="checkbox" id="pa-glow" ${cfg.glow === false ? "" : "checked"} />
+        <span>背景氛围光</span>
+      </label>
+      <div class="form-actions" style="margin-top:12px">
+        <button type="button" class="btn ghost" id="pa-reset">恢复默认</button>
+        <span id="pa-hint" class="sched-hint"></span>
+      </div>
+    </div>
+  `;
+
+  root.querySelectorAll(".theme-card").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      root.querySelectorAll(".theme-card").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      await saveAppearance({ preset: btn.dataset.preset });
+    });
+  });
+
+  const accentEl = $("#pa-accent");
+  accentEl.addEventListener("input", async () => { await saveAppearance({ accent: accentEl.value }); });
+  root.querySelectorAll(".swatch").forEach((sw) => {
+    sw.addEventListener("click", async () => { accentEl.value = sw.dataset.color; await saveAppearance({ accent: sw.dataset.color }); });
+  });
+
+  root.querySelectorAll('input[name="pa-mode"]').forEach((r) => {
+    r.addEventListener("change", async () => { if (r.checked) await saveAppearance({ mode: r.value }); });
+  });
+
+  // ---- 背景图片 ----
+  root.querySelectorAll('input[name="pa-bg"]').forEach((r) => {
+    r.addEventListener("change", async () => {
+      if (!r.checked) return;
+      const rnd = $("#pa-bg-random");
+      const wrap = $("#pa-bg-url-wrap");
+      const ctrl = $("#pa-bg-ctrl");
+      const rotWrap = $("#pa-bg-rotate-wrap");
+      if (rnd) rnd.hidden = r.value !== "random";
+      if (wrap) wrap.hidden = r.value !== "custom";
+      if (ctrl) ctrl.hidden = r.value === "none";
+      if (rotWrap) rotWrap.hidden = !(r.value === "random" || r.value === "custom");
+      // 一级开关：关闭 / Bing 直接生效；随机美图与自定义只展开二级区，具体源另行选择
+      if (r.value === "none") await saveAppearance({ bgType: "none" });
+      else if (r.value === "bing") await saveAppearance({ bgType: "bing" });
+      refreshBgPreview();
+    });
+  });
+
+  // 随机图源 chip：切换前弹免责声明（3 秒倒计时），同意才启用
+  root.querySelectorAll(".bg-chip").forEach((ch) => {
+    ch.addEventListener("click", async () => {
+      const type = ch.dataset.bgtype;
+      const cat = ch.dataset.cat;
+      const cur = appearanceCfg || {};
+      const already = cur.bgType === type && (type !== "uapi" || (cur.bgCategory || "acg") === cat);
+      if (!already) {
+        const ok = await confirmRandomBg();
+        if (!ok) { await renderPersonalize(); return; } // 不启用：还原选中态
+      }
+      const patch = { bgType: type };
+      if (cat) patch.bgCategory = cat;
+      await saveAppearance(patch);
+      shuffleBackground(true);
+      await renderPersonalize();
+    });
+  });
+
+  const shuf = $("#pa-bg-shuffle");
+  if (shuf) shuf.addEventListener("click", () => { shuffleBackground(); setTimeout(refreshBgPreview, 1500); });
+  $("#pa-bg-disclaimer")?.addEventListener("click", () => {
+    openModal({ title: "第三方随机图片声明", html: BG_DISCLAIMER_HTML, okText: "我知道了", cancelText: "关闭" });
+  });
+
+  // 预览缩略图：点击弹出应用内大图
+  const thumb = $("#pa-bg-thumb");
+  if (thumb) thumb.addEventListener("click", previewWallpaper);
+
+  // 下载当前壁纸到本地（弹保存位置对话框）
+  const dlBtn = $("#pa-bg-download");
+  if (dlBtn) dlBtn.addEventListener("click", async () => {
+    const src = ($("#bg-image") || {}).dataset?.src;
+    if (!src) { toast("当前没有可下载的背景", "err"); return; }
+    dlBtn.disabled = true;
+    try {
+      const r = await bridge.downloadWallpaper(src);
+      if (r && r.ok) toast(`已保存到：${r.path}`, "ok");
+      else if (r && !r.canceled) toast("下载失败：" + (r.error || "未知错误"), "err");
+    } catch (e) { toast("下载失败：" + (e.message || e), "err"); }
+    finally { dlBtn.disabled = false; }
+  });
+
+  // 自定义链接测试
+  const testBtn = $("#pa-bg-test");
+  if (testBtn) testBtn.addEventListener("click", async () => {
+    const url = ($("#pa-bg-url").value || "").trim();
+    if (!url) { toast("请先填写图片链接", "err"); return; }
+    testBtn.disabled = true;
+    try {
+      const r = await bridge.testBgUrl(url);
+      if (r && r.ok) toast(`链接有效（${r.contentType || "图片"}）`, "ok");
+      else toast("测试失败：" + ((r && r.error) || "无法访问"), "err");
+    } catch (e) { toast("测试失败：" + (e.message || e), "err"); }
+    finally { testBtn.disabled = false; }
+  });
+
+  // 自动轮换间隔：0=关闭；随机图源最低 60 秒，自定义链接不限
+  const rotEl = $("#pa-bg-rotate");
+  if (rotEl) {
+    rotEl.addEventListener("change", async () => {
+      let v = Math.max(0, Math.round(Number(rotEl.value) || 0));
+      const isRandom = RANDOM_BG_TYPES.includes((appearanceCfg || {}).bgType);
+      if (v !== 0 && isRandom && v < 60) {
+        v = 60; rotEl.value = 60;
+        toast("随机图源轮换间隔不能低于 60 秒", "err");
+      }
+      await saveAppearance({ bgRotate: v });
+    });
+  }
+
+  const uk = $("#pa-unsplash-key");
+  if (uk) {
+    uk.addEventListener("change", async () => {
+      await saveAppearance({ bgUnsplashKey: uk.value.trim() });
+      shuffleBackground(true);
+    });
+  }
+
+  const bgUrlEl = $("#pa-bg-url");
+  if (bgUrlEl) {
+    bgUrlEl.addEventListener("change", async () => {
+      await saveAppearance({ bgType: "url", bgUrl: bgUrlEl.value.trim() });
+      setTimeout(refreshBgPreview, 1200);
+    });
+  }
+  const pickBtn = $("#pa-bg-pick");
+  if (pickBtn) {
+    pickBtn.addEventListener("click", async () => {
+      const r = await bridge.pickImage();
+      if (r && r.ok) {
+        appearanceCfg = r.appearance;
+        applyAppearance(appearanceCfg);
+        await renderPersonalize();
+      }
+    });
+  }
+  // 首次渲染后填充预览缩略图
+  setTimeout(refreshBgPreview, 1500);
+  const bindRange = (id, valId, unit, patch) => {
+    const el = $(id), val = $(valId);
+    if (!el) return;
+    el.addEventListener("input", () => { val.textContent = el.value + unit; });
+    el.addEventListener("change", async () => { await saveAppearance(patch(Number(el.value))); });
+  };
+  bindRange("#pa-bg-blur", "#pa-bg-blur-val", "px", (v) => ({ bgBlur: v }));
+  bindRange("#pa-bg-dim", "#pa-bg-dim-val", "%", (v) => ({ bgDim: v / 100 }));
+
+  const glassEl = $("#pa-glass");
+  if (glassEl) {
+    glassEl.addEventListener("change", async () => { await saveAppearance({ glass: glassEl.checked }); });
+  }
+
+  const glowEl = $("#pa-glow");
+  glowEl.addEventListener("change", async () => { await saveAppearance({ glow: glowEl.checked }); });
+
+  $("#pa-reset").addEventListener("click", async () => {
+    await saveAppearance({
+      preset: "normal", mode: "system", opacity: 1, accent: "#3b82f6", glow: true,
+      bgType: "none", bgUrl: "", bgFile: "", bgBlur: 18, bgDim: 0.45, glass: false,
+      bgCategory: "acg", bgUnsplashKey: "", bgRotate: 0,
+    });
+    await renderPersonalize();
+  });
+}
+
+/** 保存外观：写入主进程、更新本地缓存、立即应用到 DOM */
+async function saveAppearance(patch) {
+  appearanceCfg = Object.assign({}, appearanceCfg || {}, patch);
+  applyAppearance(appearanceCfg);
+  try {
+    const r = await bridge.setAppearance(patch);
+    const hint = $("#pa-hint");
+    if (r && r.restartNeeded) {
+      if (hint) hint.textContent = "已保存，重启窗口后生效";
+      toast("该外观需重启窗口才能生效，已保存", "ok");
+    } else if (hint) {
+      hint.textContent = "已保存";
+    }
+  } catch (e) {
+    toast("保存外观失败：" + (e.message || e), "err");
+  }
+}
+
+/** 跟随系统时，监听系统深浅模式变化实时切换 */
+function watchSystemTheme() {
+  if (!window.matchMedia) return;
+  const mq = window.matchMedia("(prefers-color-scheme: dark)");
+  const handler = () => { if (appearanceCfg && appearanceCfg.mode === "system") applyAppearance(appearanceCfg); };
+  if (mq.addEventListener) mq.addEventListener("change", handler);
+  else if (mq.addListener) mq.addListener(handler);
+}
+
+/** 推送测试按钮：读取当前表单里填的 5 个 webhook，试发一遍 */
+function wireNoticeTest(ns) {
+  const btn = $(`#${ns}-test`);
+  if (!btn) return;
+  btn.addEventListener("click", async () => {
+    const q = (k) => $(`#${ns}-${k}`);
+    const notice = {
+      wework: (q("n-wework") && q("n-wework").value || "").trim(),
+      dingding: (q("n-dingding") && q("n-dingding").value || "").trim(),
+      dingdingKeyword: (q("n-dingding-keyword") && q("n-dingding-keyword").value || "").trim(),
+      feishu: (q("n-feishu") && q("n-feishu").value || "").trim(),
+      pushme: (q("n-pushme") && q("n-pushme").value || "").trim(),
+      bark: (q("n-bark") && q("n-bark").value || "").trim(),
+    };
+    const hint = $(`#${ns}-test-hint`);
+    if (hint) hint.textContent = "正在测试…";
+    setBusy(`#${ns}-test`, true);
+    try {
+      const r = await bridge.testPush(notice);
+      const done = r && r.okCount != null ? r.okCount : 0;
+      const total = r && r.total != null ? r.total : 0;
+      if (hint) hint.textContent = `测试完成：${done}/${total} 成功（具体地址见日志）`;
+      if (total > 0 && done === total) toast("推送测试全部成功", "ok");
+      else if (total === 0) toast("没有填写任何推送通道", "err");
+      else toast("部分通道失败，见日志", "err");
+    } catch (e) {
+      if (hint) hint.textContent = "测试失败：" + (e.message || e);
+      toast("推送测试失败：" + (e.message || e), "err");
+    } finally {
+      setBusy(`#${ns}-test`, false);
+    }
+  });
 }
 
 /* ==================== 视图路由 ==================== */
@@ -441,6 +1081,7 @@ const VIEW_META = {
   dashboard: { title: "仪表盘", desc: "所有账户的运行概况与今日进度。" },
   account: { title: "账户详情", desc: "查看单个账号的任务进度，并为其单独配置。" },
   settings: { title: "全局设置", desc: "所有「遵循全局设置」的账号共用这份配置。" },
+  personalize: { title: "个性化", desc: "主题预设、透明度、深浅模式与主题色，跟随系统实时切换。" },
 };
 
 /** 切换视图 */
@@ -462,6 +1103,7 @@ function switchView(name) {
   if (name === "dashboard") renderDashboard();
   else if (name === "account") renderAccountView();
   else if (name === "settings") renderGlobalSettings();
+  else if (name === "personalize") renderPersonalize();
 }
 
 /* ==================== 仪表盘 ==================== */
@@ -614,41 +1256,48 @@ function renderAccountStatus() {
 
   setCardValue("#c-balance", s.lastBalance ? String(s.lastBalance) : "--", s.lastBalance ? "" : "empty");
   setCardValue("#c-today", s.todayPoints ? String(s.todayPoints) : "--", s.todayPoints ? "" : "empty");
+
+  // 卡片规则：主值显示进度（未完成=白色，完成=绿色），小字补充「已完成」或剩余量。
+  // 签入/活动没有篇数进度，完成时主值直接用「完成」，小字给积分明细。
+  const setSub = (sel, text) => { const el = $(sel); if (el) el.textContent = text; };
+
   setCardValue(
     "#c-sign",
-    s.signDone ? "✓ 完成" : s.signPoint > 0 ? String(s.signPoint) : "--",
+    s.signDone ? "完成" : s.signPoint > 0 ? String(s.signPoint) : "--",
     s.signDone ? "done" : s.signPoint > 0 ? "" : "empty"
   );
+  setSub("#c-sign-sub", s.signDone ? "已完成 · " + (s.signPoint || 0) + " 分" : "");
 
-  // 阅读：主值显示篇数进度，完成时显示 ✓；副标题给出积分与剩余
+  // 阅读：主值显示篇数进度
   const raDone = Number(s.readArticlesDone) || 0;
   const raTotal = Number(s.readArticlesTotal) || 0;
   if (s.readDone) {
-    setCardValue("#c-read", "✓ 完成", "done");
-    $("#c-read-sub").textContent = raTotal ? raTotal + "/" + raTotal + " 篇 · " + (s.readPoint || 0) + " 分" : "";
+    setCardValue("#c-read", raTotal ? raTotal + "/" + raTotal + " 篇" : "完成", "done");
+    setSub("#c-read-sub", "已完成 · " + (s.readPoint || 0) + " 分");
   } else if (raTotal > 0) {
     setCardValue("#c-read", raDone + "/" + raTotal + " 篇", "");
-    $("#c-read-sub").textContent = "还需 " + Math.max(0, raTotal - raDone) + " 篇 · " + (s.readPoint || 0) + " 分";
+    setSub("#c-read-sub", "还需 " + Math.max(0, raTotal - raDone) + " 篇 · " + (s.readPoint || 0) + " 分");
   } else {
     setCardValue("#c-read", s.readPoint > 0 ? String(s.readPoint) : "--", s.readPoint > 0 ? "" : "empty");
-    $("#c-read-sub").textContent = "";
+    setSub("#c-read-sub", "");
   }
 
   setCardValue(
     "#c-promos",
-    s.promosDone ? "✓ 完成" : s.promosPoint > 0 ? String(s.promosPoint) : "--",
+    s.promosDone ? "完成" : s.promosPoint > 0 ? String(s.promosPoint) : "--",
     s.promosDone ? "done" : s.promosPoint > 0 ? "" : "empty"
   );
+  setSub("#c-promos-sub", s.promosDone ? "已完成 · " + (s.promosPoint || 0) + " 分" : "");
 
   if (s.searchDone) {
-    setCardValue("#c-search", "✓ 完成", "done");
-    $("#c-search-sub").textContent = s.searchProgress || "";
+    setCardValue("#c-search", s.searchProgress || "完成", "done");
+    setSub("#c-search-sub", "已完成");
   } else if (s.searchProgress) {
     setCardValue("#c-search", s.searchProgress, "");
-    $("#c-search-sub").textContent = "";
+    setSub("#c-search-sub", "");
   } else {
     setCardValue("#c-search", "--", "empty");
-    $("#c-search-sub").textContent = "";
+    setSub("#c-search-sub", "");
   }
   setCardValue("#c-restricted", s.restrictedTimes ? String(s.restrictedTimes) : "--", s.restrictedTimes ? "" : "empty");
 
@@ -1215,6 +1864,16 @@ async function init() {
       '<div style="padding:14px;background:#f85149;color:#fff">预加载脚本未生效，无法与主进程通信。请检查 electron-preload.js。</div>'
     );
     return;
+  }
+
+  // 应用外观偏好（主题色/深浅/透明度/预设），并注册实时同步
+  try {
+    appearanceCfg = await bridge.getAppearance();
+    applyAppearance(appearanceCfg);
+    watchSystemTheme();
+  } catch (e) { console.error(e); }
+  if (bridge.onAppearance) {
+    bridge.onAppearance((cfg) => { appearanceCfg = cfg; applyAppearance(cfg); });
   }
 
   try { wireEvents(); } catch (e) { console.error(e); }

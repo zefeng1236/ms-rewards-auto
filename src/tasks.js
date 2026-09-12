@@ -65,7 +65,16 @@ async function getQueryWord(ctx) {
 async function taskSign(ctx, token) {
   const state = ctx.state;
   if (!ctx.config.get().tasks.sign || state.isTaskDoneToday("sign")) {
-    return { status: "skip", point: state.get().signPoint };
+    // signPoint 初值是 -1（"从未签入"的哨兵值）。
+    // 今日已签入却仍是 -1 时必须修正为 0，否则汇总里 `signPoint >= 0`
+    // 判定失败，会把已经签好的账号显示成「未运行」。
+    // 出现这种情况是因为跨天重置把 signPoint 归为 -1，
+    // 而当天的签入走的是本分支直接 return，没有回写过分数。
+    if (state.isTaskDoneToday("sign") && !(state.get().signPoint >= 0)) {
+      state.get().signPoint = 0;
+      state.save();
+    }
+    return { status: "skip", point: state.get().signPoint, doneToday: state.isTaskDoneToday("sign") };
   }
   // 本地已有今日签入记录但状态未写
   if (state.get().signPoint >= 0) {
@@ -124,7 +133,14 @@ async function taskSign(ctx, token) {
 async function taskRead(ctx, token) {
   const state = ctx.state;
   if (!ctx.config.get().tasks.read || state.isTaskDoneToday("read")) {
-    return { status: "skip", point: state.get().readPoint };
+    const ra = state.get().readArticles || {};
+    return {
+      status: "skip",
+      point: state.get().readPoint,
+      articles: Number(ra.done) || 0,
+      articlesTotal: Number(ra.total) || 0,
+      doneToday: state.isTaskDoneToday("read"),
+    };
   }
   try {
     const readPro = await rewards.getReadPro(ctx, token);
@@ -184,10 +200,10 @@ async function taskRead(ctx, token) {
     state.get().readPoint = finalCur;
     state.get().readArticles = { done: articlesTotal, total: articlesTotal };
     state.save();
-    const msg = `📖阅读任务已完成！\n✨今日阅读奖励：${finalCur}/${max} 分（共 ${articlesTotal} 篇）`;
+    const msg = `📖阅读任务已完成！\n✨今日阅读：${articlesTotal}/${articlesTotal} 篇`;
     logger.success(msg);
     await notify.sendText(ctx, "微软积分任务-阅读", msg);
-    return { status: "done", point: finalCur, articles: articlesTotal };
+    return { status: "done", point: finalCur, articles: articlesTotal, articlesTotal };
   } catch (e) {
     if (e && e.isAbort) throw e;
     logger.error(`阅读任务出错！${e.message}`);
@@ -352,11 +368,33 @@ async function taskPromos(ctx) {
 }
 
 /* ============ 搜索 ============ */
+
+/** 从 state 里取搜索进度快照，供汇总输出「完成多少 / 还剩多少」 */
+function searchProgressSnapshot(state) {
+  const g = state.get();
+  const pc = g.pc || { progress: 0, max: 0 };
+  const m = g.m || { progress: 0, max: 0 };
+  const done = (Number(pc.progress) || 0) + (Number(m.progress) || 0);
+  const total = (Number(pc.max) || 0) + (Number(m.max) || 0);
+  return {
+    done,
+    total,
+    left: Math.max(0, total - done),
+    pc: { progress: Number(pc.progress) || 0, max: Number(pc.max) || 0 },
+    m: { progress: Number(m.progress) || 0, max: Number(m.max) || 0 },
+  };
+}
+
 async function taskSearch(ctx) {
   const state = ctx.state;
   const cfg = ctx.config.get();
   if (!cfg.tasks.search || state.isTaskDoneToday("search")) {
-    return { status: "skip" };
+    return {
+      status: "skip",
+      searched: 0,
+      progress: searchProgressSnapshot(state),
+      doneToday: state.isTaskDoneToday("search"),
+    };
   }
   const host = await rewards.resolveHost(ctx);
   const search = state.get();
@@ -391,7 +429,7 @@ async function taskSearch(ctx) {
       const msg = "⚠️积分收入受限或账号异常，已中断今日搜索！";
       logger.error(msg);
       await notify.sendText(ctx, "微软积分任务-搜索", msg);
-      return { status: "restricted" };
+      return { status: "restricted", progress: searchProgressSnapshot(state) };
     }
     search.pc = { progress: pcPro, max: pcMax };
     search.m = { progress: mPro, max: mMax };
@@ -400,7 +438,7 @@ async function taskSearch(ctx) {
     if (pcPro >= pcMax && mPro >= mMax) {
       state.setTaskDone("search", state.getDateNum());
       logger.success(`🔍搜索任务已完成！（PC:${pcPro}/${pcMax}${mMax ? ` Mobile:${mPro}/${mMax}` : ""}）`);
-      return { status: "skip", searched: 0 };
+      return { status: "skip", searched: 0, progress: searchProgressSnapshot(state) };
     }
   } else {
     search.pc = search.pc || { progress: 0, max: DEFAULT_PC_SEARCH_MAX };
@@ -483,7 +521,7 @@ async function taskSearch(ctx) {
       const msg = `🔍搜索任务已完成！${pcReport}${mReport}`;
       logger.success(msg);
       await notify.sendText(ctx, "微软积分任务-搜索", msg);
-      return { status: "done", pc: realPc, m: realM };
+      return { status: "done", pc: realPc, m: realM, searched, progress: searchProgressSnapshot(state) };
     }
     search.pc.progress = realPc;
     search.m.progress = realM;
@@ -494,7 +532,7 @@ async function taskSearch(ctx) {
   const mReport = search.m.max > 0 ? `\n📱手机端搜索：${search.m.progress}/${search.m.max}` : "";
   const msg = `本轮运行正常，共搜索 ${searched} 次！${pcReport}${mReport}`;
   logger.log("🔍", msg);
-  return { status: "partial", searched, pc: search.pc.progress, m: search.m.progress };
+  return { status: "partial", searched, pc: search.pc.progress, m: search.m.progress, progress: searchProgressSnapshot(state) };
 }
 
-module.exports = { taskSign, taskRead, taskPromos, taskSearch };
+module.exports = { taskSign, taskRead, taskPromos, taskSearch, searchProgressSnapshot };

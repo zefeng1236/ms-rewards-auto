@@ -35,3 +35,16 @@ dist/
 # 注意：build/ 不能忽略。它是 electron-builder 的 buildResources 目录，
 # 里面的 icon.ico / icon.png 是打包必需的输入，忽略了别人 clone 后
 # 执行 npm run pack 会因找不到 build/icon.ico 直接失败。
+
+# ============ 调试与临时输出（不提交） ============
+/build/*.txt
+/build/*.log
+/icon-result*.txt
+/icon-verify.txt
+/build-web.txt
+/pil-check.txt
+/preview-u8.txt
+/th-info.txt
+/verify-out.txt
+/shots/
+/WinUI3Demo*/
