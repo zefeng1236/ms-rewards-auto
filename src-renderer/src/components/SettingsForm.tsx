@@ -311,12 +311,11 @@ export function SettingsForm({
                   />
                 </div>
                 <div className="field-block">
-                  <span className="field-label">奖品名称（可选）</span>
                   <Input
                     size="sm"
                     maxLength={10}
                     value={g.rewardName ?? ""}
-                    placeholder="如：兑换券"
+                    placeholder="奖品名称（如：兑换券）"
                     onChange={(e) => setGoal(i, { rewardName: e.target.value.slice(0, 10) })}
                   />
                 </div>
