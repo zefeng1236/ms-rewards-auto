@@ -1420,8 +1420,8 @@ html[data-preset="opaque"] .log-console {
   font-weight: 600;
 }
 
-/* ---- 第 4 页：初始设置 ---- */
-.wz-init .wz-opt {
+/* ---- 第 4 / 5 页：选项卡片（加密页与初始设置共用） ---- */
+.wz-opt {
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -1432,15 +1432,16 @@ html[data-preset="opaque"] .log-console {
   border: 1px solid var(--border, #232b39);
   border-radius: 12px;
   background: var(--panel-2, #1a1f2b);
+  color: var(--text, #e9edf5);
   cursor: pointer;
   transition: border-color 0.15s var(--ease), background 0.15s var(--ease);
 }
 
-.wz-init .wz-opt:hover {
+.wz-opt:hover {
   border-color: var(--border-strong, #2e3849);
 }
 
-.wz-init .wz-opt.on {
+.wz-opt.on {
   border-color: var(--accent, #3b82f6);
   background: rgb(59 130 246 / 0.10);
 }
@@ -1675,4 +1676,35 @@ html[data-preset="opaque"] .log-console {
 
 .vault-recovery .wz-recovery {
   width: 100%;
+}
+
+/* ---- 关闭主窗口「每次询问」选项卡（ClosePrompt） ---- */
+/* 覆盖 .wz-check 的通栏宽度：复选框只需占住内容宽度，紧贴弹窗最左 */
+.cp-remember {
+  width: auto;
+  margin-top: 0;
+}
+
+.cp-body p {
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+
+.cp-body .cp-hint {
+  color: var(--text-dim, #b6bfcf);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.cp-body .cp-hint b {
+  color: var(--text, #e9edf5);
+}
+
+/* 「启动与托盘」里关闭行为的分段选择器 */
+.close-action-group {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
