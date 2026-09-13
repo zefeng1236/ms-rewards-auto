@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const { chromium } = require("playwright-core");
 const logger = require("./logger");
+const sp = require("./storage-path");
 
 const ROOT = path.join(__dirname, "..");
 
@@ -45,22 +46,29 @@ function isChromiumReady() {
 }
 
 /**
- * 打开持久化浏览器上下文（Playwright 自带 Chromium，不读取系统浏览器任何数据）
- * @param {object} ctx 账户上下文（profileDir 为该账户独立目录）
+ * 打开浏览器上下文：临时 profile + 注入 Cookie
+ *
+ * ⚠️ 这里不再使用 accounts/<id>/profile 那个持久化目录，原因很关键：
+ * 持久化 profile 会让 Chromium 把登录 Cookie 明文写进磁盘（SQLite），
+ * 那份明文不受本项目加密存储保护 —— 只加密 state.json 等于做了个假加密。
+ *
+ * 现在的做法：每次开一个临时目录，用保险库里解出的 Cookie 注入登录态，
+ * 用完连目录一起删掉。这样磁盘上唯一的会话副本就是 state.json 里的密文。
+ *
+ * @param {object} ctx 账户上下文
  * @param {boolean} headless
- * @returns {{context: import('playwright-core').BrowserContext, executable: string, headless: boolean}}
+ * @param {{cookies?: object[]}} [opts] 要注入的登录 Cookie（来自加密存储）
  */
-async function openContext(ctx, headless) {
+async function openContext(ctx, headless, opts) {
   const executable = chromiumExecutablePath();
   if (!executable) {
     throw new Error(
       "未检测到 Playwright Chromium。请先运行: npx playwright install chromium（或在 GUI 中点击「安装 Chromium」）。"
     );
   }
-  const profileDir = ctx.profileDir;
-  if (!fs.existsSync(profileDir)) fs.mkdirSync(profileDir, { recursive: true });
+  const tempDir = fs.mkdtempSync(path.join(sp.resolve("tmp"), "prof-"));
   logger.info(`使用 Chromium: ${executable} (headless=${headless})`);
-  const context = await chromium.launchPersistentContext(profileDir, {
+  const context = await chromium.launchPersistentContext(tempDir, {
     headless,
     viewport: { width: 1366, height: 768 },
     locale: "zh-CN",
@@ -72,7 +80,62 @@ async function openContext(ctx, headless) {
       "--disable-sync",
     ],
   });
-  return { context, executable, headless };
+
+  const cookies = (opts && opts.cookies) || [];
+  if (cookies.length) {
+    const safe = sanitizeCookies(cookies);
+    if (safe.length) {
+      try {
+        await context.addCookies(safe);
+        logger.info(`已注入 ${safe.length} 个登录 Cookie（临时会话，退出即销毁）`);
+      } catch (e) {
+        logger.warn(`注入 Cookie 失败: ${e.message}`);
+      }
+    }
+  }
+  return { context, executable, headless, tempDir };
+}
+
+/**
+ * 收敛 Cookie 字段，让 addCookies 能接受。
+ *
+ * 两个坑：
+ *   1. 会话 Cookie 的 expires 是 -1，直接喂回去会被当成"已过期"而丢弃，
+ *      因此只保留正数过期时间，其余按会话 Cookie 处理。
+ *   2. domain 与 url 同时给会报错，有 domain 时就不带 url。
+ */
+function sanitizeCookies(cookies) {
+  const out = [];
+  for (const c of cookies || []) {
+    if (!c || !c.name || c.value === undefined) continue;
+    if (!c.domain && !c.url) continue;
+    const o = { name: c.name, value: String(c.value), path: c.path || "/" };
+    if (c.domain) o.domain = c.domain;
+    else o.url = c.url;
+    if (typeof c.expires === "number" && c.expires > 0) o.expires = c.expires;
+    if (c.httpOnly !== undefined) o.httpOnly = !!c.httpOnly;
+    if (c.secure !== undefined) o.secure = !!c.secure;
+    if (c.sameSite === "Strict" || c.sameSite === "Lax" || c.sameSite === "None") {
+      o.sameSite = c.sameSite;
+    }
+    out.push(o);
+  }
+  return out;
+}
+
+/** 关闭上下文并删除临时 profile（磁盘上不留会话痕迹） */
+async function closeContext(handle) {
+  if (!handle) return;
+  try {
+    await handle.context.close();
+  } catch {}
+  if (handle.tempDir) {
+    try {
+      fs.rmSync(handle.tempDir, { recursive: true, force: true });
+    } catch (e) {
+      logger.warn(`清理临时浏览器目录失败: ${e.message}`);
+    }
+  }
 }
 
 /**
@@ -96,7 +159,9 @@ function checkLoggedIn(url, cookies, html) {
  * 如果未登录，返回 loggedIn=false
  */
 async function syncCookies(ctx) {
-  const { context } = await openContext(ctx, true);
+  // 注入加密库里解出的 Cookie，这样本次访问才是「已登录」状态
+  const handle = await openContext(ctx, true, { cookies: ctx.state.getCookies() });
+  const { context } = handle;
   try {
     const pages = context.pages();
     const page = pages[0] || (await context.newPage());
@@ -134,7 +199,7 @@ async function syncCookies(ctx) {
     );
     return { loggedIn, cookies, url };
   } finally {
-    await context.close().catch(() => {});
+    await closeContext(handle);
   }
 }
 
@@ -144,7 +209,9 @@ async function syncCookies(ctx) {
  * @returns {Promise<{code: string|null, loggedIn: boolean}>}
  */
 async function loginInteractive(ctx) {
-  const { context } = await openContext(ctx, false);
+  // 登录是一次全新授权，不需要注入旧 Cookie
+  const handle = await openContext(ctx, false);
+  const { context } = handle;
   try {
     const pages = context.pages();
     const page = pages[0] || (await context.newPage());
@@ -208,28 +275,18 @@ async function loginInteractive(ctx) {
     );
     return { code, loggedIn };
   } finally {
-    await context.close().catch(() => {});
+    await closeContext(handle);
   }
 }
 
 /**
- * 清理该账户浏览器的 HTTP 缓存（不删 Cookie，保持登录态）。
- * 每次执行签到任务后调用：无头开一次持久化上下文，走 CDP 清缓存后关闭。
- * 任何异常都吞掉——清缓存失败不应影响任务流程。
+ * 清理浏览器 HTTP 缓存。
+ *
+ * 改成「每次新建临时 profile」之后本函数已无意义 —— 临时目录每次都是干净的，
+ * 不存在可累积的缓存。保留空实现是为了兼容 runner.js 的调用，避免到处改。
  */
 async function clearBrowserCache(ctx) {
-  let context = null;
-  try {
-    ({ context } = await openContext(ctx, true));
-    const page = context.pages()[0] || (await context.newPage());
-    const client = await context.newCDPSession(page);
-    await client.send("Network.clearBrowserCache");
-    logger.success("浏览器缓存已清理（登录 Cookie 保留）");
-  } catch (e) {
-    logger.warn(`清理浏览器缓存失败（不影响任务）: ${e.message}`);
-  } finally {
-    if (context) await context.close().catch(() => {});
-  }
+  return true;
 }
 
 module.exports = {
@@ -240,6 +297,8 @@ module.exports = {
   isChromiumReady,
   clearBrowserCache,
   openContext,
+  closeContext,
+  sanitizeCookies,
   syncCookies,
   loginInteractive,
   checkLoggedIn,

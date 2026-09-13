@@ -27,6 +27,8 @@ const uapi = require("./uapi");
 const launch = require("./launch");
 const setup = require("./setup");
 const sp = require("./storage-path");
+const vault = require("./vault");
+const vaultMigrate = require("./vault/migrate");
 
 const ROOT = path.join(__dirname, "..");
 const IS_SMOKE = process.argv.includes("--smoke");
@@ -618,6 +620,15 @@ function showWindow() {
  */
 function startBackgroundWork() {
   if (backgroundStarted) return;
+
+  // 保险库锁着时不要启动自动任务：登录态解不出来，跑了也是白跑，
+  // 反而可能把「未登录」的结果写回去。这里刻意不置 backgroundStarted，
+  // 解锁后由 vault:unlock / vault:setup 再次调用本函数补启动。
+  if (vault.isConfigured() && !vault.isUnlocked()) {
+    logger.warn("保险库未解锁，自动任务守护暂不启动");
+    return;
+  }
+
   backgroundStarted = true;
 
   // 启动自动运行守护（按各账户 schedule 模式循环触发）
@@ -716,6 +727,20 @@ function createTray() {
 }
 
 /* ---------------- IPC ---------------- */
+
+/**
+ * 保险库闸门。
+ *
+ * 已启用加密但未解锁时，任何「要动登录态」的操作都必须挡住：
+ * 解不出 Cookie 就跑任务，只会被判定为未登录，甚至把空结果写回去冲掉会话。
+ * @returns {{ok:false,error:string}|null} null 表示放行
+ */
+function vaultGuard() {
+  if (!vault.isConfigured()) return null;
+  if (vault.isUnlocked()) return null;
+  return { ok: false, error: "保险库已锁定，请先解锁后再执行该操作" };
+}
+
 function registerIpc() {
   ipcMain.handle("accounts:list", () => {
     try {
@@ -781,6 +806,8 @@ function registerIpc() {
 
 
   ipcMain.handle("account:login", async (_e, id) => {
+    const vg = vaultGuard();
+    if (vg) return vg;
     if (running) return { ok: false, error: "已有任务正在运行，请稍候" };
     const acc = accounts.get(id);
     if (!acc) return { ok: false, error: "账户不存在" };
@@ -811,6 +838,8 @@ function registerIpc() {
 
   // 手动刷新登录状态（重新读取浏览器 Cookie）
   ipcMain.handle("account:sync", async (_e, id) => {
+    const vg = vaultGuard();
+    if (vg) return vg;
     if (running) return { ok: false, error: "已有任务正在运行，请稍候" };
     const acc = accounts.get(id);
     if (!acc) return { ok: false, error: "账户不存在" };
@@ -883,6 +912,8 @@ function registerIpc() {
 
   // 运行单个账号（走统一的串行/状态编排，单账号无账号间等待）
   ipcMain.handle("account:run", async (_e, id) => {
+    const vg = vaultGuard();
+    if (vg) return vg;
     if (running) return { ok: false, error: "已有任务正在运行，请稍候" };
     const acc = accounts.get(id);
     if (!acc) return { ok: false, error: "账户不存在" };
@@ -894,6 +925,8 @@ function registerIpc() {
 
   // 运行全部已启用账号（串行 + 随机 20–60 秒）
   ipcMain.handle("app:runAll", async () => {
+    const vg = vaultGuard();
+    if (vg) return vg;
     if (running) return { ok: false, error: "已有任务正在运行，请稍候" };
     const ids = accounts.list().filter((a) => a.enabled).map((a) => a.id);
     if (ids.length === 0) return { ok: false, error: "没有已启用的账户" };
@@ -902,6 +935,8 @@ function registerIpc() {
 
   // 运行选中的账号（复选框批量；串行 + 随机 20–60 秒）
   ipcMain.handle("app:runSelected", async (_e, ids) => {
+    const vg = vaultGuard();
+    if (vg) return vg;
     if (running) return { ok: false, error: "已有任务正在运行，请稍候" };
     if (!Array.isArray(ids) || ids.length === 0) return { ok: false, error: "请先勾选要运行的账户" };
     return runIds(ids, true);
@@ -1088,6 +1123,56 @@ function registerIpc() {
     return next;
   });
 
+  // ---- 保险库：登录态加密存储 ----
+  // 未配置保险库时整体不启用加密（保持旧版明文行为），
+  // 一旦配置，登录态只以密文落盘，且未解锁前一律禁止读写会话。
+  ipcMain.handle("vault:status", () => vault.status());
+
+  ipcMain.handle("vault:setup", (_e, password, hint) => {
+    const r = vault.setup(password, hint);
+    if (r.ok) {
+      // 建库后立刻把存量明文登录态搬进保险库，并清掉遗留的明文 profile
+      vaultMigrate.migrateAll();
+      startBackgroundWork();
+      pushAccounts();
+    }
+    return r;
+  });
+
+  ipcMain.handle("vault:unlock", (_e, password) => {
+    const r = vault.unlock(password);
+    if (r.ok) {
+      // 上次锁着没能迁移的数据，这次补上
+      vaultMigrate.migrateAll();
+      startBackgroundWork();
+      pushAccounts();
+    }
+    return r;
+  });
+
+  ipcMain.handle("vault:unlockRecovery", (_e, key) => {
+    const r = vault.unlockWithRecovery(key);
+    if (r.ok) {
+      vaultMigrate.migrateAll();
+      startBackgroundWork();
+      pushAccounts();
+    }
+    return r;
+  });
+
+  ipcMain.handle("vault:lock", () => {
+    vault.lock();
+    pushAccounts();
+    return vault.status();
+  });
+
+  ipcMain.handle("vault:changePassword", (_e, cur, next, hint) =>
+    vault.changePassword(cur, next, hint)
+  );
+
+  /** 取恢复密钥：仅限已解锁时，避免成为绕过密码的后门（内部会轮换一把新的） */
+  ipcMain.handle("vault:recoveryKey", () => vault.getRecoveryKey());
+
   // ---- 推送测试 ----
   ipcMain.handle("notify:test", async (_e, notice) => {
     try {
@@ -1126,6 +1211,11 @@ app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
 
   registerIpc();
+
+  // 保险库自动解锁：先试系统钥匙串（日常免密），再试环境变量（Docker 场景）。
+  // 都失败就保持锁定，等用户在界面输密码后再启动自动任务。
+  vault.tryAutoUnlock();
+  if (vault.isUnlocked()) vaultMigrate.migrateAll();
 
   const launchCfg = launch.get();
   // 确保系统登录项与保存的设置一致（例如被其它方式改过注册表）

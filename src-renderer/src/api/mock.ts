@@ -7,6 +7,8 @@ import type {
   Appearance,
   Overview,
   SetupState,
+  VaultResult,
+  VaultStatus,
 } from "../types";
 import type { ElectronApi } from "../types/electron";
 
@@ -225,6 +227,17 @@ let mockSetup: SetupState = {
   autoLaunch: false,
 };
 
+// 保险库：预览模式只模拟状态流转，不做任何真实加密
+let mockVault: VaultStatus = {
+  configured: false,
+  unlocked: false,
+  keychain: true,
+  hint: "",
+  byEnv: false,
+};
+const MOCK_RECOVERY = "cHJldmlldy1tb2RlLWRlbW8ta2V5（预览模式示例）";
+let mockVaultPw = "";
+
 const mockLogs = [
   "[2026-08-31 09:12:03] [INFO] 启动应用",
   "[2026-08-31 09:12:04] [INFO] 已加载 3 个账户",
@@ -323,6 +336,38 @@ export function createMockApi(): ElectronApi {
       mockSetup = { ...mockSetup, ...patch };
       return mockSetup;
     },
+
+    // 保险库：预览模式只模拟状态流转，不做任何真实加密
+    getVaultStatus: async () => mockVault,
+    vaultSetup: async (password, hint) => {
+      if (mockVault.configured) return { ok: false, error: "保险库已配置，请勿重复设置" };
+      if (!password || password.length < 6) return { ok: false, error: "密码至少 6 位" };
+      mockVaultPw = password;
+      mockVault = { ...mockVault, configured: true, unlocked: true, hint: hint || "" };
+      return { ok: true, recoveryKey: MOCK_RECOVERY };
+    },
+    vaultUnlock: async (password) => {
+      if (!mockVault.configured) return { ok: false, error: "尚未配置保险库" };
+      if (password !== mockVaultPw) return { ok: false, error: "密码错误，请重试" };
+      mockVault = { ...mockVault, unlocked: true };
+      return { ok: true };
+    },
+    vaultUnlockRecovery: async (key) => {
+      if (key !== MOCK_RECOVERY) return { ok: false, error: "恢复密钥不正确" };
+      mockVault = { ...mockVault, unlocked: true };
+      return { ok: true };
+    },
+    vaultLock: async () => {
+      mockVault = { ...mockVault, unlocked: false };
+      return mockVault;
+    },
+    vaultChangePassword: async (cur, next) => {
+      if (cur !== mockVaultPw) return { ok: false, error: "当前密码不正确" };
+      if (!next || next.length < 6) return { ok: false, error: "新密码至少 6 位" };
+      mockVaultPw = next;
+      return { ok: true };
+    },
+    vaultRecoveryKey: async (): Promise<VaultResult> => ({ ok: true, recoveryKey: MOCK_RECOVERY }),
 
     testPush: async () => ({ ok: false, error: "浏览器预览模式不支持推送" }),
 

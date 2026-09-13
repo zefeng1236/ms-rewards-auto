@@ -6,15 +6,16 @@ import type { SetupState } from "../types";
 /**
  * 首次启动向导。
  *
- * 只在用户第一次打开软件时出现（setup.json 的 done 为 false 时），走完四步后
- * 写入 done=true，之后不再弹出。四页依次是：
+ * 只在用户第一次打开软件时出现（setup.json 的 done 为 false 时），走完五步后
+ * 写入 done=true，之后不再弹出。五页依次是：
  *   1. 欢迎 + 选择语言（当前仅简体中文可用，其余语种标注「暂未开发」）
  *   2. 隐私政策 / 服务条款 / 免责声明（多文档切换 + 必须勾选同意）
  *   3. 非官方授权声明与使用风险告知（3 秒倒计时后才能确认）
- *   4. 个性化初始设置（液态玻璃、开机自启）
+ *   4. 加密保险库（设置密码；启用后登录态只以密文落盘，并下发恢复密钥）
+ *   5. 个性化初始设置（液态玻璃、开机自启）
  */
 
-const STEPS = ["欢迎", "协议", "声明", "个性化"];
+const STEPS = ["欢迎", "协议", "声明", "加密", "个性化"];
 
 /** 语言选项。ready=false 的只做占位展示，标注用该语言自己写的「暂未开发」 */
 const LANGS: { key: string; name: string; sub: string; ready: boolean; tip: string }[] = [
@@ -141,7 +142,8 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
             />
           )}
           {page === 2 && <PageNotice />}
-          {page === 3 && (
+          {page === 3 && <PageVault onNext={() => setPage(4)} />}
+          {page === 4 && (
             <PagePersonalize
               liquidGlass={state.liquidGlass}
               autoLaunch={state.autoLaunch}
@@ -175,7 +177,10 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
             </Button>
           )}
           {page === 2 && <CountdownNext onNext={() => setPage(3)} />}
-          {page === 3 && (
+          {/* 加密页自带操作按钮（要先把恢复密钥展示完才能进下一步），
+              这里只放提示，避免页脚按钮与页内流程状态不同步 */}
+          {page === 3 && <span className="wizard-note">请在上方完成加密设置</span>}
+          {page === 4 && (
             <Button variant="accent" size="sm" onClick={finish}>
               开始使用 ✓
             </Button>
@@ -324,7 +329,170 @@ function CountdownNext({ onNext }: { onNext: () => void }) {
   );
 }
 
-/* ---------------- 第 4 页：个性化初始设置 ---------------- */
+/* ---------------- 第 4 页：加密保险库 ---------------- */
+
+/**
+ * 设置加密密码。
+ *
+ * 两个必须讲清楚的点都写在页面上了：
+ *   1. 日常启动不需要重复输密码（系统钥匙串自动解锁）；
+ *   2. 密码本身不落盘，忘密码只能靠恢复密钥 —— 所以建库后必须先展示并让用户确认保存。
+ */
+function PageVault({ onNext }: { onNext: () => void }) {
+  const [enable, setEnable] = useState(true);
+  const [pw, setPw] = useState("");
+  const [pw2, setPw2] = useState("");
+  const [hint, setHint] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [recovery, setRecovery] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  // 建库成功后先钉住用户把恢复密钥抄走，再放行下一步
+  if (recovery) {
+    return (
+      <div className="wz-page wz-vault">
+        <h2>请妥善保存你的恢复密钥</h2>
+        <p className="wz-lead">
+          这是忘记密码时<strong>唯一</strong>的解锁方式。密码本身不会被保存在任何地方，
+          我们无法为你找回。请把下面这串密钥抄下来，存进密码管理器或离线保存。
+        </p>
+        <div className="wz-recovery">
+          <code>{recovery}</code>
+          <button
+            type="button"
+            className="wz-copy"
+            onClick={() => void navigator.clipboard?.writeText(recovery)}
+          >
+            复制
+          </button>
+        </div>
+        <button
+          type="button"
+          className={`wz-check${saved ? " on" : ""}`}
+          onClick={() => setSaved(!saved)}
+        >
+          <span className="wz-check-box">{saved ? "✓" : ""}</span>
+          <span>我已把恢复密钥保存到安全的地方</span>
+        </button>
+        {!saved && <div className="hint">请先确认已保存，再进入下一步</div>}
+        <div className="wz-next">
+          <Button variant="accent" size="sm" disabled={!saved} onClick={onNext}>
+            下一步 →
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  const submit = async () => {
+    if (!enable) {
+      onNext();
+      return;
+    }
+    setErr("");
+    if (pw.length < 6) {
+      setErr("密码至少 6 位");
+      return;
+    }
+    if (pw !== pw2) {
+      setErr("两次输入的密码不一致");
+      return;
+    }
+    setBusy(true);
+    const r = await api.vaultSetup(pw, hint);
+    setBusy(false);
+    if (!r.ok) {
+      setErr(r.error || "设置失败，请重试");
+      return;
+    }
+    setRecovery(r.recoveryKey || "");
+  };
+
+  return (
+    <div className="wz-page wz-vault">
+      <h2>加密你的账户登录态</h2>
+      <p className="wz-lead">
+        启用后，微软登录 Cookie 与令牌会用<strong>只有你才知道</strong>的密码加密后再存到本机，
+        磁盘上不再留明文。日常启动由系统钥匙串自动解锁，<strong>不需要每次输密码</strong>。
+      </p>
+
+      <button type="button" className={`wz-opt${enable ? " on" : ""}`} onClick={() => setEnable(true)}>
+        <span className="wz-opt-main">
+          <strong>启用加密（推荐）</strong>
+          <span className="wz-switch" data-on={enable ? "1" : "0"}>
+            <span className="wz-knob" />
+          </span>
+        </span>
+        <span className="wz-opt-sub">
+          设置一个密码作为加密密钥。之后每次打开软件会自动解锁，无需重复输入。
+        </span>
+      </button>
+
+      <button type="button" className={`wz-opt${!enable ? " on" : ""}`} onClick={() => setEnable(false)}>
+        <span className="wz-opt-main">
+          <strong>暂不启用</strong>
+          <span className="wz-switch" data-on={!enable ? "1" : "0"}>
+            <span className="wz-knob" />
+          </span>
+        </span>
+        <span className="wz-opt-sub">
+          登录态以明文存在本机数据目录。电脑被他人使用、或数据目录被拷贝时存在泄露风险。
+          以后仍可在「全局设置 → 安全」里开启。
+        </span>
+      </button>
+
+      {enable && (
+        <div className="wz-fields">
+          <label className="wz-field">
+            <span>加密密码（至少 6 位）</span>
+            <input
+              type="password"
+              value={pw}
+              onChange={(e) => setPw(e.target.value)}
+              placeholder="用于加密登录态"
+              autoComplete="new-password"
+            />
+          </label>
+          <label className="wz-field">
+            <span>确认密码</span>
+            <input
+              type="password"
+              value={pw2}
+              onChange={(e) => setPw2(e.target.value)}
+              placeholder="再输入一次"
+              autoComplete="new-password"
+            />
+          </label>
+          <label className="wz-field">
+            <span>密码提示（可选，明文保存）</span>
+            <input
+              type="text"
+              value={hint}
+              onChange={(e) => setHint(e.target.value)}
+              placeholder="例如：生日+年份"
+            />
+          </label>
+        </div>
+      )}
+
+      {err && <div className="wz-err">{err}</div>}
+
+      <div className="wz-alert">
+        <strong>密码不可找回</strong>
+        <span>密码本身不会被保存，忘记后只能用恢复密钥解锁。下一步会生成并展示这把密钥。</span>
+      </div>
+
+      <div className="wz-next">
+        <Button variant="accent" size="sm" loading={busy} onClick={submit}>
+          {enable ? "创建加密保险库 →" : "跳过，暂不加密 →"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- 第 5 页：个性化初始设置 ---------------- */
 
 function PagePersonalize({
   liquidGlass,

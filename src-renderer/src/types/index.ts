@@ -266,6 +266,33 @@ export interface SetupState {
   autoLaunch: boolean;
 }
 
+/**
+ * 保险库状态（账户登录态的加密存储）
+ *
+ * 未配置时登录态按旧版明文存储；一旦配置，Cookie 与 token 只以密文落盘，
+ * 且未解锁前一律无法读取、也无法覆写。
+ */
+export interface VaultStatus {
+  /** 是否已配置保险库 */
+  configured: boolean;
+  /** 当前是否已解锁（未解锁则所有需要登录态的操作被挡住） */
+  unlocked: boolean;
+  /** 系统钥匙串是否可用：不可用时每次启动都要手动输密码 */
+  keychain: boolean;
+  /** 密码提示（明文保存，仅帮助用户回忆，不参与加密） */
+  hint: string;
+  /** 本次是否由环境变量解锁（无桌面/Docker 场景） */
+  byEnv: boolean;
+}
+
+/** 保险库操作返回值 */
+export interface VaultResult {
+  ok: boolean;
+  error?: string;
+  /** 建库或取回时下发的恢复密钥（忘记密码时的唯一退路） */
+  recoveryKey?: string;
+}
+
 /** 运行类操作的统一返回 */
 export interface RunResult {
   ok: boolean;

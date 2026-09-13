@@ -41,6 +41,16 @@ contextBridge.exposeInMainWorld("api", {
   getSetup: () => ipcRenderer.invoke("setup:get"),
   setSetup: (patch) => ipcRenderer.invoke("setup:set", patch),
 
+  // 保险库：账户登录态的加密存储（未配置时按旧版明文存储）
+  getVaultStatus: () => ipcRenderer.invoke("vault:status"),
+  vaultSetup: (password, hint) => ipcRenderer.invoke("vault:setup", password, hint),
+  vaultUnlock: (password) => ipcRenderer.invoke("vault:unlock", password),
+  vaultUnlockRecovery: (key) => ipcRenderer.invoke("vault:unlockRecovery", key),
+  vaultLock: () => ipcRenderer.invoke("vault:lock"),
+  vaultChangePassword: (cur, next, hint) =>
+    ipcRenderer.invoke("vault:changePassword", cur, next, hint),
+  vaultRecoveryKey: () => ipcRenderer.invoke("vault:recoveryKey"),
+
   // 推送通知测试：把当前表单填的通道试发一遍，日志输出具体（脱敏）地址
   testPush: (notice) => ipcRenderer.invoke("notify:test", notice),
 

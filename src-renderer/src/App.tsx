@@ -20,7 +20,8 @@ import { SettingsView } from "./views/SettingsView";
 import { Personalize } from "./views/Personalize";
 import { LaunchSettings } from "./views/LaunchSettings";
 import { SetupWizard } from "./views/SetupWizard";
-import type { SetupState } from "./types";
+import { VaultLock } from "./views/VaultLock";
+import type { SetupState, VaultStatus } from "./types";
 
 export type ViewKey = "dashboard" | "account" | "settings" | "personalize" | "launch";
 
@@ -51,6 +52,8 @@ function Shell() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // 首次启动向导：setup.done 为 false 时挡在最前面，走完写入 done=true
   const [setup, setSetup] = useState<SetupState | null>(null);
+  // 保险库状态：已启用加密但未解锁时，用锁屏挡住主界面
+  const [vault, setVault] = useState<VaultStatus | null>(null);
 
   useEffect(() => {
     api
@@ -59,6 +62,16 @@ function Shell() {
       // 取不到向导状态时不该把用户锁在门外，直接当作已完成
       .catch(() =>
         setSetup({ done: true, lang: "zh-CN", agreed: true, liquidGlass: true, autoLaunch: false })
+      );
+  }, []);
+
+  useEffect(() => {
+    api
+      .getVaultStatus()
+      .then(setVault)
+      // 取不到就当作没启用加密，不拦截正常使用
+      .catch(() =>
+        setVault({ configured: false, unlocked: true, keychain: false, hint: "", byEnv: false })
       );
   }, []);
 
@@ -100,7 +113,7 @@ function Shell() {
     [appearance?.bgDim]
   );
 
-  if (loading || !setup) {
+  if (loading || !setup || !vault) {
     return (
       <div className="empty" style={{ height: "100vh" }}>
         <div className="empty-icon">◍</div>
@@ -109,9 +122,14 @@ function Shell() {
     );
   }
 
-  // 首次启动：四步向导走完才进主界面
+  // 首次启动：向导走完才进主界面
   if (!setup.done) {
     return <SetupWizard onDone={() => setSetup({ ...setup, done: true })} />;
+  }
+
+  // 已启用加密但本次没解开：挡在锁屏后，解不出登录态就不能跑任务
+  if (vault.configured && !vault.unlocked) {
+    return <VaultLock onUnlocked={() => setVault({ ...vault, unlocked: true })} />;
   }
 
   const meta = VIEW_META[view];

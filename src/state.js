@@ -1,9 +1,25 @@
 const path = require("path");
 const fs = require("fs");
 const sp = require("./storage-path");
+const vault = require("./vault");
+const logger = require("./logger");
 
 // 存储根（打包环境指向 userData/storage，见 storage-path.js）
 const ROOT = sp.storageRoot;
+
+/**
+ * 需要收进保险库的敏感字段。
+ *
+ * 这些字段在内存里仍是普通字段（上层 tasks/rewards/auth 无感），
+ * 但写盘时会被抽出来加密成单个 secrets 密文块，磁盘上不再出现明文。
+ */
+const SECRET_FIELDS = ["cookies", "refreshToken", "accessToken", "accessTokenAt"];
+
+function pickSecrets(cache) {
+  const out = {};
+  for (const k of SECRET_FIELDS) if (cache[k] !== undefined) out[k] = cache[k];
+  return out;
+}
 
 const DEFAULT_STATE = {
   cookies: [],        // 浏览器会话 Cookie（含 domain / name / value / expires 等）
@@ -72,19 +88,70 @@ function createState(dir) {
       cache = { ...JSON.parse(JSON.stringify(DEFAULT_STATE)), ...raw };
       cache.cookies = Array.isArray(raw.cookies) ? raw.cookies : [];
       cache.tasksDone = { ...DEFAULT_STATE.tasksDone, ...(raw.tasksDone || {}) };
+      applySecrets(raw);
     } catch {
       cache = JSON.parse(JSON.stringify(DEFAULT_STATE));
     }
     return cache;
   }
 
+  /**
+   * 把密文块解回内存字段，让上层（tasks/rewards/auth/describe）无感读取。
+   *
+   * 只有保险库已配置且已解锁时才解得出内容；锁定时这些字段保持为空，
+   * 界面显示"未登录/待解锁"，不会把密文当明文用。
+   *
+   * 解密失败（密文损坏或主密钥不匹配）时置 __secretsCorrupt，
+   * save() 据此拒绝覆盖原密文，避免把还能救的数据冲掉。
+   */
+  function applySecrets(raw) {
+    cache.__secretsCorrupt = false;
+    if (!raw.secrets) return;
+    if (!vault.isUnlocked()) return;
+    try {
+      const s = vault.decryptJSON(raw.secrets) || {};
+      cache.cookies = Array.isArray(s.cookies) ? s.cookies : [];
+      cache.refreshToken = s.refreshToken || "";
+      cache.accessToken = s.accessToken || "";
+      cache.accessTokenAt = Number(s.accessTokenAt) || 0;
+    } catch (e) {
+      cache.__secretsCorrupt = true;
+      cache.cookies = [];
+      cache.refreshToken = "";
+      cache.accessToken = "";
+      cache.accessTokenAt = 0;
+      logger.warn(`解密账户登录态失败，已保留原密文: ${e.message}`);
+    }
+  }
+
   function get() {
     return cache || load();
   }
 
+  /**
+   * 写盘：敏感字段抽出来加密，其余字段照常明文。
+   *
+   * 三种情况：
+   *   未配置保险库 -> 沿用旧版明文存储（未启用加密时行为不变）
+   *   已解锁       -> 重新加密写入 secrets，磁盘不留明文
+   *   已锁定/损坏  -> 保留磁盘上原有密文，绝不写成空值（防止丢数据）
+   */
   function save() {
     if (!cache) load();
-    fs.writeFileSync(STATE_FILE, JSON.stringify(cache, null, 2), "utf-8");
+    const out = { ...cache };
+    delete out.__secretsCorrupt;
+    for (const k of SECRET_FIELDS) delete out[k];
+
+    if (!vault.isConfigured()) {
+      for (const k of SECRET_FIELDS) if (cache[k] !== undefined) out[k] = cache[k];
+      delete out.secrets;
+    } else if (vault.isUnlocked() && !cache.__secretsCorrupt) {
+      out.secrets = vault.encryptJSON(pickSecrets(cache));
+    } else {
+      out.secrets = cache.secrets || "";
+    }
+
+    fs.writeFileSync(STATE_FILE, JSON.stringify(out, null, 2), "utf-8");
   }
 
   function buildCookieHeader(hostname, excludes = ["_EDGE_S", "_Rwho", "_RwBf"]) {
@@ -94,8 +161,22 @@ function createState(dir) {
     return cookies.join("; ");
   }
 
+  /**
+   * 锁定状态下禁止覆写登录态。
+   *
+   * 解锁前 Cookie 解不出来（内存里是空数组），此时若让 syncCookies 之类的流程
+   * 把"当前未登录"的结果写回去，会直接把用户的会话冲掉。宁可不动，也不能丢。
+   */
+  function canPersistSecrets() {
+    if (!vault.isConfigured()) return true;
+    if (vault.isUnlocked()) return true;
+    logger.error("保险库已锁定，拒绝覆写登录态（原密文保持不变）");
+    return false;
+  }
+
   function setCookies(cookies) {
     load();
+    if (!canPersistSecrets()) return;
     cache.cookies = cookies || [];
     save();
   }
@@ -106,6 +187,7 @@ function createState(dir) {
 
   function setTokens(refreshToken, accessToken) {
     load();
+    if (!canPersistSecrets()) return;
     cache.refreshToken = refreshToken || "";
     cache.accessToken = accessToken || "";
     cache.accessTokenAt = Date.now();

@@ -17,6 +17,8 @@ import type {
   RunResult,
   SetupState,
   TestUrlResult,
+  VaultResult,
+  VaultStatus,
 } from "./index";
 
 /**
@@ -60,6 +62,18 @@ export interface ElectronApi {
   // ---- 首次启动向导 ----
   getSetup(): Promise<SetupState>;
   setSetup(patch: Partial<SetupState>): Promise<SetupState>;
+
+  // ---- 保险库（登录态加密） ----
+  getVaultStatus(): Promise<VaultStatus>;
+  /** 首次设置：用密码建库，返回恢复密钥 */
+  vaultSetup(password: string, hint?: string): Promise<VaultResult>;
+  vaultUnlock(password: string): Promise<VaultResult>;
+  /** 用恢复密钥解锁（忘记密码时） */
+  vaultUnlockRecovery(key: string): Promise<VaultResult>;
+  vaultLock(): Promise<VaultStatus>;
+  vaultChangePassword(current: string, next: string, hint?: string): Promise<VaultResult>;
+  /** 取恢复密钥（仅已解锁时可用，内部会轮换一把新的） */
+  vaultRecoveryKey(): Promise<VaultResult>;
 
   // ---- 推送测试 ----
   testPush(notice: AppConfig["notice"]): Promise<PushTestResult>;

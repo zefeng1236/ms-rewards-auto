@@ -52,7 +52,9 @@ function create(name = "") {
     enabled: true,
   };
   const dir = path.join(ACCOUNTS_DIR, id);
-  fs.mkdirSync(path.join(dir, "profile"), { recursive: true });
+  // 不再创建 profile/ 目录：浏览器改为「临时目录 + 注入 Cookie」，
+  // 登录态唯一的落地副本是 state.json 里的密文（见 browser.js 说明）。
+  fs.mkdirSync(dir, { recursive: true });
   // 生成独立的 config.json / state.json
   // 新账户默认遵循全局设置（只写 useGlobal 标志，不快照当前全局值）
   const config = createConfig(dir);
@@ -89,7 +91,13 @@ function getDir(id) {
   return path.join(ACCOUNTS_DIR, id);
 }
 
-/** 浏览器 profile 目录（每个账户独立，保证隔离 + 干净浏览器） */
+/**
+ * 浏览器 profile 目录（已废弃，仅为兼容保留）
+ *
+ * 旧版本用它做 Playwright 持久化上下文，Chromium 会把登录 Cookie 明文写进去；
+ * 现在改为临时目录 + 注入 Cookie（见 browser.js），此路径不再使用。
+ * 存量目录由 vault/migrate.js 在启用加密时清理。
+ */
 function getProfileDir(id) {
   return path.join(ACCOUNTS_DIR, id, "profile");
 }

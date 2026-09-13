@@ -1509,3 +1509,170 @@ html[data-preset="opaque"] .log-console {
   color: var(--muted, #7c8698);
   font-variant-numeric: tabular-nums;
 }
+
+/* ============================================================
+   保险库（加密存储）相关样式
+   向导加密页 / 锁屏 / 全局设置安全卡片 共用
+   ============================================================ */
+
+.wizard-note {
+  font-size: 12px;
+  color: var(--muted, #7c8698);
+}
+
+.wizard-lock-title {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.wizard-lock-title strong {
+  font-size: 15px;
+  color: var(--text, #e6ebf5);
+}
+
+.wizard-lock-title span {
+  font-size: 12px;
+  color: var(--muted, #7c8698);
+}
+
+/* ---- 表单 ---- */
+.wz-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 14px 0;
+}
+
+.wz-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.wz-field span {
+  font-size: 12px;
+  color: var(--muted, #7c8698);
+}
+
+.wz-field input {
+  width: 100%;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border, #232b39);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text, #e6ebf5);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.16s var(--ease, ease), background 0.16s var(--ease, ease);
+}
+
+.wz-field input::placeholder {
+  color: var(--muted, #7c8698);
+}
+
+.wz-field input:focus {
+  border-color: var(--accent, #4c8dff);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.wz-err {
+  margin: 10px 0;
+  padding: 8px 12px;
+  border-radius: 9px;
+  font-size: 12px;
+  color: #ff6b6b;
+  background: rgba(255, 107, 107, 0.1);
+  border: 1px solid rgba(255, 107, 107, 0.28);
+}
+
+/* ---- 恢复密钥展示 ---- */
+.wz-recovery {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px dashed var(--border, #232b39);
+}
+
+.wz-recovery code {
+  flex: 1;
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text, #e6ebf5);
+  word-break: break-all;
+  user-select: all;
+}
+
+.wz-copy {
+  flex-shrink: 0;
+  padding: 5px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border, #232b39);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text, #e6ebf5);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.16s var(--ease, ease);
+}
+
+.wz-copy:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* ---- 页内主操作（加密页自带按钮，与页脚流程解耦） ---- */
+.wz-next {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+/* ---- 设置页安全卡片 ---- */
+.vault-note {
+  font-size: 13px;
+  line-height: 1.75;
+  color: var(--muted, #7c8698);
+}
+
+.vault-note ul {
+  margin: 8px 0;
+  padding-left: 20px;
+}
+
+.vault-note li {
+  margin: 4px 0;
+}
+
+.vault-note strong {
+  color: var(--text, #e6ebf5);
+}
+
+.vault-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.vault-recovery {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+  margin-bottom: 6px;
+}
+
+.vault-recovery-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text, #e6ebf5);
+}
+
+.vault-recovery .wz-recovery {
+  width: 100%;
+}
