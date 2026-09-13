@@ -8,6 +8,7 @@ import type {
   AppearanceSetResult,
   BgSrcResult,
   ChromiumStatus,
+  CloseAction,
   DeepPartial,
   DownloadResult,
   InstallBrowserResult,
@@ -58,6 +59,10 @@ export interface ElectronApi {
   // ---- 启动与托盘 ----
   getLaunch(): Promise<LaunchConfig>;
   setLaunch(patch: Partial<LaunchConfig>): Promise<LaunchConfig>;
+  /** 关闭窗口「每次询问」选项卡的选择；remember=true 时存为默认关闭行为 */
+  closeChoice(choice: Exclude<CloseAction, "ask">, remember: boolean): Promise<{ ok: boolean }>;
+  /** 主进程拦截到关闭请求且行为为「每次询问」时推送；返回退订函数 */
+  onClosePrompt(cb: () => void): () => void;
 
   // ---- 首次启动向导 ----
   getSetup(): Promise<SetupState>;

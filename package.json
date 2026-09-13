@@ -80,6 +80,7 @@
     "afterPack": "scripts/afterPack.js",
     "nsis": {
       "oneClick": false,
+      "language": "2052",
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
@@ -88,6 +89,7 @@
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
       "installerHeaderIcon": "build/icon.ico",
+      "include": "build/installer.nsh",
       "deleteAppDataOnUninstall": false
     },
     "publish": null

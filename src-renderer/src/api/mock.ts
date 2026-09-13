@@ -5,6 +5,7 @@ import type {
   AccountRunStatusValue,
   AppConfig,
   Appearance,
+  LaunchConfig,
   Overview,
   SetupState,
   VaultResult,
@@ -213,10 +214,10 @@ const DEFAULT_LAUNCH = {
   autoLaunch: false,
   launchToTray: false,
   launchDelay: 10,
-  minimizeToTray: true,
+  closeAction: "ask" as const,
 };
 
-let mockLaunch = { ...DEFAULT_LAUNCH };
+let mockLaunch: LaunchConfig = { ...DEFAULT_LAUNCH };
 // 预览模式默认「已完成向导」，不挡主界面；
 // 想单独调试向导时访问 index.html?wizard 即可强制重新弹出。
 let mockSetup: SetupState = {
@@ -329,6 +330,9 @@ export function createMockApi(): ElectronApi {
       mockLaunch = { ...mockLaunch, ...patch };
       return mockLaunch;
     },
+    // 预览模式：选择不上报，弹窗组件自己负责收尾
+    closeChoice: async () => ({ ok: true }),
+    onClosePrompt: () => () => {},
 
     // 浏览器预览模式直接视为已完成，避免向导挡住整页 UI 调试
     getSetup: async () => mockSetup,

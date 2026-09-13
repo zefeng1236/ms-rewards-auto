@@ -240,6 +240,9 @@ export interface AppearanceSetResult {
   restartNeeded: boolean;
 }
 
+/** 点击 × 关闭主窗口的行为 */
+export type CloseAction = "ask" | "tray" | "exit";
+
 /** 启动与托盘设置（对应主进程 launch.json） */
 export interface LaunchConfig {
   /** 开机自动启动：注册到系统登录项 */
@@ -248,8 +251,8 @@ export interface LaunchConfig {
   launchToTray: boolean;
   /** 开机启动延迟（秒），仅 autoLaunch 时生效；默认 10 */
   launchDelay: number;
-  /** 关闭主窗口时最小化到托盘（而非退出） */
-  minimizeToTray: boolean;
+  /** 关闭主窗口的行为：ask=每次询问 / tray=退出到托盘 / exit=完全退出 */
+  closeAction: CloseAction;
 }
 
 /** 首次启动向导状态（对应主进程 setup.json） */

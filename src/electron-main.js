@@ -405,7 +405,7 @@ function createWindow(show = true) {
     height: 780,
     minWidth: 940,
     minHeight: 600,
-    title: "Microsoft Rewards 自动任务",
+    title: `Microsoft Rewards 自动任务 v${app.getVersion()}`,
     backgroundColor: "#11141a",
     show,
     webPreferences: {
@@ -420,18 +420,31 @@ function createWindow(show = true) {
 
   mainWindow = new BrowserWindow(opts);
 
+  // 标题栏带版本号，由主进程统一管；页面自己的 <title> 不再覆盖窗口标题
+  mainWindow.on("page-title-updated", (e) => e.preventDefault());
+
   // 去掉 File/Edit/View/Window/Help 默认菜单栏
   mainWindow.setMenuBarVisibility(false);
   mainWindow.setAutoHideMenuBar(true);
 
-  // 关闭窗口：若开启「最小化到托盘」则拦截并隐藏，实现驻留托盘。
-  // forceQuit 置位（托盘「退出」）时放行，允许真正关闭。
+  // 关闭窗口：按「关闭行为」分派——exit 放行真正退出；tray 隐藏驻留托盘；
+  // ask 拦截后让前端弹选项卡（记住选择 / 退出到托盘 / 完全退出）。
+  // forceQuit 置位（托盘「退出」或选项卡「完全退出」）时放行，允许真正关闭。
   mainWindow.on("close", (e) => {
     if (forceQuit) return;
-    if (launch.get().minimizeToTray) {
-      e.preventDefault();
+    const action = launch.get().closeAction;
+    if (action === "exit") return;
+    e.preventDefault();
+    if (action === "tray") {
       mainWindow.hide();
+      return;
     }
+    // 渲染层还没起来时收不到询问事件，先当驻留处理，避免启动瞬间点 × 直接丢进程
+    if (mainWindow.webContents.isLoading()) {
+      mainWindow.hide();
+      return;
+    }
+    mainWindow.webContents.send("app:close-prompt");
   });
 
   // 开发模式优先走 Vite dev server（热更新），未运行时自动回落到构建产物
@@ -1101,6 +1114,20 @@ function registerIpc() {
     // 立即把设置同步到系统登录项（注册/取消开机自启）
     launch.syncLoginItems(app, next);
     return next;
+  });
+
+  // ---- 关闭主窗口的「每次询问」选项卡 ----
+  // choice: tray=隐藏到托盘 / exit=真正退出；remember=true 时把该选择存为默认关闭行为
+  ipcMain.handle("app:close-choice", (_e, choice, remember) => {
+    const v = choice === "exit" ? "exit" : "tray";
+    if (remember === true) launch.set({ closeAction: v });
+    if (v === "exit") {
+      forceQuit = true;
+      app.quit();
+    } else if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.hide();
+    }
+    return { ok: true };
   });
 
   // ---- 首次启动向导 ----

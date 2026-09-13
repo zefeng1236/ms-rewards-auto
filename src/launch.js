@@ -13,7 +13,9 @@ const logger = require("./logger");
  *   autoLaunch     是否注册到系统登录项（开机自启动）
  *   launchToTray   开机自启后是否驻留托盘（不弹主窗口，后台静默运行）
  *   launchDelay    开机自启延迟（秒），仅 autoLaunch 生效，用于错峰启动
- *   minimizeToTray 关闭主窗口时是否最小化到托盘（而非退出）
+ *   closeAction    点击 × 关闭主窗口的行为：ask=每次询问 / tray=退出到托盘 / exit=完全退出。
+ *                  同时向后兼容写出 minimizeToTray（tray/ask=true，exit=false），
+ *                  老版本读到该字段也不会错乱
  */
 
 const FILE = sp.resolve("launch.json");
@@ -22,13 +24,26 @@ const DEFAULTS = {
   autoLaunch: false,
   launchToTray: false,
   launchDelay: 10,
-  minimizeToTray: true,
+  closeAction: "ask",
 };
+
+const CLOSE_ACTIONS = ["ask", "tray", "exit"];
 
 function clampDelay(v) {
   const n = Number(v);
   if (!Number.isFinite(n)) return DEFAULTS.launchDelay;
   return Math.min(600, Math.max(0, Math.round(n)));
+}
+
+function normCloseAction(v) {
+  const s = String(v == null ? "" : v);
+  return CLOSE_ACTIONS.indexOf(s) >= 0 ? s : DEFAULTS.closeAction;
+}
+
+/** 老配置迁移：旧版只有 minimizeToTray 开关（默认 true），显式关闭过则视为「完全退出」 */
+function migrateCloseAction(raw) {
+  if (raw.closeAction !== undefined) return normCloseAction(raw.closeAction);
+  return raw.minimizeToTray === false ? "exit" : DEFAULTS.closeAction;
 }
 
 /** 读取并规范化。文件损坏时退回默认值，不抛错 */
@@ -39,11 +54,14 @@ function get() {
   } catch {
     raw = {};
   }
+  const closeAction = migrateCloseAction(raw);
   return {
     autoLaunch: raw.autoLaunch === true,
     launchToTray: raw.launchToTray === true,
     launchDelay: clampDelay(raw.launchDelay === undefined ? DEFAULTS.launchDelay : raw.launchDelay),
-    minimizeToTray: raw.minimizeToTray !== false,
+    closeAction,
+    // 向后兼容字段：只由 closeAction 推导，不接受直接写入
+    minimizeToTray: closeAction !== "exit",
   };
 }
 
@@ -55,7 +73,8 @@ function set(patch) {
     autoLaunch: merged.autoLaunch === true,
     launchToTray: merged.launchToTray === true,
     launchDelay: clampDelay(merged.launchDelay),
-    minimizeToTray: merged.minimizeToTray !== false,
+    closeAction: normCloseAction(merged.closeAction),
+    minimizeToTray: normCloseAction(merged.closeAction) !== "exit",
   };
   try {
     fs.writeFileSync(FILE, JSON.stringify(out, null, 2), "utf8");

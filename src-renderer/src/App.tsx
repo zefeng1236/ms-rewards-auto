@@ -21,6 +21,7 @@ import { Personalize } from "./views/Personalize";
 import { LaunchSettings } from "./views/LaunchSettings";
 import { SetupWizard } from "./views/SetupWizard";
 import { VaultLock } from "./views/VaultLock";
+import { ClosePrompt } from "./components/ClosePrompt";
 import type { SetupState, VaultStatus } from "./types";
 
 export type ViewKey = "dashboard" | "account" | "settings" | "personalize" | "launch";
@@ -54,6 +55,13 @@ function Shell() {
   const [setup, setSetup] = useState<SetupState | null>(null);
   // 保险库状态：已启用加密但未解锁时，用锁屏挡住主界面
   const [vault, setVault] = useState<VaultStatus | null>(null);
+  // 点 × 关闭且关闭行为为「每次询问」时，主进程推事件要求弹选项卡
+  const [closePromptOpen, setClosePromptOpen] = useState(false);
+
+  useEffect(() => {
+    const off = api.onClosePrompt(() => setClosePromptOpen(true));
+    return off;
+  }, []);
 
   useEffect(() => {
     api
@@ -122,14 +130,29 @@ function Shell() {
     );
   }
 
+  // 关闭选项卡：三条界面分支（向导 / 锁屏 / 主界面）下点 × 都可能被主进程询问
+  const closePrompt = closePromptOpen ? (
+    <ClosePrompt onClose={() => setClosePromptOpen(false)} />
+  ) : null;
+
   // 首次启动：向导走完才进主界面
   if (!setup.done) {
-    return <SetupWizard onDone={() => setSetup({ ...setup, done: true })} />;
+    return (
+      <>
+        <SetupWizard onDone={() => setSetup({ ...setup, done: true })} />
+        {closePrompt}
+      </>
+    );
   }
 
   // 已启用加密但本次没解开：挡在锁屏后，解不出登录态就不能跑任务
   if (vault.configured && !vault.unlocked) {
-    return <VaultLock onUnlocked={() => setVault({ ...vault, unlocked: true })} />;
+    return (
+      <>
+        <VaultLock onUnlocked={() => setVault({ ...vault, unlocked: true })} />
+        {closePrompt}
+      </>
+    );
   }
 
   const meta = VIEW_META[view];
@@ -184,6 +207,7 @@ function Shell() {
         </div>
 
         <LogConsole />
+        {closePrompt}
         <Toaster position="bottom-right" max={3} />
       </div>
     </LiquidGlassConfig>

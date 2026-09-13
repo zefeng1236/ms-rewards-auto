@@ -1,8 +1,15 @@
 import { useEffect, useState } from "react";
-import { Card, InputNumber, toast } from "@ttqtt/liquid-glass-react";
+import { Button, Card, InputNumber, toast } from "@ttqtt/liquid-glass-react";
 import { api } from "../api/ipc";
 import { SwitchField } from "../components/fields";
-import type { LaunchConfig } from "../types";
+import type { CloseAction, LaunchConfig } from "../types";
+
+/** 点 × 关闭主窗口的三种行为，顺序即分段控件中的展示顺序 */
+const CLOSE_OPTIONS: { key: CloseAction; label: string; desc: string }[] = [
+  { key: "ask", label: "每次询问", desc: "每次点 × 都弹出选项卡，由你选择去托盘还是退出" },
+  { key: "tray", label: "退出到托盘", desc: "窗口隐藏，任务和定时调度继续在后台运行；托盘「退出」才真正关闭" },
+  { key: "exit", label: "完全退出", desc: "直接结束进程，所有任务与定时调度停止" },
+];
 
 export function LaunchSettings() {
   const [cfg, setCfg] = useState<LaunchConfig | null>(null);
@@ -78,12 +85,24 @@ export function LaunchSettings() {
           </div>
         </div>
 
-        <SwitchField
-          label="关闭窗口时最小化到托盘"
-          hint="点击窗口关闭按钮时不退出，而是缩到托盘区继续后台运行；托盘「退出」才真正关闭"
-          checked={cfg.minimizeToTray}
-          onChange={(v) => void onChange({ minimizeToTray: v })}
-        />
+        <div className="field-row" style={{ marginTop: 12, alignItems: "flex-start" }}>
+          <div style={{ minWidth: 0 }}>
+            <div>点击 × 关闭主窗口时</div>
+            <div className="hint">{CLOSE_OPTIONS.find((o) => o.key === cfg.closeAction)?.desc}</div>
+          </div>
+          <div className="close-action-group">
+            {CLOSE_OPTIONS.map((o) => (
+              <Button
+                key={o.key}
+                size="sm"
+                variant={cfg.closeAction === o.key ? "accent" : "glass"}
+                onClick={() => void onChange({ closeAction: o.key })}
+              >
+                {o.label}
+              </Button>
+            ))}
+          </div>
+        </div>
       </Card>
     </div>
   );

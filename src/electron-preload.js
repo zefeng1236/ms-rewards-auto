@@ -37,6 +37,15 @@ contextBridge.exposeInMainWorld("api", {
   getLaunch: () => ipcRenderer.invoke("launch:get"),
   setLaunch: (patch) => ipcRenderer.invoke("launch:set", patch),
 
+  // 关闭主窗口的「每次询问」选项卡：上报用户选择（tray/exit + 是否记住）
+  closeChoice: (choice, remember) => ipcRenderer.invoke("app:close-choice", choice, remember),
+  // 主进程拦截到关闭请求且行为为「每次询问」时推送；返回退订函数
+  onClosePrompt: (cb) => {
+    const handler = () => cb();
+    ipcRenderer.on("app:close-prompt", handler);
+    return () => ipcRenderer.removeListener("app:close-prompt", handler);
+  },
+
   // 首次启动向导（是否已完成、语言、协议勾选与初始选择）
   getSetup: () => ipcRenderer.invoke("setup:get"),
   setSetup: (patch) => ipcRenderer.invoke("setup:set", patch),
