@@ -276,7 +276,7 @@ export function SettingsForm({
 
       <Section
         title="积分目标"
-        desc="按总积分设置目标，可选填写奖品名称并控制是否显示在个人详情页"
+        desc="按总积分设置目标，可控制是否显示在个人详情页"
       >
         <SwitchField
           label="启用积分目标"
@@ -308,15 +308,6 @@ export function SettingsForm({
                     value={g.target}
                     min={1}
                     onChange={(v) => setGoal(i, { target: Number(v) || 0 })}
-                  />
-                </div>
-                <div className="field-block">
-                  <Input
-                    size="sm"
-                    maxLength={10}
-                    value={g.rewardName ?? ""}
-                    placeholder="奖品名称（如：兑换券）"
-                    onChange={(e) => setGoal(i, { rewardName: e.target.value.slice(0, 10) })}
                   />
                 </div>
                 <SwitchField

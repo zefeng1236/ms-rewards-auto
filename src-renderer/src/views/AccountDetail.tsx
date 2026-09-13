@@ -109,6 +109,7 @@ function GoalCard({ goal, balance }: { goal: GoalItem; balance: number }) {
     : `当前已达成${Math.round((current / target) * 10) / 10}倍目标`;
   return (
     <GlassSurface className="card-inner goal-dashboard-card" radius={14} title={`${goal.name}：${text}`}>
+      <div className="card-label goal-card-label" title={goal.name}>{goal.name}</div>
       <div className="card-value small goal-card-value" title={text}>{text}</div>
     </GlassSurface>
   );
