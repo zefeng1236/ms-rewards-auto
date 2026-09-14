@@ -30,14 +30,28 @@ function hasAuthCookies(cookies) {
 /**
  * Playwright 自带 Chromium 的可执行路径（与系统 Edge/Chrome 完全隔离）
  * 未安装时返回 null
+ *
+ * Docker 场景：镜像内没有 Playwright 下载的 Chromium（官方 CDN 在国内常不可用），
+ * 改为 apt 安装系统 Chromium，用 PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH 指过来。
+ * 桌面版不设该变量，行为与以前完全一致。
  */
 function chromiumExecutablePath() {
+  const override = (process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || "").trim();
+  if (override && fs.existsSync(override)) return override;
   try {
     const p = chromium.executablePath();
     return p && fs.existsSync(p) ? p : null;
   } catch {
     return null;
   }
+}
+
+/** 额外的 Chromium 启动参数（逗号分隔，Docker 下需要 --no-sandbox） */
+function extraChromiumArgs() {
+  return (process.env.MS_REWARDS_CHROMIUM_ARGS || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 /** Chromium 是否已就绪 */
@@ -66,9 +80,13 @@ async function openContext(ctx, headless, opts) {
       "未检测到 Playwright Chromium。请先运行: npx playwright install chromium（或在 GUI 中点击「安装 Chromium」）。"
     );
   }
-  const tempDir = fs.mkdtempSync(path.join(sp.resolve("tmp"), "prof-"));
+  // storage/tmp 可能还不存在（全新安装 / 容器首次运行），mkdtemp 不会自动建父目录
+  const tmpRoot = sp.resolve("tmp");
+  if (!fs.existsSync(tmpRoot)) fs.mkdirSync(tmpRoot, { recursive: true });
+  const tempDir = fs.mkdtempSync(path.join(tmpRoot, "prof-"));
   logger.info(`使用 Chromium: ${executable} (headless=${headless})`);
-  const context = await chromium.launchPersistentContext(tempDir, {
+
+  const launchOpts = {
     headless,
     viewport: { width: 1366, height: 768 },
     locale: "zh-CN",
@@ -78,8 +96,16 @@ async function openContext(ctx, headless, opts) {
       "--disable-default-apps",
       "--no-default-browser-check",
       "--disable-sync",
+      ...extraChromiumArgs(),
     ],
-  });
+  };
+  // 显式指定可执行文件：
+  //   - 环境变量指了外部 Chromium（Docker/apt 场景）→ 用它
+  //   - 否则用 Playwright 自带的（桌面版默认行为）
+  // 注意不能依赖 playwright 自己解析环境变量，它不认 PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH
+  launchOpts.executablePath = executable;
+
+  const context = await chromium.launchPersistentContext(tempDir, launchOpts);
 
   const cookies = (opts && opts.cookies) || [];
   if (cookies.length) {
@@ -294,6 +320,7 @@ module.exports = {
   AUTH_COOKIE_NAMES,
   hasAuthCookies,
   chromiumExecutablePath,
+  extraChromiumArgs,
   isChromiumReady,
   clearBrowserCache,
   openContext,

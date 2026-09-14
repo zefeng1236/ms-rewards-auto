@@ -381,6 +381,19 @@ function pushAccounts() {
   }
 }
 
+/** 推送 Chromium 就绪状态，让侧边栏徽标在安装完成后自动刷新 */
+function pushChromiumStatus() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  try {
+    mainWindow.webContents.send("chromium-status", {
+      ready: browser.isChromiumReady(),
+      executable: browser.chromiumExecutablePath(),
+    });
+  } catch (e) {
+    logger.warn(`推送 Chromium 状态失败: ${e.message}`);
+  }
+}
+
 /** 启动周期性推送：任务运行中 3 秒一次，空闲时 10 秒一次 */
 let pushTimer = null;
 let pushTick = 0;
@@ -674,7 +687,8 @@ function startBackgroundWork() {
     ensureDeps.ensureChromium(browser)
       .then((r) => {
         logger.info(`后台 Chromium 安装结果: method=${r.method}, ready=${r.ready}`);
-        // 安装完推送一次账户数据，让「Chromium 已就绪」徽标刷新
+        // 安装完推送一次 Chromium 状态 + 账户数据，让侧边栏徽标刷新
+        pushChromiumStatus();
         pushAccounts();
       })
       .catch((e) => logger.error(`后台 Chromium 安装失败: ${e.message}`));
@@ -1220,9 +1234,11 @@ function registerIpc() {
     try {
       const result = await ensureDeps.ensureChromium(browser);
       logger.info(`Chromium 安装完成: method=${result.method}, ready=${result.ready}`);
+      pushChromiumStatus();
       return { ok: result.ready, method: result.method, error: result.error };
     } catch (e) {
       logger.error(`Chromium 安装失败: ${e.message}`);
+      pushChromiumStatus();
       return { ok: false, error: e.message };
     } finally {
       setRunning(false);

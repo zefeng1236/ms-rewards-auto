@@ -436,6 +436,7 @@ export function createMockApi(): ElectronApi {
     onLog: noop,
     onAccounts: noop,
     onAppearance: noop,
+    onChromiumStatus: noop,
     onAccountStatus: (cb) => {
       statusCbs.add(cb);
       return () => statusCbs.delete(cb);

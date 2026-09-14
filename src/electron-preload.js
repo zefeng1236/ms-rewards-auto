@@ -88,6 +88,8 @@ contextBridge.exposeInMainWorld("api", {
   // 实时运行状态（主进程在任务开始/结束时推送）
   onRunning: (cb) => ipcRenderer.on("running", (_e, v) => cb(v)),
   onLog: (cb) => ipcRenderer.on("log", (_e, line) => cb(line)),
+  // Chromium 就绪状态变化时推送（后台自动安装 / 手动安装完成后刷新徽标）
+  onChromiumStatus: (cb) => ipcRenderer.on("chromium-status", (_e, v) => cb(v)),
   // 每账号运行态变更推送：{ id, status, reason }
   // 返回退订函数，组件卸载时调用避免重复订阅
   onAccountStatus: (cb) => {

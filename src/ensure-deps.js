@@ -151,7 +151,11 @@ async function ensureChromium(browser) {
     report("playwright", `Playwright API 失败: ${e.message}`);
   }
 
-  // 3. chocolatey fallback
+  // 3. chocolatey fallback（仅 Windows；Linux/Docker 请在镜像内预装 Chromium）
+  if (!IS_WIN) {
+    report("choco", "非 Windows 平台，跳过 chocolatey 回落（Docker 请在镜像内 apt 安装 chromium）");
+    return { ready: false, method: "none", error: "非 Windows 平台无法自动安装，请在镜像内预装 Chromium" };
+  }
   report("choco", "尝试 chocolatey fallback");
   const chocoOk = await installChromiumViaChoco();
   if (chocoOk) {

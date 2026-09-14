@@ -140,6 +140,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     });
     api.onAppearance((v) => setAppearance(v));
     api.onRunning((v) => setRunning(!!v));
+    api.onChromiumStatus((v) => setChromium(v));
     api.onLog((line) => {
       logBuffer.current.push(line);
     });

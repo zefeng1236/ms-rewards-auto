@@ -109,6 +109,7 @@ export interface ElectronApi {
   onLog(cb: (line: string) => void): void;
   onAccounts(cb: (list: Account[]) => void): void;
   onAppearance(cb: (v: Appearance) => void): void;
+  onChromiumStatus(cb: (v: ChromiumStatus) => void): void;
   /** 每账号运行态变更；返回退订函数 */
   onAccountStatus(cb: (v: { id: string; status: AccountRunStatusMap[string]["status"]; reason?: string }) => void): () => void;
   /** 每账号结构化日志；返回退订函数 */
