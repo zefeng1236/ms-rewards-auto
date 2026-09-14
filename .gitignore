@@ -37,6 +37,20 @@ dist/
 # 执行 npm run pack 会因找不到 build/icon.ico 直接失败。
 
 # ============ 调试与临时输出（不提交） ============
+# 抓取调试产物（含真实登录会话与个人积分信息，严禁提交）
+scrape-out/
+scrape-profile/
+
+# ============ 实验性 / 可行性方案（未完成，暂不入库）============
+# 这些是 Docker / Web / Android / OpenWrt 方向的调研与半成品，
+# 尚未接入主程序。等真正开工时再从下面移除对应条目即可。
+/Android/
+/OpenWrt/
+/docs/
+/docker/
+.dockerignore
+src/server.js
+src/web/
 /build/*.txt
 /build/*.log
 /icon-result*.txt

@@ -1627,6 +1627,162 @@ html[data-preset="opaque"] .log-console {
   background: rgba(255, 255, 255, 0.1);
 }
 
+/* ---- 恢复密钥：下载为 txt ---- */
+.wz-recovery-act {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: -4px 0 12px;
+}
+
+.wz-dl {
+  flex-shrink: 0;
+  padding: 5px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(82, 196, 26, 0.35);
+  background: rgba(82, 196, 26, 0.12);
+  color: #95de64;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.16s var(--ease, ease);
+}
+
+.wz-dl:hover:not(:disabled) {
+  background: rgba(82, 196, 26, 0.2);
+}
+
+.wz-dl:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* ---- 密码强度：五段分色条 ---- */
+.wz-pw-meter {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: -2px 0 8px;
+}
+
+.wz-pw-bars {
+  display: flex;
+  flex: 1;
+  gap: 4px;
+}
+
+.wz-pw-bar {
+  flex: 1;
+  height: 5px;
+  border-radius: 3px;
+  transition: background 0.2s var(--ease, ease);
+}
+
+.wz-pw-label {
+  flex-shrink: 0;
+  font-size: 11px;
+}
+
+/* 复杂度未满足时，列出还缺哪些字符种类 */
+.wz-pw-missing {
+  margin: -2px 0 8px;
+  font-size: 11px;
+  color: var(--text-dim, #8b95a7);
+}
+
+/* 弱密码提醒：只提示，不禁止提交 */
+.wz-pw-weak {
+  margin: -2px 0 8px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: #ff6b6b;
+}
+
+/* ---- 关闭加密的风险确认弹窗 ---- */
+.wz-modal-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(3px);
+}
+
+.wz-modal {
+  width: min(420px, calc(100% - 40px));
+  padding: 20px;
+  border-radius: 14px;
+  background: var(--bg-panel, #151b26);
+  border: 1px solid var(--border, #232b39);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+}
+
+.wz-modal h3 {
+  margin: 0 0 10px;
+  font-size: 16px;
+  color: var(--text, #e6ebf5);
+}
+
+.wz-modal-lead {
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text, #e6ebf5);
+}
+
+.wz-modal-sug {
+  margin: 0 0 16px;
+  padding: 9px 12px;
+  border-radius: 9px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: #95de64;
+  background: rgba(82, 196, 26, 0.1);
+  border: 1px solid rgba(82, 196, 26, 0.25);
+}
+
+/* 危险操作在左（带倒计时），推荐操作在右 */
+.wz-modal-act {
+  display: flex;
+  gap: 10px;
+}
+
+.wz-btn-danger {
+  padding: 8px 16px;
+  border-radius: 9px;
+  font-size: 13px;
+  cursor: pointer;
+  color: #fff;
+  background: #e03131;
+  border: 1px solid #e03131;
+  transition: opacity 0.16s var(--ease, ease);
+}
+
+.wz-btn-danger:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.wz-btn-danger:hover:not(:disabled) {
+  background: #c92a2a;
+}
+
+.wz-btn-primary {
+  padding: 8px 16px;
+  border-radius: 9px;
+  font-size: 13px;
+  cursor: pointer;
+  color: #fff;
+  background: #1c7ed6;
+  border: 1px solid #1c7ed6;
+  transition: background 0.16s var(--ease, ease);
+}
+
+.wz-btn-primary:hover {
+  background: #1971c2;
+}
+
 /* ---- 页内主操作（加密页自带按钮，与页脚流程解耦） ---- */
 .wz-next {
   display: flex;

@@ -136,6 +136,20 @@ export function Dashboard({ onOpenAccount }: { onOpenAccount?: (id: string) => v
     await refreshAccounts();
   };
 
+  // 状态列「去登录」：直接发起授权登录（弹出独立浏览器），完成后刷新列表
+  const [loggingInId, setLoggingInId] = useState<string | null>(null);
+  const onLogin = async (a: Account) => {
+    setLoggingInId(a.id);
+    try {
+      const r = await api.login(a.id);
+      if (!r.ok) toast.error(r.error || "登录失败");
+      else toast.success("登录成功");
+      await refreshAccounts();
+    } finally {
+      setLoggingInId(null);
+    }
+  };
+
   const onAdd = async (name: string) => {
     const r = await api.createAccount(name);
     if (r.error) {
@@ -179,7 +193,12 @@ export function Dashboard({ onOpenAccount }: { onOpenAccount?: (id: string) => v
         render: (a) => {
           const st = getAccountStatus(a.id);
           return (
-            <div style={{ display: "flex", alignItems: "flex-start", gap: 9, minWidth: 0 }}>
+            <div
+              onClick={() => onOpenAccount?.(a.id)}
+              style={{ display: "flex", alignItems: "flex-start", gap: 9, minWidth: 0, cursor: "pointer" }}
+              title="打开账号详情"
+              role="button"
+            >
               <span
                 className="nav-logo"
                 style={{ width: 26, height: 26, fontSize: 12, borderRadius: 7, marginTop: 2, flex: "0 0 auto" }}
@@ -203,12 +222,37 @@ export function Dashboard({ onOpenAccount }: { onOpenAccount?: (id: string) => v
       {
         key: "loggedIn",
         title: "状态",
-        width: 86,
-        render: (a) => (
-          <Tag color={a.state?.loggedIn ? "success" : "warning"} size="sm">
-            {a.state?.loggedIn ? "已登录" : "未登录"}
-          </Tag>
-        ),
+        width: 96,
+        render: (a) => {
+          const s = a.state || {};
+          if (s.loggedIn) {
+            return (
+              <Tag color="success" size="sm">
+                已登录
+              </Tag>
+            );
+          }
+          // 首次创建、从未登录过：状态位直接给「去登录」按钮
+          if (!s.hasRefreshToken) {
+            return (
+              <Button
+                variant="accent"
+                size="sm"
+                onClick={() => void onLogin(a)}
+                disabled={running || loggingInId === a.id}
+                title="弹出浏览器完成微软授权登录"
+              >
+                {loggingInId === a.id ? "登录中…" : "去登录"}
+              </Button>
+            );
+          }
+          // 授权过但 Cookie 待同步：保持原来的「未登录」提示（详情页可点 ⟳ 刷新状态）
+          return (
+            <Tag color="warning" size="sm">
+              未登录
+            </Tag>
+          );
+        },
       },
       {
         key: "todayPoints",

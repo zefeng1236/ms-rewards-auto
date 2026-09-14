@@ -104,6 +104,28 @@ function findJsonByKey(text, keyName) {
 }
 
 /**
+ * 在文本中查找某扁平 key 对应的数字值（如 "balance":582 / "availablePoints":583）
+ * 兼容 RSC 数据中的 \" 转义形态。优先精确匹配 `"key":数字`，找不到时退化为宽松匹配。
+ * @param {string} text
+ * @param {string} keyName 形如 "balance" 或 "availablePoints"（不含引号）
+ * @returns {number|null} 找到返回数字，否则 null
+ */
+function findFlatNumber(text, keyName) {
+  if (!text) return null;
+  const candidates = [text];
+  if (text.includes('\\"')) candidates.push(text.split('\\"').join('"'));
+  const re = new RegExp('"' + keyName + '":\\s*(\\d+)');
+  for (const cand of candidates) {
+    const m = cand.match(re);
+    if (m) {
+      const n = Number(m[1]);
+      if (Number.isFinite(n)) return n;
+    }
+  }
+  return null;
+}
+
+/**
  * 解析 pointsCounters 内嵌 JSON
  *
  * 2026-08 起 rewards.bing.com/earn 改版为 Next.js RSC（React Server Components）
@@ -211,6 +233,13 @@ async function getRewardsInfo(ctx) {
     return emptyInfo();
   }
 
+  // 真实“总积分/可用积分”：优先取 earn 页里的独立字段 "balance" 或 "availablePoints"
+  // （实测 earn 页 RSC 数据为 "balance":582，而 pointsCounters.totalPoints=82 仅是“今日积分”）。
+  // 参考脚本（修改版.js）即采用该取法：balance = "balance":(\d+) || "availablePoints":(\d+)
+  const pageBalance = findFlatNumber(res.text, "balance");
+  const pageAvailable = findFlatNumber(res.text, "availablePoints");
+  const realBalance = pageBalance != null ? pageBalance : pageAvailable;
+
   // dailyOffer：新版为数字（今日已得积分）；旧版为对象 {dailyPoint, todayTotal}
   const dailyOfferIsNum = typeof pc.dailyOffer === "number";
   const dailyOffer = !dailyOfferIsNum && pc.dailyOffer && typeof pc.dailyOffer === "object" ? pc.dailyOffer : {};
@@ -218,18 +247,21 @@ async function getRewardsInfo(ctx) {
   const pcNode = pc.pcSearch !== undefined ? pc.pcSearch : pc.pc;
   const mNode = pc.mobileSearch !== undefined ? pc.mobileSearch : pc.mobile;
 
-  // 今日已得积分：新版取 dailyOffer 数字；旧版取 dailyOffer.todayTotal
+  // 今日已得积分：
+  // - 新版 pointsCounters.totalPoints = 今日积分（dailyOffer + pc 进度），实测 = 82
+  // - 旧版取 dailyOffer.todayTotal / pc.todayTotal
   let todayTotal = 0;
-  if (dailyOfferIsNum) todayTotal = num(pc.dailyOffer);
+  if (pc.totalPoints !== undefined) todayTotal = num(pc.totalPoints);
+  else if (dailyOfferIsNum) todayTotal = num(pc.dailyOffer);
   else if (dailyOffer.todayTotal !== undefined) todayTotal = num(dailyOffer.todayTotal);
-  else if (pc.todayTotal !== undefined) todayTotal = num(pc.todayTotal);
 
   const history = parsePointsHistory(res.text);
   const monthEarn = history && history.thisMonth ? num(history.thisMonth.earn) : 0;
 
   const info = {
     ok: true,
-    balance: num(pc.totalPoints !== undefined ? pc.totalPoints : pc.balance),
+    // 总积分优先用页面独立字段（真实可用积分），找不到再回退 pointsCounters.totalPoints
+    balance: realBalance != null ? realBalance : num(pc.totalPoints !== undefined ? pc.totalPoints : pc.balance),
     pc: normProgress(pcNode),
     m: normProgress(mNode),
     dailyPoint: dailyOfferIsNum ? 0 : num(dailyOffer.dailyPoint !== undefined ? dailyOffer.dailyPoint : pc.dailyPoint),

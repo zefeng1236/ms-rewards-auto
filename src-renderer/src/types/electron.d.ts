@@ -16,6 +16,7 @@ import type {
   Overview,
   PushTestResult,
   RunResult,
+  SaveTextResult,
   SetupState,
   TestUrlResult,
   VaultResult,
@@ -55,6 +56,8 @@ export interface ElectronApi {
   pickImage(): Promise<string | null>;
   testBgUrl(url: string): Promise<TestUrlResult>;
   downloadWallpaper(url: string): Promise<DownloadResult>;
+  /** 把文本（恢复密钥）存成 txt，弹窗让用户选保存位置；canceled=true 表示用户取消 */
+  saveTextFile(text: string, defaultName?: string): Promise<SaveTextResult>;
 
   // ---- 启动与托盘 ----
   getLaunch(): Promise<LaunchConfig>;

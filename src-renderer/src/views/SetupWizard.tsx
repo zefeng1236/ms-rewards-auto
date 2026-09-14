@@ -1,7 +1,24 @@
 import { useEffect, useMemo, useState } from "react";
-import { Button } from "@ttqtt/liquid-glass-react";
+import { Button, toast } from "@ttqtt/liquid-glass-react";
 import { api } from "../api/ipc";
+import { evaluatePassword, STRENGTH_COLORS } from "../utils/passwordStrength";
 import type { SetupState } from "../types";
+
+/** 恢复密钥 txt 的内容（含使用说明，避免用户只存到一串字符不知用途） */
+function buildRecoveryText(key: string): string {
+  return [
+    "Microsoft Rewards 自动化工具 - 恢复密钥",
+    "",
+    `生成时间：${new Date().toISOString()}`,
+    "",
+    key,
+    "",
+    "说明：",
+    "- 这是忘记加密密码时唯一的解锁方式。",
+    "- 密码本身不会被保存在任何地方，密钥丢失将无法恢复数据。",
+    "- 请妥善离线保存，不要与密码存放在同一处。",
+  ].join("\n");
+}
 
 /**
  * 首次启动向导。
@@ -347,6 +364,10 @@ function PageVault({ onNext }: { onNext: () => void }) {
   const [err, setErr] = useState("");
   const [recovery, setRecovery] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [savingKey, setSavingKey] = useState(false);
+  // 关掉「启用加密」时的风险确认弹窗
+  const [confirmDisable, setConfirmDisable] = useState(false);
+  const [countdown, setCountdown] = useState(5);
 
   // 建库成功后先钉住用户把恢复密钥抄走，再放行下一步
   if (recovery) {
@@ -367,6 +388,27 @@ function PageVault({ onNext }: { onNext: () => void }) {
             复制
           </button>
         </div>
+        <div className="wz-recovery-act">
+          <button
+            type="button"
+            className="wz-dl"
+            onClick={async () => {
+              setSavingKey(true);
+              const r = await api.saveTextFile(
+                buildRecoveryText(recovery),
+                `ms-rewards-recovery-key-${new Date().toISOString().slice(0, 10)}`
+              );
+              setSavingKey(false);
+              if (r.canceled) return;
+              if (!r.ok) toast.error(r.error || "保存失败");
+              else toast.success(`已保存到 ${r.path}`);
+            }}
+            disabled={savingKey}
+          >
+            {savingKey ? "保存中…" : "下载为 txt"}
+          </button>
+          <span className="hint">建议离线保存或存入密码管理器</span>
+        </div>
         <button
           type="button"
           className={`wz-check${saved ? " on" : ""}`}
@@ -385,14 +427,29 @@ function PageVault({ onNext }: { onNext: () => void }) {
     );
   }
 
+  // 实时强度评估（仅用于界面提示，不参与加密）
+  const st = evaluatePassword(pw);
+
+  // 「确定取消」按钮的 5 秒倒计时：倒数结束前不允许确认关闭加密
+  useEffect(() => {
+    if (!confirmDisable) return;
+    if (countdown <= 0) return;
+    const t = setTimeout(() => setCountdown((c) => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [confirmDisable, countdown]);
+
   const submit = async () => {
     if (!enable) {
       onNext();
       return;
     }
     setErr("");
-    if (pw.length < 6) {
-      setErr("密码至少 6 位");
+    if (!st.complex) {
+      setErr(`密码不符合要求：${st.missing.join("、")}`);
+      return;
+    }
+    if (st.level < 3) {
+      setErr("密码强度不足，请达到强度条的第 3 段");
       return;
     }
     if (pw !== pw2) {
@@ -417,7 +474,7 @@ function PageVault({ onNext }: { onNext: () => void }) {
         磁盘上不再留明文。日常启动由系统钥匙串自动解锁，<strong>不需要每次输密码</strong>。
       </p>
 
-      <button type="button" className={`wz-opt${enable ? " on" : ""}`} onClick={() => setEnable(true)}>
+      <button type="button" className={`wz-opt${enable ? " on" : ""}`} onClick={() => setEnable(true)} data-testid="opt-enable">
         <span className="wz-opt-main">
           <strong>启用加密（推荐）</strong>
           <span className="wz-switch" data-on={enable ? "1" : "0"}>
@@ -429,7 +486,18 @@ function PageVault({ onNext }: { onNext: () => void }) {
         </span>
       </button>
 
-      <button type="button" className={`wz-opt${!enable ? " on" : ""}`} onClick={() => setEnable(false)}>
+      <button
+        type="button"
+        className={`wz-opt${!enable ? " on" : ""}`}
+        data-testid="opt-disable"
+        onClick={() => {
+          // 只有从「启用」切到「不启用」才需要风险确认；已经是关闭态则无需重复提示
+          if (enable) {
+            setCountdown(5);
+            setConfirmDisable(true);
+          }
+        }}
+      >
         <span className="wz-opt-main">
           <strong>暂不启用</strong>
           <span className="wz-switch" data-on={!enable ? "1" : "0"}>
@@ -445,15 +513,54 @@ function PageVault({ onNext }: { onNext: () => void }) {
       {enable && (
         <div className="wz-fields">
           <label className="wz-field">
-            <span>加密密码（至少 6 位）</span>
+            <span>加密密码</span>
             <input
               type="password"
               value={pw}
               onChange={(e) => setPw(e.target.value)}
-              placeholder="用于加密登录态"
+              placeholder="至少 8 位，含大小写字母、数字和特殊字符"
               autoComplete="new-password"
             />
           </label>
+
+          {/* 五段分色强度条：达到第 3 段才算符合密码要求 */}
+          {pw && (
+            <div className="wz-pw-meter">
+              <div className="wz-pw-bars">
+                {[0, 1, 2, 3, 4].map((i) => (
+                  <span
+                    key={i}
+                    className="wz-pw-bar"
+                    style={{
+                      background:
+                        i < st.level ? STRENGTH_COLORS[Math.min(st.level - 1, 4)] : "rgba(255,255,255,.12)",
+                    }}
+                  />
+                ))}
+              </div>
+              <span className="wz-pw-label" style={{ color: st.level >= 3 ? STRENGTH_COLORS[4] : STRENGTH_COLORS[0] }}>
+                {st.label}
+                {st.pass ? "（符合要求）" : "（需达到第 3 段）"}
+              </span>
+            </div>
+          )}
+
+          {/* 复杂度未满足时列出缺什么 */}
+          {pw && !st.complex && (
+            <div className="wz-pw-missing">
+              还需包含：{st.missing.join("、")}
+            </div>
+          )}
+
+          {/* 弱模式只提醒、不禁止 */}
+          {pw && st.weakHints.length > 0 && (
+            <div className="wz-pw-weak">
+              {st.weakHints.map((w) => (
+                <div key={w}>⚠ {w}</div>
+              ))}
+            </div>
+          )}
+
           <label className="wz-field">
             <span>确认密码</span>
             <input
@@ -473,6 +580,45 @@ function PageVault({ onNext }: { onNext: () => void }) {
               placeholder="例如：生日+年份"
             />
           </label>
+        </div>
+      )}
+
+      {/* 关闭加密前的风险确认：默认引导用户启用密码 */}
+      {confirmDisable && (
+        <div className="wz-modal-mask" role="dialog" aria-modal="true" aria-label="关闭加密的风险提示">
+          <div className="wz-modal">
+            <h3>确定不设置密码吗？</h3>
+            <p className="wz-modal-lead">
+              关闭后，微软登录 Cookie 与令牌将以<strong>明文</strong>存放在本机数据目录。
+              一旦电脑被他人使用、或数据目录被拷贝/同步，登录态就会<strong>直接泄露</strong>。
+            </p>
+            <p className="wz-modal-sug">
+              建议保持启用：设置一个密码后，日常启动由系统钥匙串自动解锁，不需要每次输入。
+            </p>
+            <div className="wz-modal-act">
+              <button
+                type="button"
+                className="wz-btn-danger"
+                disabled={countdown > 0}
+                onClick={() => {
+                  setEnable(false);
+                  setConfirmDisable(false);
+                }}
+              >
+                确定取消{countdown > 0 ? `（${countdown}s）` : ""}
+              </button>
+              <button
+                type="button"
+                className="wz-btn-primary"
+                onClick={() => {
+                  setEnable(true);
+                  setConfirmDisable(false);
+                }}
+              >
+                启用密码
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

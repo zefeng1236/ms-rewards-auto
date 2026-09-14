@@ -1,7 +1,24 @@
 import { useEffect, useState } from "react";
 import { Button, Card, Tag, toast } from "@ttqtt/liquid-glass-react";
 import { api } from "../api/ipc";
+import { evaluatePassword, STRENGTH_COLORS } from "../utils/passwordStrength";
 import type { VaultStatus } from "../types";
+
+/** 恢复密钥 txt 的内容（含用途说明，避免只存一串字符日后不知是什么） */
+function buildRecoveryText(key: string): string {
+  return [
+    "Microsoft Rewards 自动化工具 - 恢复密钥",
+    "",
+    `生成时间：${new Date().toISOString()}`,
+    "",
+    key,
+    "",
+    "说明：",
+    "- 这是忘记加密密码时唯一的解锁方式。",
+    "- 密码本身不会被保存在任何地方，密钥丢失将无法恢复数据。",
+    "- 请妥善离线保存，不要与密码存放在同一处。",
+  ].join("\n");
+}
 
 /**
  * 安全设置：保险库的启用 / 改密 / 恢复密钥 / 锁定。
@@ -19,6 +36,7 @@ export function VaultPanel() {
   const [pw2, setPw2] = useState("");
   const [hint, setHint] = useState("");
   const [recovery, setRecovery] = useState<string | null>(null);
+  const [savingKey, setSavingKey] = useState(false);
 
   // 改密表单
   const [cur, setCur] = useState("");
@@ -39,10 +57,18 @@ export function VaultPanel() {
 
   if (!status) return null;
 
+  // 与首次向导保持一致的强度校验：达到第 3 段且四类字符齐全才允许提交
+  const stPw = evaluatePassword(pw);
+  const stNxt = evaluatePassword(nxt);
+
   const enable = async () => {
     setErr("");
-    if (pw.length < 6) {
-      setErr("密码至少 6 位");
+    if (!stPw.complex) {
+      setErr(`密码不符合要求：${stPw.missing.join("、")}`);
+      return;
+    }
+    if (stPw.level < 3) {
+      setErr("密码强度不足，请达到强度条的第 3 段");
       return;
     }
     if (pw !== pw2) {
@@ -65,8 +91,12 @@ export function VaultPanel() {
 
   const changePw = async () => {
     setErr("");
-    if (nxt.length < 6) {
-      setErr("新密码至少 6 位");
+    if (!stNxt.complex) {
+      setErr(`新密码不符合要求：${stNxt.missing.join("、")}`);
+      return;
+    }
+    if (stNxt.level < 3) {
+      setErr("新密码强度不足，请达到强度条的第 3 段");
       return;
     }
     if (nxt !== nxt2) {
@@ -139,6 +169,27 @@ export function VaultPanel() {
                 复制
               </button>
             </div>
+            <div className="wz-recovery-act">
+              <button
+                type="button"
+                className="wz-dl"
+                disabled={savingKey}
+                onClick={async () => {
+                  setSavingKey(true);
+                  const r = await api.saveTextFile(
+                    buildRecoveryText(recovery),
+                    `ms-rewards-recovery-key-${new Date().toISOString().slice(0, 10)}`
+                  );
+                  setSavingKey(false);
+                  if (r.canceled) return;
+                  if (!r.ok) toast.error(r.error || "保存失败");
+                  else toast.success(`已保存到 ${r.path}`);
+                }}
+              >
+                {savingKey ? "保存中…" : "下载为 txt"}
+              </button>
+              <span className="hint">建议离线保存或存入密码管理器</span>
+            </div>
             <div className="hint">
               请立刻保存到密码管理器或离线介质。关闭后无法再次查看（只能重新生成一把新的）。
             </div>
@@ -161,14 +212,52 @@ export function VaultPanel() {
             </div>
             <div className="wz-fields">
               <label className="wz-field">
-                <span>加密密码（至少 6 位）</span>
+                <span>加密密码</span>
                 <input
                   type="password"
                   value={pw}
                   onChange={(e) => setPw(e.target.value)}
+                  placeholder="至少 8 位，含大小写字母、数字和特殊字符"
                   autoComplete="new-password"
                 />
               </label>
+
+              {pw && (
+                <div className="wz-pw-meter">
+                  <div className="wz-pw-bars">
+                    {[0, 1, 2, 3, 4].map((i) => (
+                      <span
+                        key={i}
+                        className="wz-pw-bar"
+                        style={{
+                          background:
+                            i < stPw.level
+                              ? STRENGTH_COLORS[Math.min(stPw.level - 1, 4)]
+                              : "rgba(255,255,255,.12)",
+                        }}
+                      />
+                    ))}
+                  </div>
+                  <span
+                    className="wz-pw-label"
+                    style={{ color: stPw.level >= 3 ? STRENGTH_COLORS[4] : STRENGTH_COLORS[0] }}
+                  >
+                    {stPw.label}
+                    {stPw.pass ? "（符合要求）" : "（需达到第 3 段）"}
+                  </span>
+                </div>
+              )}
+              {pw && !stPw.complex && (
+                <div className="wz-pw-missing">还需包含：{stPw.missing.join("、")}</div>
+              )}
+              {pw && stPw.weakHints.length > 0 && (
+                <div className="wz-pw-weak">
+                  {stPw.weakHints.map((w) => (
+                    <div key={w}>⚠ {w}</div>
+                  ))}
+                </div>
+              )}
+
               <label className="wz-field">
                 <span>确认密码</span>
                 <input
@@ -216,14 +305,51 @@ export function VaultPanel() {
                 />
               </label>
               <label className="wz-field">
-                <span>新密码（至少 6 位）</span>
+                <span>新密码</span>
                 <input
                   type="password"
                   value={nxt}
                   onChange={(e) => setNxt(e.target.value)}
+                  placeholder="至少 8 位，含大小写字母、数字和特殊字符"
                   autoComplete="new-password"
                 />
               </label>
+
+              {nxt && (
+                <div className="wz-pw-meter">
+                  <div className="wz-pw-bars">
+                    {[0, 1, 2, 3, 4].map((i) => (
+                      <span
+                        key={i}
+                        className="wz-pw-bar"
+                        style={{
+                          background:
+                            i < stNxt.level
+                              ? STRENGTH_COLORS[Math.min(stNxt.level - 1, 4)]
+                              : "rgba(255,255,255,.12)",
+                        }}
+                      />
+                    ))}
+                  </div>
+                  <span
+                    className="wz-pw-label"
+                    style={{ color: stNxt.level >= 3 ? STRENGTH_COLORS[4] : STRENGTH_COLORS[0] }}
+                  >
+                    {stNxt.label}
+                    {stNxt.pass ? "（符合要求）" : "（需达到第 3 段）"}
+                  </span>
+                </div>
+              )}
+              {nxt && !stNxt.complex && (
+                <div className="wz-pw-missing">还需包含：{stNxt.missing.join("、")}</div>
+              )}
+              {nxt && stNxt.weakHints.length > 0 && (
+                <div className="wz-pw-weak">
+                  {stNxt.weakHints.map((w) => (
+                    <div key={w}>⚠ {w}</div>
+                  ))}
+                </div>
+              )}
               <label className="wz-field">
                 <span>确认新密码</span>
                 <input

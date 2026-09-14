@@ -11,11 +11,13 @@
     "install-browser": "playwright-core install chromium",
     "postinstall": "playwright-core install chromium || exit 0",
     "dev:web": "vite --config src-renderer/vite.config.ts",
-    "build:web": "vite build --config src-renderer/vite.config.ts",
+    "build:web": "node node_modules/vite/bin/vite.js build --config src-renderer/vite.config.ts && node scripts/clean-assets.js",
     "watch:web": "vite build --config src-renderer/vite.config.ts --watch",
-    "typecheck": "tsc --noEmit -p src-renderer/tsconfig.json",
+    "typecheck": "node node_modules/typescript/bin/tsc --noEmit -p src-renderer/tsconfig.json",
     "pack": "electron-builder --win nsis",
-    "pack:dir": "electron-builder --win nsis --dir"
+    "pack:dir": "electron-builder --win nsis --dir",
+    "test": "node scripts/selfcheck.js",
+    "clean:assets": "node scripts/clean-assets.js"
   },
   "engines": {
     "node": ">=18.0.0"

@@ -32,6 +32,7 @@ const DEFAULT_STATE = {
   readArticles: { done: 0, total: 0 }, // 阅读篇数进度（每篇 3 分，满额 30 分 = 10 篇）
   promosPoint: 0,
   searchPoint: 0,              // 搜索任务今日累计得分
+  lastClaimDate: 0,            // 上次「领取积分」的日期（YYYYMMDD），用于 7 天节流
   pc: { progress: 0, max: 0 },  // PC 搜索进度
   m: { progress: 0, max: 0 },   // 移动搜索进度
   todayPoints: 0,

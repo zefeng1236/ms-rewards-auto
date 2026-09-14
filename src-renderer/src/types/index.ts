@@ -235,6 +235,15 @@ export interface DownloadResult {
   canceled?: boolean;
 }
 
+/** 保存文本文件（如恢复密钥 txt）的结果 */
+export interface SaveTextResult {
+  ok: boolean;
+  path?: string;
+  error?: string;
+  /** 用户在保存对话框点了取消 */
+  canceled?: boolean;
+}
+
 export interface AppearanceSetResult {
   ok: boolean;
   appearance: Appearance;

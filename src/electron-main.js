@@ -839,6 +839,8 @@ function registerIpc() {
     const acc = accounts.get(id);
     if (!acc) return { ok: false, error: "账户不存在" };
     setRunning(true);
+    // 授权登录的日志同样归属到该账号（详情页「运行日志」可见）
+    logger.setContext(id, acc.name);
     logger.info(`开始为「${acc.name}」授权登录（弹出独立干净浏览器）...`);
     try {
       const { code, loggedIn } = await browser.loginInteractive(accounts.context(id));
@@ -859,6 +861,7 @@ function registerIpc() {
       logger.error(`登录失败: ${e.message}`);
       return { ok: false, error: e.message };
     } finally {
+      logger.clearContext();
       setRunning(false);
     }
   });
@@ -871,6 +874,9 @@ function registerIpc() {
     const acc = accounts.get(id);
     if (!acc) return { ok: false, error: "账户不存在" };
     setRunning(true);
+    // 设置账号日志上下文：刷新过程的日志归属到该账号，
+    // 详情页「运行日志」才会显示（环形缓冲 + account-log 实时推送）
+    logger.setContext(id, acc.name);
     logger.info(`正在刷新「${acc.name}」的登录状态...`);
     try {
       const ctx = accounts.context(id);
@@ -933,6 +939,7 @@ function registerIpc() {
       logger.error(`刷新状态失败: ${e.message}`);
       return { ok: false, error: e.message };
     } finally {
+      logger.clearContext();
       setRunning(false);
     }
   });
@@ -1104,6 +1111,28 @@ function registerIpc() {
       const r = await downloadImage(url, r0.filePath);
       if (!r.ok) return { ok: false, error: r.error || `HTTP ${r.status}` };
       return { ok: true, path: r0.filePath, bytes: r.bytes };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
+
+  // 把一段文本（如恢复密钥）存成 txt：弹出保存位置对话框，由用户决定存哪
+  ipcMain.handle("app:saveTextFile", async (_e, text, defaultName) => {
+    if (typeof text !== "string" || !text) return { ok: false, error: "没有可保存的内容" };
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-");
+    const name = typeof defaultName === "string" && defaultName ? defaultName : `recovery-key-${stamp}`;
+    const r0 = await dialog.showSaveDialog(mainWindow, {
+      title: "保存为 txt 文件",
+      defaultPath: path.join(app.getPath("downloads") || app.getPath("home"), `${name}.txt`),
+      filters: [
+        { name: "文本文件", extensions: ["txt"] },
+        { name: "所有文件", extensions: ["*"] },
+      ],
+    });
+    if (r0.canceled || !r0.filePath) return { ok: false, canceled: true };
+    try {
+      fs.writeFileSync(r0.filePath, text, "utf-8");
+      return { ok: true, path: r0.filePath };
     } catch (e) {
       return { ok: false, error: e.message };
     }

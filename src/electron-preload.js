@@ -32,6 +32,8 @@ contextBridge.exposeInMainWorld("api", {
   testBgUrl: (url) => ipcRenderer.invoke("appearance:testUrl", url),
   // 下载当前壁纸到本地（弹保存位置对话框）
   downloadWallpaper: (url) => ipcRenderer.invoke("appearance:downloadWallpaper", url),
+  // 把文本（恢复密钥）存成 txt，弹窗让用户选保存位置
+  saveTextFile: (text, defaultName) => ipcRenderer.invoke("app:saveTextFile", text, defaultName),
 
   // 启动与托盘（应用级偏好，独立于账户）
   getLaunch: () => ipcRenderer.invoke("launch:get"),

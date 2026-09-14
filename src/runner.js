@@ -143,6 +143,11 @@ async function runOnce(ctx, opts = {}) {
   result.tasks.promos = rPromos;
   persistSummary();
   cancel.throwIfAborted();
+  // 每周领取一次「可领取 / 待领取」积分（内部自带 7 天节流）
+  const rClaim = await tasks.taskClaimRewards(ctx);
+  result.tasks.claim = rClaim;
+  persistSummary();
+  cancel.throwIfAborted();
   const rSearch = await tasks.taskSearch(ctx);
   result.tasks.search = rSearch;
 

@@ -324,6 +324,7 @@ export function createMockApi(): ElectronApi {
     pickImage: async () => null,
     testBgUrl: async () => ({ ok: false, error: "浏览器预览模式不支持探测" }),
     downloadWallpaper: async () => ({ ok: false, error: "浏览器预览模式不支持下载" }),
+    saveTextFile: async () => ({ ok: false, error: "浏览器预览模式不支持保存文件" }),
 
     getLaunch: async () => mockLaunch,
     setLaunch: async (patch) => {

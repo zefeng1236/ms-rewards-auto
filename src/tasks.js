@@ -3,6 +3,7 @@ const { httpRequest } = require("./http");
 const rewards = require("./rewards");
 const notify = require("./notify");
 const cancel = require("./cancel");
+const browser = require("./browser");
 const { randomUUID, randomUUIDHex, randInt, randArr, getRandomSubstring, getDateSlash, getDayEn, isJSON } = require("./utils");
 
 // 使用可被「停止任务」中断的 sleep（中止时立即抛出 AbortError）
@@ -237,6 +238,140 @@ function extractJsonArray(cleanHtml, marker, openChar, closeChar) {
   }
 }
 
+/**
+ * 访问每日活动的奖励链接（等价于手工「点开标签 → 等页面加载 → 停留几秒 → 关闭」）
+ *
+ * 改版后 earn/dashboard 页把每条每日活动渲染成带追踪参数的 Bing 搜索链接，
+ * 形如：
+ *   https://www.bing.com/search?q=…&FORM=tgrew4&filters=sid:"…"
+ *     BTEPOKey:"REWARDSQUIZ_DailySet_UrlOffer"
+ *     BTDSUOID:"Gamification_DailySet_ZHCN_20260914_Child1"&rnoreward=1
+ * 服务端按这些参数记分，因此只需带着登录 Cookie 真正请求一次即可，
+ * 无需启动浏览器（与搜索任务一致）。
+ *
+ * @param {object} ctx 账户上下文
+ * @param {string} url 活动的 destination 链接
+ */
+async function visitDailySetUrl(ctx, url) {
+  if (!url) return;
+  const host = await rewards.resolveHost(ctx);
+  const cookie = ctx.state.buildCookieHeader(host);
+  const ua = rewards.UA_PC;
+  const r = await httpRequest({
+    url,
+    headers: {
+      "user-agent": ua,
+      cookie,
+      referer: "https://rewards.bing.com/",
+      accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    },
+    ctx,
+  });
+  if (!r || !r.text) {
+    logger.warn(`活动链接无响应（HTTP ${r ? r.status : "?"}）`);
+  }
+  // 与手工操作对齐：加载后停留几秒再「关闭」，给服务端记分留出时间
+  await sleep(randInt(3000, 5000));
+}
+
+/**
+ * 每周领取一次「可领取 / 待领取」积分
+ *
+ * 背景：rewards 首页有两类需要手动点一下才入账的积分：
+ *   1. 「可领取」卡片（可领取 N 分 + 「领取」按钮）
+ *   2. 「必应 Star 奖励 / 默认搜索奖励」等卡片，标注「上个月赚取的积分: 待领取」
+ * 这些只能靠点击触发（React 服务端组件），没有可直接调用的公开接口，
+ * 因此这里用无头浏览器点一次，并做 7 天节流，避免每次运行都点。
+ *
+ * @returns {Promise<{status:string, claimed?:number, reason?:string}>}
+ */
+async function taskClaimRewards(ctx) {
+  const state = ctx.state;
+  const todayNum = Number(state.getDateNum()); // YYYYMMDD
+
+  /** 两个 YYYYMMDD 之间相差的天数 */
+  const daysBetween = (from, to) => {
+    const p = (n) => {
+      const s = String(n);
+      return Date.UTC(Number(s.slice(0, 4)), Number(s.slice(4, 6)) - 1, Number(s.slice(6, 8)));
+    };
+    return Math.floor((p(to) - p(from)) / 86400000);
+  };
+
+  const last = Number(state.get().lastClaimDate || 0);
+  if (last && daysBetween(last, todayNum) < 7) {
+    return { status: "skip", reason: `距上次领取仅 ${daysBetween(last, todayNum)} 天（7 天一次）` };
+  }
+
+  let handle = null;
+  let claimed = 0;
+  try {
+    handle = await browser.openContext(ctx, true, { cookies: state.getCookies() });
+    const page = handle.context.pages()[0] || (await handle.context.newPage());
+    await page.goto("https://rewards.bing.com/", { waitUntil: "domcontentloaded", timeout: 60000 });
+    await sleep(4000);
+
+    // 找出所有「可点击的领取入口」：文案含「领取」且不在「已领取」语境里
+    const targets = await page.evaluate(() => {
+      const out = [];
+      const els = document.querySelectorAll("button, a[href], [role='button']");
+      for (const el of els) {
+        const t = (el.innerText || el.getAttribute("aria-label") || "").trim();
+        if (!t || !t.includes("领取")) continue;
+        if (t.includes("已领取")) continue;
+        // 卡片整体文案，用来判断是不是「待领取」状态
+        const card = el.closest("[class*='card'], [class*='Card']") || el.parentElement;
+        const cardText = (card && card.innerText ? card.innerText : t).replace(/\s+/g, " ");
+        out.push({ text: t.slice(0, 60), cardText: cardText.slice(0, 120) });
+      }
+      return out;
+    });
+
+    if (!targets.length) {
+      logger.info("🎁 没有可领取的积分（未找到待领取入口）");
+      state.get().lastClaimDate = todayNum;
+      state.save();
+      return { status: "done", claimed: 0, reason: "无待领取项" };
+    }
+
+    // 逐个点击（页面中「领取」入口可能不止一个）
+    const els = await page.$$("button, a[href], [role='button']");
+    for (const el of els) {
+      cancel.throwIfAborted();
+      let info = null;
+      try {
+        info = await el.evaluate((n) => {
+          const t = (n.innerText || n.getAttribute("aria-label") || "").trim();
+          return { t };
+        });
+      } catch {
+        continue;
+      }
+      if (!info || !info.t || !info.t.includes("领取") || info.t.includes("已领取")) continue;
+      try {
+        await el.click();
+        claimed++;
+        logger.log("🎁", `已点击领取入口：${info.t.slice(0, 40)}`);
+        await sleep(2500);
+      } catch (e) {
+        logger.warn(`点击领取入口失败: ${e.message}`);
+      }
+    }
+
+    state.get().lastClaimDate = todayNum;
+    state.save();
+    const msg = claimed > 0 ? `🎁 已处理 ${claimed} 个领取入口（每周一次）` : "🎁 本周无需领取";
+    logger.success(msg);
+    return { status: "done", claimed };
+  } catch (e) {
+    if (e && e.isAbort) throw e;
+    logger.warn(`领取积分出错: ${e.message}`);
+    return { status: "error", error: e.message };
+  } finally {
+    if (handle) await browser.closeContext(handle).catch(() => {});
+  }
+}
+
 async function taskPromos(ctx) {
   const state = ctx.state;
   if (!ctx.config.get().tasks.promos || state.isTaskDoneToday("promos")) {
@@ -259,7 +394,16 @@ async function taskPromos(ctx) {
         if (item.isCompleted) {
           dashPoints += item.points;
         } else {
-          promosArr.push({ id: item.offerId, hash: item.hash, url: "https://rewards.bing.com/dashboard", points: item.points, type: "dash" });
+          promosArr.push({
+            id: item.offerId,
+            hash: item.hash,
+            url: "https://rewards.bing.com/dashboard",
+            points: item.points,
+            type: "dash",
+            // 改版后真正的完成方式是访问这条 destination（Bing 搜索奖励链接），
+            // 与用户手工「点开标签→等加载→关闭」等价；POST 交卷仅作兜底
+            destination: item.destination,
+          });
         }
       }
     }
@@ -339,6 +483,19 @@ async function taskPromos(ctx) {
       if (item.type === "dash") {
         reqHeaders["next-router-state-tree"] = NEXT_ROUTER_TREE;
       }
+
+      // ① 先按「手工点开标签」的方式真正访问活动链接（服务端按 URL 里的
+      //    BTEPOKey / BTDSUOID 等追踪参数记分），这是当前改版后唯一可靠的方式
+      if (item.destination) {
+        try {
+          await visitDailySetUrl(ctx, item.destination);
+        } catch (e) {
+          if (e && e.isAbort) throw e;
+          logger.warn(`访问活动链接失败（将继续尝试交卷）: ${e.message}`);
+        }
+      }
+
+      // ② 保留原有的 next-action 交卷作为兜底（旧结构 / 链接无效时仍可能生效）
       await httpRequest({
         method: "POST",
         url: item.url,
@@ -539,4 +696,4 @@ async function taskSearch(ctx) {
   return { status: "partial", searched, pc: search.pc.progress, m: search.m.progress, progress: searchProgressSnapshot(state) };
 }
 
-module.exports = { taskSign, taskRead, taskPromos, taskSearch, searchProgressSnapshot };
+module.exports = { taskSign, taskRead, taskPromos, taskClaimRewards, taskSearch, searchProgressSnapshot };
