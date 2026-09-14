@@ -106,9 +106,10 @@ async function runOnce(ctx, opts = {}) {
     const sp = Number.isFinite(g.signPoint) ? g.signPoint : 0;
     const rp = Number.isFinite(g.readPoint) ? g.readPoint : 0;
     const pp = Number.isFinite(g.promosPoint) ? g.promosPoint : 0;
+    const srp = Number.isFinite(g.searchPoint) ? g.searchPoint : 0;
     // 服务器权威值可用时不要用本地累加覆盖（promosPoint 是累计值，会虚高）
     const server = Number.isFinite(g.todayPointsServer) ? g.todayPointsServer : 0;
-    g.todayPoints = server > 0 ? server : Math.max(0, sp) + rp + pp;
+    g.todayPoints = server > 0 ? server : Math.max(0, sp) + rp + pp + srp;
     if (extra) Object.assign(g, extra);
     state.save();
   };
@@ -162,7 +163,8 @@ async function runOnce(ctx, opts = {}) {
   // 今日合计：服务器权威值绝对优先。
   // promosPoint 记录的是「已完成活动累计总分」，不等于当日增量，
   // 因此本地累加只能在拿不到服务器值时兜底，不可与服务器值取 max。
-  const localTotal = Math.max(0, signPoint) + readPoint + promosPoint;
+  const searchPoint = state.get().searchPoint || 0;
+  const localTotal = Math.max(0, signPoint) + readPoint + promosPoint + searchPoint;
   const todayTotal = serverToday > 0 ? serverToday : localTotal;
 
   const lines = [];

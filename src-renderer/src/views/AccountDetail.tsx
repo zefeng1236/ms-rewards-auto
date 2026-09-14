@@ -480,7 +480,7 @@ export function AccountDetail({
             label="搜索"
             small
             value={s.searchDone ? s.searchProgress || "完成" : s.searchProgress || "--"}
-            sub={s.searchDone ? "已完成" : undefined}
+            sub={s.searchDone ? `已完成 · ${s.searchPoint || 0} 分` : s.searchPoint ? `${s.searchPoint} 分` : undefined}
             done={!!s.searchDone}
             empty={!s.searchDone && !s.searchProgress}
           />

@@ -137,7 +137,8 @@ function describe(id) {
   const signPt = Number.isFinite(st.signPoint) ? st.signPoint : 0;
   const readPt = Number.isFinite(st.readPoint) ? st.readPoint : 0;
   const promosPt = Number.isFinite(st.promosPoint) ? st.promosPoint : 0;
-  const computedToday = Math.max(0, signPt) + readPt + promosPt;
+  const searchPt = Number.isFinite(st.searchPoint) ? st.searchPoint : 0;
+  const computedToday = Math.max(0, signPt) + readPt + promosPt + searchPt;
   // 服务器值仅在"今天运行/同步过"时才采用，避免显示昨天的旧值
   const ranToday = st.lastRunDate === dateNum;
   const serverToday = ranToday && Number.isFinite(st.todayPointsServer) ? st.todayPointsServer : 0;
@@ -213,6 +214,7 @@ function describe(id) {
       signPoint: st.signPoint,
       readPoint: st.readPoint,
       promosPoint: st.promosPoint,
+      searchPoint: st.searchPoint,
       searchProgress,
       readProgress,
       readArticlesDone,

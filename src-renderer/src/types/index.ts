@@ -113,6 +113,7 @@ export interface AccountState {
   signPoint?: number;
   readPoint?: number;
   promosPoint?: number;
+  searchPoint?: number;
   /** 形如 "12/15 · M:3/10" */
   searchProgress: string;
   /** 形如 "7/10 篇" */

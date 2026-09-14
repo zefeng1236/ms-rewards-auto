@@ -31,6 +31,7 @@ const DEFAULT_STATE = {
   readPoint: 0,
   readArticles: { done: 0, total: 0 }, // 阅读篇数进度（每篇 3 分，满额 30 分 = 10 篇）
   promosPoint: 0,
+  searchPoint: 0,              // 搜索任务今日累计得分
   pc: { progress: 0, max: 0 },  // PC 搜索进度
   m: { progress: 0, max: 0 },   // 移动搜索进度
   todayPoints: 0,

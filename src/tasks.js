@@ -433,6 +433,7 @@ async function taskSearch(ctx) {
     }
     search.pc = { progress: pcPro, max: pcMax };
     search.m = { progress: mPro, max: mMax };
+    search.searchPoint = pcPro + mPro;
     state.save();
     // 搜索额度已满则直接标记完成，避免空转
     if (pcPro >= pcMax && mPro >= mMax) {
@@ -492,6 +493,7 @@ async function taskSearch(ctx) {
         } else {
           search.m.progress = Math.min(search.m.progress + 3, search.m.max);
         }
+        search.searchPoint = (search.pc.progress || 0) + (search.m.progress || 0);
         state.save();
         searched++;
         logger.log("🔍", `第 ${searched}/${limit} 次搜索完成（${device}），进度 PC:${search.pc.progress}/${search.pc.max} M:${search.m.progress}/${search.m.max}`);
@@ -511,6 +513,7 @@ async function taskSearch(ctx) {
   if (finalDashboard && finalDashboard.ok) {
     const realPc = finalDashboard.pc.progress;
     const realM = finalDashboard.m.progress;
+    search.searchPoint = realPc + realM;
     if (realPc >= search.pc.max && realM >= search.m.max) {
       search.lastSearchProgress = -1;
       search.restrictedTimes = 0;
@@ -525,6 +528,7 @@ async function taskSearch(ctx) {
     }
     search.pc.progress = realPc;
     search.m.progress = realM;
+    search.searchPoint = realPc + realM;
     state.save();
   }
 
