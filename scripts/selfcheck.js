@@ -30,8 +30,8 @@ function checkTrue(name, cond, extra = "") {
 
 /* ============ 1. 密码强度 ============ */
 console.log("\n【1】密码强度 evaluatePassword");
-const outFile = path.join(ROOT, "scrape-out", "pw-selfcheck.cjs");
-fs.mkdirSync(path.dirname(outFile), { recursive: true });
+const os = require("os");
+const outFile = path.join(os.tmpdir(), "ms-rewards-pw-selfcheck.cjs");
 execFileSync(process.execPath, [
   path.join(ROOT, "node_modules", "esbuild", "bin", "esbuild"),
   path.join(ROOT, "src-renderer", "src", "utils", "passwordStrength.ts"),
@@ -71,41 +71,21 @@ fs.rmSync(outFile, { force: true });
 
 /* ============ 2. 每日活动解析 ============ */
 console.log("\n【2】每日活动 dailySetItems 解析");
-// 复刻 src/tasks.js:219-238 的实现
-function extractJsonArray(cleanHtml, marker, openChar, closeChar) {
-  const idx = cleanHtml.indexOf(marker);
-  if (idx === -1) return null;
-  let start = idx + marker.length;
-  while (start < cleanHtml.length && /\s/.test(cleanHtml[start])) start++;
-  if (cleanHtml[start] !== openChar) return null;
-  let count = 1;
-  let end = start + 1;
-  while (count > 0 && end < cleanHtml.length) {
-    if (cleanHtml[end] === openChar) count++;
-    else if (cleanHtml[end] === closeChar) count--;
-    end++;
-  }
-  const arrayStr = cleanHtml.substring(start, end).replace(/\\"/g, '"');
-  try {
-    return JSON.parse(arrayStr);
-  } catch {
-    return null;
-  }
-}
-
-const homeHtml = path.join(ROOT, "scrape-out", "explore-home.html");
-if (fs.existsSync(homeHtml)) {
-  const dashHtml = fs.readFileSync(homeHtml, "utf8").replace(/\\"/g, '"');
-  const items = extractJsonArray(dashHtml, '"dailySetItems":', "[", "]");
-  checkTrue("能从真实页面解析出 dailySetItems", Array.isArray(items) && items.length > 0);
+// 数据源：selfcheck-fixtures/home.json（净化样本，结构来自真实抓取，无凭据）
+// 由 scripts/make-fixtures.js 生成；抓取原始 HTML 已因含登录态删除。
+const fixture = path.join(ROOT, "selfcheck-fixtures", "home.json");
+if (fs.existsSync(fixture)) {
+  const items = JSON.parse(fs.readFileSync(fixture, "utf8")).dailySetItems;
+  checkTrue("能解析出 dailySetItems", Array.isArray(items) && items.length > 0);
   if (Array.isArray(items) && items.length) {
     checkTrue("每条都带 hash（交卷必需）", items.every((i) => !!i.hash));
     checkTrue("每条都带 destination（访问链接必需）", items.every((i) => !!i.destination));
     checkTrue("destination 是 bing 搜索奖励链接", items[0].destination.includes("bing.com/search"));
+    checkTrue("destination 带追踪参数（BTEPOKey/BTDSUOID/rnoreward）", /BTEPOKey|BTDSUOID|rnoreward=1/.test(items[0].destination) || /BTEPOKey|BTDSUOID|rnoreward=1/.test(items[1].destination));
     console.log(`     样本: ${items.length} 条, 首条 offerId=${items[0].offerId}, date=${items[0].date}, points=${items[0].points}`);
   }
 } else {
-  console.log("  ⚠️ 未找到 scrape-out/explore-home.html，跳过（需先跑抓取脚本）");
+  console.log("  ⚠️ 未找到 selfcheck-fixtures/home.json，跳过（先跑 node scripts/make-fixtures.js）");
 }
 
 /* ============ 3. 每周领取节流 ============ */
