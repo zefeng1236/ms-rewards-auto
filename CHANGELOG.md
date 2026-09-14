@@ -2,7 +2,28 @@
 
 本文件记录各版本的重要变更。版本格式为主版本.次版本.修订号，带 `-beta` 后缀的为测试版本。
 
-## 0.8.7（当前版本）
+## 0.8.8（当前版本）
+
+发布日期：2026-09-14
+
+### 修复
+
+- **修复全新数据目录下 `mkdtemp` 报 `ENOENT`**：
+  打开浏览器前会先确保 `storage/tmp` 目录存在，否则 `fs.mkdtempSync` 会因为父目录不存在而失败。
+  这导致部分用户在 Administrator 账户或全新安装后无法登录/同步（日志反复出现
+  `ENOENT: no such file or directory, mkdtemp ... prof-XXXXXX`）。
+- **修复 Chromium 安装完成后侧边栏仍显示「缺失 Chromium」**：
+  后台或手动安装完成后，主进程现在会主动推送 `chromium-status` 事件，前端订阅后即时刷新徽标，
+  不再需要手动刷新或重启应用。
+- **Docker / 外部 Chromium 兼容**：`browser.js` 支持通过环境变量
+  `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` 指定外部 Chromium，并支持 `MS_REWARDS_CHROMIUM_ARGS`
+  注入额外启动参数。
+- **非 Windows 平台安装回落**：`ensure-deps.js` 在 Linux/Docker 环境下直接跳过 chocolatey fallback，
+  避免无意义等待。
+
+---
+
+## 0.8.7
 
 发布日期：2026-09-13
 
