@@ -1,6 +1,6 @@
 {
   "name": "ms-rewards-auto",
-  "version": "0.8.8",
+  "version": "0.8.9",
   "description": "微软积分（Microsoft Rewards）自动任务独立软件 - 多账户隔离、干净浏览器、Electron GUI、三层配置模型",
   "main": "src/electron-main.js",
   "scripts": {
