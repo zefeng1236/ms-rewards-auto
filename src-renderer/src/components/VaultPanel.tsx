@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Button, Card, Tag, toast } from "@ttqtt/liquid-glass-react";
-import { api } from "../api/ipc";
+import { api, IS_WEB } from "../api/ipc";
 import { evaluatePassword, STRENGTH_COLORS } from "../utils/passwordStrength";
 import type { VaultStatus } from "../types";
 
@@ -205,7 +205,11 @@ export function VaultPanel() {
               当前登录态以<strong>明文</strong>存放在本机数据目录。启用后：
               <ul>
                 <li>Cookie 与令牌用你的密码加密后落盘，磁盘上不再有明文；</li>
-                <li>日常启动由系统钥匙串自动解锁，<strong>不需要每次输密码</strong>；</li>
+                <li>
+                  {IS_WEB
+                    ? "把恢复密钥存到本机浏览器后，打开网页点一下即可登录；"
+                    : "日常启动由系统钥匙串自动解锁，不需要每次输密码；"}
+                </li>
                 <li>锁定时自动任务会暂停，避免把"未登录"的空结果写回去。</li>
               </ul>
               <strong>密码不会被保存</strong>，忘记后只能靠恢复密钥解锁，请务必保存。
@@ -288,10 +292,14 @@ export function VaultPanel() {
         {status.configured && status.unlocked && !recovery && (
           <>
             <div className="vault-note">
-              系统钥匙串{status.keychain ? "可用" : "不可用"}
-              {status.keychain
-                ? "：下次启动会自动解锁，无需重复输入密码。"
-                : "：当前环境下每次启动都需要手动输入密码（无桌面环境属正常现象）。"}
+              {IS_WEB
+                ? "Web 版：把恢复密钥存到本机浏览器后，每次打开网页点一下即可登录；" +
+                  "若清空了浏览器数据，用密码或 txt 里的密钥登录。"
+                : `系统钥匙串${status.keychain ? "可用" : "不可用"}${
+                    status.keychain
+                      ? "：下次启动会自动解锁，无需重复输入密码。"
+                      : "：当前环境下每次启动都需要手动输入密码。"
+                  }`}
             </div>
 
             <div className="wz-fields">

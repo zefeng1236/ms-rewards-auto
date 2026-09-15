@@ -6,7 +6,8 @@ import {
   toast,
   type SideNavItem,
 } from "@ttqtt/liquid-glass-react";
-import { api } from "../api/ipc";
+import { api, IS_WEB } from "../api/ipc";
+import { webLogout } from "../api/web";
 import { useAppState } from "../hooks/useAppState";
 import type { ViewKey } from "../App";
 
@@ -16,7 +17,8 @@ const NAV_ITEMS: SideNavItem[] = [
   { key: "account", label: "账户详情", icon: "◉" },
   { key: "settings", label: "全局设置", icon: "⚙" },
   { key: "personalize", label: "个性化", icon: "✺" },
-  { key: "launch", label: "启动与托盘", icon: "⏻" },
+  // 开机自启 / 驻留托盘是桌面端语义，Docker 版由 compose 的 restart 策略接管
+  ...(IS_WEB ? [] : [{ key: "launch", label: "启动与托盘", icon: "⏻" } as SideNavItem]),
 ];
 
 export function Sidebar({
@@ -71,6 +73,20 @@ export function Sidebar({
         <Button variant="glass" size="sm" onClick={() => setLogOpen(!logOpen)}>
           ▤ 运行日志
         </Button>
+
+        {IS_WEB && (
+          <Button
+            variant="ghost"
+            size="sm"
+            title="仅退出当前浏览器的登录，后台定时任务继续运行"
+            onClick={async () => {
+              await webLogout();
+              window.location.reload();
+            }}
+          >
+            ⏏ 退出登录
+          </Button>
+        )}
 
         <div className="hint">共 {accounts.length} 个账户</div>
       </div>

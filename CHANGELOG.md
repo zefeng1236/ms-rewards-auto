@@ -2,7 +2,29 @@
 
 本文件记录各版本的重要变更。版本格式为主版本.次版本.修订号，带 `-beta` 后缀的为测试版本。
 
-## 0.8.10（当前版本）
+## 0.9.0
+
+发布日期：2026-09-15
+
+本版本开始把运行编排逻辑抽离为**纯 Node 共用核心**，为 Electron 桌面版与未来的 Web/SSE 版（无桌面环境的 Docker / 服务器部署）统一行为打基础。
+
+### 架构
+
+- **新增共用编排核心 `src/app-core.js`**：独立模块收口「全局运行态 / 单账号状态 / 批次串行」逻辑，通过 EventEmitter 暴露 `running` / `accounts` / `account-status` / `account-log` 事件。Web/SSE 版（`src/web-api.js`）已接入该核心做事件转发，桌面主进程后续也将迁移至此核心，避免两个版本行为漂移。
+- **Web/SSE 版配套**：新增 `src/web-api.js`（把 app-core 与 logger 的事件转为 SSE 流）、`src-renderer/src/api/web.ts`（Web 版 API 适配）、`src-renderer/vite.web.config.ts`（Web 版独立构建配置），并增加 `build:web:docker` 脚本产出 Web 版前端。
+
+### 构建 / 清理
+
+- 前端产物 `gui-react` 基于当前 `src-renderer` 源码重新构建（hash 刷新），orphan bundle 由 `scripts/clean-assets.js` 清理。
+- `package.json` 版本 0.8.10 → 0.9.0。
+
+### 验证
+
+- `tsc --noEmit` 零错误；`npm test` 自检 36/36 通过。
+
+---
+
+## 0.8.10
 
 发布日期：2026-09-15
 

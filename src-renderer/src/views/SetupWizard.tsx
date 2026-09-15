@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Button, toast } from "@ttqtt/liquid-glass-react";
-import { api } from "../api/ipc";
+import { api, IS_WEB } from "../api/ipc";
+import { saveRecoveryKeyToBrowser } from "../api/web";
 import { evaluatePassword, STRENGTH_COLORS } from "../utils/passwordStrength";
 import type { SetupState } from "../types";
 
@@ -369,6 +370,20 @@ function PageVault({ onNext }: { onNext: () => void }) {
   const [confirmDisable, setConfirmDisable] = useState(false);
   const [countdown, setCountdown] = useState(5);
 
+  // ⚠ 下面这段 Hook 与 st 必须写在 `if (recovery)` 之前。
+  // 提前 return 会让「已生成恢复密钥」的那一次渲染少调用一个 Hook，
+  // React 会判定 Hook 数量不一致并直接卸载整棵树 —— 表现为建库成功后白屏。
+  // 「确定取消」按钮的 5 秒倒计时：倒数结束前不允许确认关闭加密
+  useEffect(() => {
+    if (!confirmDisable) return;
+    if (countdown <= 0) return;
+    const t = setTimeout(() => setCountdown((c) => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [confirmDisable, countdown]);
+
+  // 实时强度评估（仅用于界面提示，不参与加密）
+  const st = evaluatePassword(pw);
+
   // 建库成功后先钉住用户把恢复密钥抄走，再放行下一步
   if (recovery) {
     return (
@@ -407,8 +422,27 @@ function PageVault({ onNext }: { onNext: () => void }) {
           >
             {savingKey ? "保存中…" : "下载为 txt"}
           </button>
+          {/* Web 版专属：把恢复密钥存进浏览器，下次打开就能一键登录 */}
+          {IS_WEB && (
+            <button
+              type="button"
+              className="wz-dl"
+              onClick={() => {
+                saveRecoveryKeyToBrowser(recovery);
+                toast.success("已保存到本机浏览器，下次可直接点「一键登录」");
+              }}
+            >
+              🔑 存到本机浏览器
+            </button>
+          )}
           <span className="hint">建议离线保存或存入密码管理器</span>
         </div>
+        {IS_WEB && (
+          <p className="wz-lead" style={{ marginTop: 8 }}>
+            「存到本机浏览器」只写入这台设备的浏览器本地存储，方便你下次一键登录；
+            换设备或清空浏览器数据后需用 txt 里的密钥。
+          </p>
+        )}
         <button
           type="button"
           className={`wz-check${saved ? " on" : ""}`}
@@ -426,17 +460,6 @@ function PageVault({ onNext }: { onNext: () => void }) {
       </div>
     );
   }
-
-  // 实时强度评估（仅用于界面提示，不参与加密）
-  const st = evaluatePassword(pw);
-
-  // 「确定取消」按钮的 5 秒倒计时：倒数结束前不允许确认关闭加密
-  useEffect(() => {
-    if (!confirmDisable) return;
-    if (countdown <= 0) return;
-    const t = setTimeout(() => setCountdown((c) => c - 1), 1000);
-    return () => clearTimeout(t);
-  }, [confirmDisable, countdown]);
 
   const submit = async () => {
     if (!enable) {
@@ -471,7 +494,10 @@ function PageVault({ onNext }: { onNext: () => void }) {
       <h2>加密你的账户登录态</h2>
       <p className="wz-lead">
         启用后，微软登录 Cookie 与令牌会用<strong>只有你才知道</strong>的密码加密后再存到本机，
-        磁盘上不再留明文。日常启动由系统钥匙串自动解锁，<strong>不需要每次输密码</strong>。
+        磁盘上不再留明文。
+        {IS_WEB
+          ? "下一步把恢复密钥存到本机浏览器，之后打开网页点一下就登录，不用每次输密码。"
+          : "日常启动由系统钥匙串自动解锁，不需要每次输密码。"}
       </p>
 
       <button type="button" className={`wz-opt${enable ? " on" : ""}`} onClick={() => setEnable(true)} data-testid="opt-enable">
@@ -482,7 +508,9 @@ function PageVault({ onNext }: { onNext: () => void }) {
           </span>
         </span>
         <span className="wz-opt-sub">
-          设置一个密码作为加密密钥。之后每次打开软件会自动解锁，无需重复输入。
+          {IS_WEB
+            ? "设置一个密码作为加密密钥。把恢复密钥存到本机浏览器后，打开网页点一下即可登录。"
+            : "设置一个密码作为加密密钥。之后每次打开软件会自动解锁，无需重复输入。"}
         </span>
       </button>
 
@@ -671,22 +699,25 @@ function PagePersonalize({
         </span>
       </button>
 
-      <button
-        type="button"
-        className={`wz-opt${autoLaunch ? " on" : ""}`}
-        onClick={() => onChange({ autoLaunch: !autoLaunch })}
-      >
-        <span className="wz-opt-main">
-          <strong>开机自动启动</strong>
-          <span className="wz-switch" data-on={autoLaunch ? "1" : "0"}>
-            <span className="wz-knob" />
+      {/* 开机自启是桌面端语义：Docker 版由 compose 的 restart 策略负责，隐藏掉避免误导 */}
+      {!IS_WEB && (
+        <button
+          type="button"
+          className={`wz-opt${autoLaunch ? " on" : ""}`}
+          onClick={() => onChange({ autoLaunch: !autoLaunch })}
+        >
+          <span className="wz-opt-main">
+            <strong>开机自动启动</strong>
+            <span className="wz-switch" data-on={autoLaunch ? "1" : "0"}>
+              <span className="wz-knob" />
+            </span>
           </span>
-        </span>
-        <span className="wz-opt-sub">
-          把本软件注册到系统登录项，开机后自动运行（默认最小化到托盘，不打扰你）。
-          若你只是偶尔用一次，建议关闭。
-        </span>
-      </button>
+          <span className="wz-opt-sub">
+            把本软件注册到系统登录项，开机后自动运行（默认最小化到托盘，不打扰你）。
+            若你只是偶尔用一次，建议关闭。
+          </span>
+        </button>
+      )}
     </div>
   );
 }
