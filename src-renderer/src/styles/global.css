@@ -1079,6 +1079,84 @@ html[data-preset="opaque"] .log-console {
   overflow: hidden;
 }
 
+/* ------------------------------------------------------------------
+   Web（Docker / 浏览器）下向导与锁屏铺满整个视口，不再是 760×620 浮窗。
+   桌面 Electron 不受影响（<html> 上没有 data-web 标记）。
+   卡片全撑满，但头/正文/脚的内容限制可读宽度并居中，超宽屏不飞边。
+   ------------------------------------------------------------------ */
+:root[data-web="1"] .wizard {
+  padding: 0;
+}
+
+:root[data-web="1"] .wizard-card {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+}
+
+:root[data-web="1"] .wizard-head,
+:root[data-web="1"] .wizard-foot {
+  align-self: center;
+  width: 100%;
+  max-width: 1040px;
+  box-sizing: border-box;
+}
+
+:root[data-web="1"] .wz-page {
+  width: 100%;
+  max-width: 920px;
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+
+/* 手机窄屏：步骤条只留圆点（底部已有 1/5 进度），页脚允许换行 */
+@media (max-width: 560px) {
+  .wizard {
+    padding: 0;
+  }
+
+  .wizard-head {
+    gap: 10px;
+    padding: 12px 14px;
+  }
+
+  .wizard-logo {
+    width: 28px;
+    height: 28px;
+  }
+
+  .wizard-steps {
+    justify-content: space-between;
+    gap: 4px;
+  }
+
+  .wizard-step span:not(.wizard-dot) {
+    display: none;
+  }
+
+  .wizard-step + .wizard-step::before {
+    width: 12px;
+    margin-right: 4px;
+  }
+
+  .wz-page {
+    padding: 16px;
+  }
+
+  .wizard-foot {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 12px 14px;
+  }
+
+  .wizard-progress {
+    order: 3;
+    width: 100%;
+    text-align: center;
+  }
+}
+
 /* ---- 顶部：logo + 步骤条 ---- */
 .wizard-head {
   display: flex;
@@ -1577,6 +1655,40 @@ html[data-preset="opaque"] .log-console {
 .wz-field input:focus {
   border-color: var(--accent, #4c8dff);
   background: rgba(255, 255, 255, 0.07);
+}
+
+/* 向导密码框：小眼睛切换显隐 */
+.wz-password-wrap {
+  position: relative;
+  width: 100%;
+}
+
+.wz-password-wrap input {
+  padding-right: 38px;
+}
+
+.wz-password-eye {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  color: var(--muted, #7c8698);
+  cursor: pointer;
+  transition: color 0.16s ease, background 0.16s ease;
+}
+
+.wz-password-eye:hover,
+.wz-password-eye:focus-visible {
+  color: var(--text, #e6ebf5);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .wz-err {
