@@ -10,10 +10,10 @@ import { NumberField, Section, SelectField, SwitchField, TextField, TimeField } 
 import type { AppConfig, DeepPartial, GoalItem, ScheduleWindow } from "../types";
 
 const SEARCH_API_OPTIONS: SelectOption[] = [
-  { label: "内置随机词", value: "offline" },
+  { label: "hot.nntool.cc", value: "hot.nntool.cc" },
   { label: "hot.baiwumm.com", value: "hot.baiwumm.com" },
   { label: "hot.cnxiaobai.com", value: "hot.cnxiaobai.com" },
-  { label: "hot.nntool.cc", value: "hot.nntool.cc" },
+  { label: "内置随机词", value: "offline" },
 ];
 
 const MODE_OPTIONS: SelectOption[] = [

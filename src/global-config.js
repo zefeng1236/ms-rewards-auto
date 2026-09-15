@@ -30,7 +30,7 @@ const GLOBAL_DEFAULTS = {
   },
   search: {
     span: 30,
-    api: "offline",
+    api: "hot.nntool.cc",
   },
   schedule: {
     enable: true,

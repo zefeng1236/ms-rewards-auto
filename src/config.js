@@ -25,7 +25,7 @@ const DEFAULTS = {
   // 搜索设置
   search: {
     span: 30,   // 搜索间隔（秒），实际会在 ±15 秒随机
-    api: "offline", // 搜索词来源: offline | hot.nntool.cc | hot.baiwumm.com | hot.cnxiaobai.com
+    api: "hot.nntool.cc", // 搜索词来源: hot.nntool.cc | hot.baiwumm.com | hot.cnxiaobai.com | offline
   },
   // 自动运行（本地调度，按账户独立）
   //

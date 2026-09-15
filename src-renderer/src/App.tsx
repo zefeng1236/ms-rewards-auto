@@ -140,6 +140,10 @@ function Shell() {
     return (
       <>
         <SetupWizard onDone={() => setSetup({ ...setup, done: true })} />
+        {/* 向导是独立 early-return 分支，不经过主界面的 <Toaster/>；
+            保存数字密钥 / 下载 txt 等操作的 toast 必须在这里单独挂一个，
+            否则 toast.success() 发出去却没有容器渲染 → 用户看到「点了没反应」 */}
+        <Toaster position="bottom-right" max={3} />
         {closePrompt}
       </>
     );
@@ -150,6 +154,7 @@ function Shell() {
     return (
       <>
         <VaultLock onUnlocked={() => setVault({ ...vault, unlocked: true })} />
+        <Toaster position="bottom-right" max={3} />
         {closePrompt}
       </>
     );
