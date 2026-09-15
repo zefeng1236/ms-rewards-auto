@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld("api", {
   listAccounts: () => ipcRenderer.invoke("accounts:list"),
   createAccount: (name) => ipcRenderer.invoke("accounts:create", name),
   removeAccount: (id) => ipcRenderer.invoke("accounts:remove", id),
+  clearAccountData: (id) => ipcRenderer.invoke("account:clearData", id),
   renameAccount: (id, name) => ipcRenderer.invoke("accounts:rename", id, name),
   setAccountEnabled: (id, enabled) => ipcRenderer.invoke("accounts:setEnabled", id, enabled),
 
@@ -84,6 +85,8 @@ contextBridge.exposeInMainWorld("api", {
   getLogs: () => ipcRenderer.invoke("app:getLogs"),
   // 某账号的最近日志（详情页只显示该账号）
   getAccountLogs: (id) => ipcRenderer.invoke("app:getAccountLogs", id),
+  getAccountLogDays: (id) => ipcRenderer.invoke("app:getAccountLogDays", id),
+  getAccountLogHistory: (id, day) => ipcRenderer.invoke("app:getAccountLogHistory", id, day),
   chromiumStatus: () => ipcRenderer.invoke("app:chromiumStatus"),
   installBrowser: () => ipcRenderer.invoke("app:installBrowser"),
 

@@ -18,19 +18,29 @@ import { mergeDeep } from "../utils";
 import type { AccountLogEntry, AppConfig, DeepPartial, GoalItem } from "../types";
 
 /** 本账号专属日志面板：只显示该账号的日志（初始拉缓冲 + 实时订阅过滤） */
+function cleanLogText(value: string) {
+  return String(value || "")
+    .replace(/[\u001B\u009B][[\]()#;?]*(?:(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d\/#&.:=?%@~_]+)*)?\u0007|(?:(?:\d{1,4}(?:[;:]\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g, "")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "");
+}
+
 function AccountLogPanel({ accountId, accountName }: { accountId: string; accountName: string }) {
   const [lines, setLines] = useState<AccountLogEntry[]>([]);
+  const [days, setDays] = useState<string[]>([]);
+  const [selectedDay, setSelectedDay] = useState("current");
   const [autoScroll, setAutoScroll] = useState(true);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const buffer = useRef<AccountLogEntry[]>([]);
 
-  // 切账号（key 变化会重挂载）时先拉一次该账号缓冲
+  // 切账号时拉取实时缓冲和可选历史日期
   useEffect(() => {
     let alive = true;
-    api
-      .getAccountLogs(accountId)
-      .then((list) => {
-        if (alive) setLines(list || []);
+    Promise.all([api.getAccountLogs(accountId), api.getAccountLogDays(accountId)])
+      .then(([list, availableDays]) => {
+        if (!alive) return;
+        setLines(list || []);
+        setDays(availableDays || []);
+        setSelectedDay("current");
       })
       .catch(() => {});
     return () => {
@@ -38,11 +48,25 @@ function AccountLogPanel({ accountId, accountName }: { accountId: string; accoun
     };
   }, [accountId]);
 
+  const onSelectDay = async (value: string | number) => {
+    const day = String(value);
+    setSelectedDay(day);
+    setAutoScroll(day === "current");
+    try {
+      const list = day === "current"
+        ? await api.getAccountLogs(accountId)
+        : await api.getAccountLogHistory(accountId, day);
+      setLines(list || []);
+    } catch {
+      setLines([]);
+    }
+  };
+
   // 实时订阅：只保留属于当前账号的条目，攒批刷新避免高频重渲染
   useEffect(() => {
     const off = api.onAccountLog((e) => {
-      if (!e || String(e.accountId) !== String(accountId)) return;
-      buffer.current.push(e);
+      if (!e || String(e.accountId) !== String(accountId) || selectedDay !== "current") return;
+      buffer.current.push({ ...e, msg: cleanLogText(e.msg), line: cleanLogText(e.line) });
     });
     const timer = window.setInterval(() => {
       if (buffer.current.length === 0) return;
@@ -57,7 +81,7 @@ function AccountLogPanel({ accountId, accountName }: { accountId: string; accoun
       if (typeof off === "function") off();
       window.clearInterval(timer);
     };
-  }, [accountId]);
+  }, [accountId, selectedDay]);
 
   // 自动滚到底（用户手动上翻后暂停跟随）
   useEffect(() => {
@@ -76,9 +100,23 @@ function AccountLogPanel({ accountId, accountName }: { accountId: string; accoun
     <GlassSurface refraction="off" radius={14} material="clear" className="acc-log">
       <div className="acc-log-head">
         <span className="acc-log-title">「{accountName}」运行日志</span>
-        <span className="dim" style={{ fontSize: 11 }}>
-          仅显示当前账号 · {lines.length} 行
-        </span>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <div style={{ minWidth: 168 }}>
+            <Select
+              size="sm"
+              value={selectedDay}
+              aria-label="选择日志日期"
+              options={[
+                { value: "current", label: "当前日志" },
+                ...days.map((day) => ({ value: day, label: `历史日志 · ${day}` })),
+              ]}
+              onChange={(value) => void onSelectDay(value)}
+            />
+          </div>
+          <span className="dim" style={{ fontSize: 11 }}>
+            {selectedDay === "current" ? "实时" : selectedDay} · {lines.length} 行
+          </span>
+        </div>
       </div>
       <div className="acc-log-body" ref={bodyRef} onScroll={onScroll}>
         {lines.length === 0 ? (
@@ -86,7 +124,7 @@ function AccountLogPanel({ accountId, accountName }: { accountId: string; accoun
         ) : (
           lines.map((e, i) => (
             <div key={i} className={`acc-log-line lvl-${(e.level || "").toLowerCase()}`}>
-              {e.line}
+              {cleanLogText(e.line)}
             </div>
           ))
         )}
@@ -277,6 +315,30 @@ export function AccountDetail({
     await refreshAccounts();
   };
 
+  const onClearData = async () => {
+    if (!account) return;
+    const ok = await Modal.confirm({
+      title: `清除「${account.name}」的数据？`,
+      content: "这将清除包括历史日志、密码、Cookie 等。将仅删除此用户配置中的数据。\n\n确定要继续吗？",
+      okText: "确定删除!!!(不可恢复)",
+      cancelText: "取消",
+      danger: true,
+      locale: "zh-CN",
+    });
+    if (!ok) return;
+    setBusy("clearData");
+    try {
+      const r = await api.clearAccountData(account.id);
+      if (!r.ok) toast.error(r.error || "清除失败");
+      else {
+        toast.success("此账号的数据已清除");
+        await refreshAccounts();
+      }
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const onDelete = async () => {
     if (!account) return;
     const ok = await Modal.confirm({
@@ -379,10 +441,9 @@ export function AccountDetail({
               variant="glass"
               size="sm"
               onClick={onSync}
-              loading={busy === "sync"}
-              disabled={running}
+              disabled={running || busy === "sync"}
             >
-              ⟳ 刷新状态
+              {busy === "sync" ? "正在工作…" : "⟳ 刷新状态"}
             </Button>
             {/* 正在跑这个账号：立即运行换成停止此账号；排队中可直接移出队列 */}
             {thisRunning ? (
@@ -549,13 +610,21 @@ export function AccountDetail({
         <div className="block-head">
           <div>
             <div className="block-title">账号管理</div>
-            <div className="block-sub">删除后登录状态、配置与浏览器数据一并清除，不可恢复</div>
+            <div className="block-sub">可仅清除账号数据并保留账号，也可彻底删除账号；两种操作均不可恢复</div>
           </div>
         </div>
         <Card padding="md">
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             <Button variant="glass" size="sm" onClick={() => setRenameOpen(true)}>
               ✎ 重命名
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={() => void onClearData()}
+              disabled={running || busy === "clearData"}
+            >
+              {busy === "clearData" ? "正在清除…" : "清除数据"}
             </Button>
             <Button variant="danger" size="sm" onClick={() => void onDelete()}>
               删除此账户

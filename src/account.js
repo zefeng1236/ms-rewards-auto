@@ -76,6 +76,23 @@ function remove(id) {
   writeIndex(readIndex().filter((a) => a.id !== id));
 }
 
+/**
+ * 清空指定账户的用户数据，但保留账户元信息（id / 名称 / 启用状态）。
+ * 重建后的账户恢复为「遵循全局设置」且无登录态、无任务进度。
+ */
+function clearData(id) {
+  const meta = get(id);
+  if (!meta) return false;
+  const dir = getDir(id);
+  if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(dir, { recursive: true });
+  const config = createConfig(dir);
+  config.setUseGlobal(true);
+  const state = createState(dir);
+  state.load();
+  return true;
+}
+
 /** 重命名 */
 function rename(id, name) {
   writeIndex(readIndex().map((a) => (a.id === id ? { ...a, name: String(name || "").trim() || a.name } : a)));
@@ -281,6 +298,7 @@ module.exports = {
   get,
   create,
   remove,
+  clearData,
   rename,
   setEnabled,
   getDir,

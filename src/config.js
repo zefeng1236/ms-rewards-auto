@@ -54,6 +54,10 @@ const DEFAULTS = {
     pushme: "",
     bark: "",
   },
+  // 日志保留策略（仅全局设置生效；账户独立设置保持同一结构便于表单复用）
+  logging: {
+    retentionDays: 7,
+  },
   // 积分目标。可配多个，按账户总积分余额判断，可选设置奖品与详情页显示。
   // 达成判定：当前余额 >= target；奖品数量按 floor(余额 / target) 计算。
   goals: {
@@ -79,7 +83,7 @@ function deepMerge(base, extra) {
 }
 
 /** 业务字段名单：判断一份老配置里是否真的存过设置 */
-const BIZ_KEYS = ["tasks", "region", "search", "schedule", "notice"];
+const BIZ_KEYS = ["tasks", "region", "search", "schedule", "notice", "logging"];
 
 /**
  * 老配置迁移

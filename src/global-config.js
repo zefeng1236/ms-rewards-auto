@@ -49,6 +49,10 @@ const GLOBAL_DEFAULTS = {
     pushme: "",
     bark: "",
   },
+  // 日志设置（应用级）：历史日志按账号、按天保留
+  logging: {
+    retentionDays: 7,
+  },
 };
 
 /**

@@ -43,6 +43,7 @@ const DEFAULT_CONFIG: AppConfig = {
     pushme: "",
     bark: "",
   },
+  logging: { retentionDays: 7 },
   goals: {
     enable: true,
     items: [{ name: "积分目标", scope: "balance", target: 300, rewardName: "", showDashboard: true }],
@@ -285,6 +286,14 @@ export function createMockApi(): ElectronApi {
       mockAccounts = mockAccounts.filter((a) => a.id !== id);
       return true;
     },
+    clearAccountData: async (id) => {
+      mockAccounts = mockAccounts.map((a) =>
+        a.id === id
+          ? { ...a, useGlobal: true, config: { ...DEFAULT_CONFIG }, state: mkState({ loggedIn: false, hasRefreshToken: false }) }
+          : a
+      );
+      return { ok: true };
+    },
     renameAccount: async (id, name) => {
       mockAccounts = mockAccounts.map((a) => (a.id === id ? { ...a, name } : a));
       return true;
@@ -429,6 +438,15 @@ export function createMockApi(): ElectronApi {
         mk("2026-08-31 09:12:40", "OK", "阅读 10/10 篇 +30 分"),
         mk("2026-08-31 09:13:02", "WARN", "活动交卷超时，下轮重试"),
       ];
+    },
+    getAccountLogDays: async () => ["2026-08-31", "2026-08-30"],
+    getAccountLogHistory: async (id, day) => {
+      const acc = mockAccounts.find((a) => a.id === id);
+      const name = acc?.name || id;
+      return [{
+        time: `${day} 08:00:00`, level: "INFO", msg: "历史日志示例", accountId: id, accountName: name,
+        line: `[${day} 08:00:00] [INFO] [${name}] 历史日志示例`,
+      }];
     },
     chromiumStatus: async () => ({ ready: true, executable: null }),
     installBrowser: async () => ({ ok: true, method: "mock" }),

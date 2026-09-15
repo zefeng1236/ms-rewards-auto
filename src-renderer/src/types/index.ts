@@ -73,6 +73,10 @@ export interface AppConfig {
     pushme: string;
     bark: string;
   };
+  logging: {
+    /** 历史日志保留天数，默认 7，范围 1–365 */
+    retentionDays: number;
+  };
   goals: {
     enable: boolean;
     items: GoalItem[];

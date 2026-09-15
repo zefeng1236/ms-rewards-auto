@@ -102,6 +102,55 @@ check("隔 3 天应跳过", daysBetween(20260912, 20260915) < 7, true);
 check("隔 7 天应执行", daysBetween(20260908, 20260915) >= 7, true);
 check("跨月 7 天应执行", daysBetween(20260831, 20260907) >= 7, true);
 
+/* ============ 4. 日志净化与按天历史 ============ */
+console.log("\n【4】日志净化与按天历史");
+const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ms-rewards-log-selfcheck-"));
+process.env.MS_REWARDS_STORAGE_DIR = path.join(testRoot, "storage");
+const logger = require(path.join(ROOT, "src", "logger.js"));
+check("ANSI SGR 控制码被清除", logger.sanitizeText("\x1b[2m等待\x1b[22m"), "等待");
+check("不可见控制字符被清除且保留换行", logger.sanitizeText("甲\x07乙\n丙"), "甲乙\n丙");
+logger.setContext("test-account", "测试账户");
+logger.info("\x1b[2m历史日志\x1b[22m");
+logger.clearContext();
+const logDays = logger.listAccountLogDays("test-account", 7);
+checkTrue("按账号生成当天历史日志", logDays.length === 1 && /^\d{4}-\d{2}-\d{2}$/.test(logDays[0]));
+const history = logger.getAccountHistory("test-account", logDays[0], 7);
+checkTrue("历史日志可按日期读取", history.length === 1 && history[0].msg === "历史日志");
+logger.clearAccountHistory("test-account");
+check("清除账号历史日志后日期列表为空", logger.listAccountLogDays("test-account", 7), []);
+const oldDir = path.join(testRoot, "logs", "accounts", "test-account");
+fs.mkdirSync(oldDir, { recursive: true });
+fs.writeFileSync(path.join(oldDir, "2020-01-01.jsonl"), "{}\n", "utf8");
+logger.cleanupHistory(7);
+checkTrue("超过保留天数的历史日志会自动删除", !fs.existsSync(path.join(oldDir, "2020-01-01.jsonl")));
+
+/* ============ 5. 单账号清除数据 ============ */
+console.log("\n【5】单账号清除数据");
+const accounts = require(path.join(ROOT, "src", "account.js"));
+const meta = accounts.create("清除测试账号");
+const ctx = accounts.context(meta.id);
+ctx.config.set({ useGlobal: false, search: { span: 99 } });
+ctx.state.setCookies([{ name: "TEST", value: "secret", domain: ".bing.com" }]);
+ctx.state.get().lastBalance = 999;
+ctx.state.save();
+logger.setContext(meta.id, meta.name);
+logger.info("待清除历史");
+logger.clearContext();
+logger.clearAccountHistory(meta.id);
+check("清除数据操作成功", accounts.clearData(meta.id), true);
+const after = accounts.describe(meta.id);
+checkTrue("清除后账号元信息仍保留", !!after && after.id === meta.id && after.name === meta.name);
+checkTrue("清除后 Cookie/令牌与积分状态归零", !!after && !after.state.loggedIn && after.state.cookiesCount === 0 && after.state.lastBalance === 0);
+checkTrue("清除后恢复遵循全局设置", !!after && after.useGlobal === true);
+accounts.remove(meta.id);
+fs.rmSync(testRoot, { recursive: true, force: true });
+
+/* ============ 6. 领取弹窗确认逻辑静态守卫 ============ */
+console.log("\n【6】领取弹窗确认逻辑");
+const tasksSource = fs.readFileSync(path.join(ROOT, "src", "tasks.js"), "utf8");
+checkTrue("领取入口改用 DOM click 避免遮罩拦截", tasksSource.includes("await el.evaluate((n) => n.click())"));
+checkTrue("领取后会处理可见确认对话框", tasksSource.includes("[role='dialog']") && tasksSource.includes("已确认领取对话框"));
+
 /* ============ 汇总 ============ */
 console.log(`\n${"=".repeat(46)}`);
 console.log(`结果: ${pass} 通过 / ${fail} 失败`);

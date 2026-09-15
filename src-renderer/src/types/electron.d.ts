@@ -32,6 +32,8 @@ export interface ElectronApi {
   listAccounts(): Promise<Account[]>;
   createAccount(name: string): Promise<AccountMeta>;
   removeAccount(id: string): Promise<boolean>;
+  /** 保留账户元信息，只清空该账户的配置、状态、Cookie/令牌与历史日志 */
+  clearAccountData(id: string): Promise<{ ok: boolean; error?: string }>;
   renameAccount(id: string, name: string): Promise<unknown>;
   setAccountEnabled(id: string, enabled: boolean): Promise<unknown>;
 
@@ -104,6 +106,10 @@ export interface ElectronApi {
   getLogs(): Promise<string[]>;
   /** 某账号的最近日志（详情页只显示该账号） */
   getAccountLogs(id: string): Promise<AccountLogEntry[]>;
+  /** 某账号有历史日志的日期列表（新日期在前） */
+  getAccountLogDays(id: string): Promise<string[]>;
+  /** 某账号指定日期的历史日志 */
+  getAccountLogHistory(id: string, day: string): Promise<AccountLogEntry[]>;
   chromiumStatus(): Promise<ChromiumStatus>;
   installBrowser(): Promise<InstallBrowserResult>;
 

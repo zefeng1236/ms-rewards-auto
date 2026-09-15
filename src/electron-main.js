@@ -789,8 +789,24 @@ function registerIpc() {
     }
   });
   ipcMain.handle("accounts:remove", (_e, id) => {
+    logger.clearAccountHistory(id);
     accounts.remove(id);
     return true;
+  });
+  ipcMain.handle("account:clearData", (_e, id) => {
+    if (running) return { ok: false, error: "任务运行中，暂时不能清除账号数据" };
+    const acc = accounts.get(id);
+    if (!acc) return { ok: false, error: "账户不存在" };
+    try {
+      logger.clearAccountHistory(id);
+      accounts.clearData(id);
+      logger.info(`账户「${acc.name}」的用户数据已清除`);
+      pushAccounts();
+      return { ok: true };
+    } catch (e) {
+      logger.error(`清除账户「${acc.name}」数据失败: ${e.message}`);
+      return { ok: false, error: e.message };
+    }
   });
   ipcMain.handle("accounts:rename", (_e, id, name) => {
     accounts.rename(id, name);
@@ -816,6 +832,7 @@ function registerIpc() {
   ipcMain.handle("global:getConfig", () => globalConfig.get());
   ipcMain.handle("global:setConfig", (_e, patch) => {
     const r = globalConfig.set(patch);
+    if (patch && patch.logging) logger.cleanupHistory(r.logging?.retentionDays || 7);
     // 全局值变了，遵循全局的账户其有效配置随之改变，立刻推一次让界面同步
     pushAccounts();
     return r;
@@ -1022,11 +1039,29 @@ function registerIpc() {
     }
   });
 
+  ipcMain.handle("app:getAccountLogDays", (_e, id) => {
+    try {
+      const retentionDays = globalConfig.get()?.logging?.retentionDays || 7;
+      return logger.listAccountLogDays(id, retentionDays);
+    } catch {
+      return [];
+    }
+  });
+
+  ipcMain.handle("app:getAccountLogHistory", (_e, id, day) => {
+    try {
+      const retentionDays = globalConfig.get()?.logging?.retentionDays || 7;
+      return logger.getAccountHistory(id, day, retentionDays);
+    } catch {
+      return [];
+    }
+  });
+
   ipcMain.handle("app:getLogs", () => {
     try {
       const file = logger.getLogFile();
       const content = fs.existsSync(file) ? fs.readFileSync(file, "utf-8") : "";
-      return content.split("\n").filter(Boolean).slice(-500);
+      return content.split("\n").filter(Boolean).slice(-500).map((line) => logger.sanitizeText(line));
     } catch {
       return [];
     }

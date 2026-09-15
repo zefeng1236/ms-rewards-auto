@@ -334,7 +334,10 @@ async function taskClaimRewards(ctx) {
       return { status: "done", claimed: 0, reason: "无待领取项" };
     }
 
-    // 逐个点击（页面中「领取」入口可能不止一个）
+    // 逐个点击（页面中「领取」入口可能不止一个）。
+    // 第一次点击可能弹出站内确认对话框；若继续用 Playwright 普通 click 点页面旧元素，
+    // 对话框遮罩会拦截 pointer events 并等待满 30 秒。这里用 DOM click 触发入口，
+    // 随后优先处理可见对话框中的「领取 / 确认 / 继续」按钮。
     const els = await page.$$("button, a[href], [role='button']");
     for (const el of els) {
       cancel.throwIfAborted();
@@ -349,9 +352,29 @@ async function taskClaimRewards(ctx) {
       }
       if (!info || !info.t || !info.t.includes("领取") || info.t.includes("已领取")) continue;
       try {
-        await el.click();
-        claimed++;
+        await el.evaluate((n) => n.click());
         logger.log("🎁", `已点击领取入口：${info.t.slice(0, 40)}`);
+        await sleep(800);
+
+        const confirmed = await page.evaluate(() => {
+          const dialogs = Array.from(document.querySelectorAll("[role='dialog'], [aria-modal='true'], [data-rac]"));
+          const visible = dialogs.find((node) => {
+            const style = getComputedStyle(node);
+            const rect = node.getBoundingClientRect();
+            return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+          });
+          if (!visible) return false;
+          const buttons = Array.from(visible.querySelectorAll("button, [role='button'], a[href]"));
+          const action = buttons.find((node) => {
+            const text = (node.innerText || node.getAttribute("aria-label") || "").trim();
+            return /^(领取|确认|确定|继续|立即领取)/.test(text) && !/取消|关闭/.test(text);
+          });
+          if (!action) return false;
+          action.click();
+          return true;
+        });
+        if (confirmed) logger.log("🎁", "已确认领取对话框");
+        claimed++;
         await sleep(2500);
       } catch (e) {
         logger.warn(`点击领取入口失败: ${e.message}`);

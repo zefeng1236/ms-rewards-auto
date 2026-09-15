@@ -41,10 +41,13 @@ export function SettingsForm({
   value,
   onChange,
   onTestPush,
+  showLogging = false,
 }: {
   value: AppConfig;
   onChange: (patch: DeepPartial<AppConfig>) => void;
   onTestPush?: (notice: AppConfig["notice"]) => Promise<void>;
+  /** 日志保留是应用级设置，仅全局设置页显示 */
+  showLogging?: boolean;
 }) {
   const [testing, setTesting] = useState(false);
 
@@ -224,6 +227,21 @@ export function SettingsForm({
           </div>
         )}
       </Section>
+
+      {showLogging && (
+        <Section title="日志设置" desc="账户历史日志按天保存，超过保留天数后自动清理">
+          <div className="form-grid">
+            <NumberField
+              label="历史日志保留天数"
+              hint="默认 7 天，可设置 1–365 天"
+              value={value.logging?.retentionDays ?? 7}
+              min={1}
+              max={365}
+              onChange={(v) => onChange({ logging: { retentionDays: Math.min(365, Math.max(1, v)) } })}
+            />
+          </div>
+        </Section>
+      )}
 
       <Section title="推送通知" desc="留空则不启用该通道">
         <div className="form-grid">
