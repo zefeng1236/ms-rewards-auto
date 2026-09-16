@@ -45,7 +45,14 @@ export function useBackground() {
       .getBgSrc({ fresh })
       .then((r) => {
         if (!alive) return;
-        setSrc(r?.src || "");
+        // 随机图源每次下载到同一个缓存文件 → 返回的 file:// 路径字符串不变。
+        // React 认为状态没变就不会重渲染，用户看到「点了没反应」。
+        // 追加时间戳强制浏览器重新加载图片（file:// 的 query 会被 Electron 忽略，
+        // 但 CSS background-image 和 Image.src 会把它当作新地址去请求）。
+        const finalSrc = r?.src
+          ? r.src + (r.src.includes("?") ? "&" : "?") + "_t=" + Date.now()
+          : "";
+        setSrc(finalSrc);
         setLuma(typeof r?.luma === "number" ? r.luma : null);
       })
       .catch(() => {

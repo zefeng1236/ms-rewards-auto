@@ -1,4 +1,5 @@
 const fs = require("fs");
+const path = require("path");
 const { pathToFileURL } = require("url");
 const sp = require("./storage-path");
 
@@ -32,7 +33,9 @@ const DEFAULTS = {
   glow: true,
   // 自定义背景：none | bing（必应每日一图）| url（图片直链/API）| file（本地图片）
   //           | uapi（UAPI 随机图，配 bgCategory）| qy98（98qy 随机壁纸）| unsplash
-  bgType: "none",
+  // 默认使用内置壁纸：打包后在 resources/default-wallpaper.jpg，
+  // 开发时回落项目 build/default-wallpaper.jpg
+  bgType: "file",
   bgUrl: "",
   bgFile: "",
   // UAPI 随机图分类（仅 bgType=uapi 时生效）：acg/furry/landscape/pc_wallpaper/anime/ai_drawing
@@ -44,8 +47,12 @@ const DEFAULTS = {
   // 背景高斯模糊像素（0–40）与暗化比例（0–0.85）
   bgBlur: 4,
   bgDim: 0.25,
-  // 液态玻璃表面开关：边缘折射 + 色散（移植 liquid-glass-react，SVG 位移滤镜）
-  glass: false,
+  // 液态玻璃表面开关：边缘折射 + 色散 + 跟着指针走的细边高光。
+  // 默认开启：这是本应用的视觉核心特征，关掉后退回普通毛玻璃。
+  glass: true,
+  // 鼠标指针光晕开关：光标划过面板时跟随的一团柔光。默认开启，
+  // 独立开关（与 glass 解耦；玻璃 fallback 面板同样带 .lg-surface，关玻璃也可见）。
+  pointerHalo: true,
   // 跟随壁纸自动反色：渲染端模拟深/浅两套主题色与壁纸合成后的文字对比度，
   // 自动选对比度更高的一套（亮壁纸倾向深色主题白字，暗壁纸倾向浅色主题黑字）。
   // 开启后优先级高于上面的 mode；壁纸亮度取不到时退回 mode。
@@ -94,6 +101,17 @@ function toFileUrl(p) {
   try { return pathToFileURL(s).href; } catch { return ""; }
 }
 
+/** 内置默认壁纸路径：打包后取 resources 下经 extraResources 释放的文件，
+ *  开发时回落项目 build/default-wallpaper.jpg。 */
+function defaultWallpaperPath() {
+  const { app } = require("electron");
+  if (app && app.isPackaged) {
+    return path.join(process.resourcesPath, "default-wallpaper.jpg");
+  }
+  // 开发环境 / 非 Electron 上下文（selfcheck）
+  return path.join(__dirname, "..", "build", "default-wallpaper.jpg");
+}
+
 /** 读取并规范化。文件损坏时退回默认值，不抛错 */
 function get() {
   let raw = {};
@@ -103,21 +121,28 @@ function get() {
     raw = {};
   }
   const resolved = raw.bgResolved && typeof raw.bgResolved === "object" ? raw.bgResolved : null;
+  const bgType = BG_TYPES.includes(raw.bgType) ? raw.bgType : DEFAULTS.bgType;
+  // bgType 为 file 但未指定文件时，自动指向内置默认壁纸
+  let bgFile = String(raw.bgFile || "").trim();
+  if (bgType === "file" && !bgFile) {
+    bgFile = defaultWallpaperPath();
+  }
   return {
     preset: PRESETS[raw.preset] ? raw.preset : DEFAULTS.preset,
     mode: ["dark", "light", "system"].includes(raw.mode) ? raw.mode : DEFAULTS.mode,
     opacity: clampOpacity(raw.opacity === undefined ? DEFAULTS.opacity : raw.opacity),
     accent: normalizeHex(raw.accent, DEFAULTS.accent),
     glow: raw.glow !== false,
-    bgType: BG_TYPES.includes(raw.bgType) ? raw.bgType : DEFAULTS.bgType,
+    bgType,
     bgUrl: String(raw.bgUrl || "").trim(),
-    bgFile: String(raw.bgFile || "").trim(),
+    bgFile,
     bgCategory: BG_CATEGORIES.includes(raw.bgCategory) ? raw.bgCategory : DEFAULTS.bgCategory,
     bgUnsplashKey: String(raw.bgUnsplashKey || "").trim(),
     bgRotate: clampRotate(raw.bgRotate === undefined ? DEFAULTS.bgRotate : raw.bgRotate),
     bgBlur: clampBlur(raw.bgBlur === undefined ? DEFAULTS.bgBlur : raw.bgBlur),
     bgDim: clampDim(raw.bgDim === undefined ? DEFAULTS.bgDim : raw.bgDim),
     glass: raw.glass === true,
+    pointerHalo: raw.pointerHalo === true,
     autoTheme: raw.autoTheme === true,
     bgResolved:
       resolved && typeof resolved.url === "string" && typeof resolved.date === "string"
@@ -138,13 +163,18 @@ function set(patch) {
     glow: next.glow !== false,
     bgType: BG_TYPES.includes(next.bgType) ? next.bgType : cur.bgType,
     bgUrl: String(next.bgUrl || "").trim(),
-    bgFile: String(next.bgFile || "").trim(),
+    // bgType=file 但未指定文件时，自动指向内置默认壁纸
+    bgFile:
+      BG_TYPES.includes(next.bgType) && next.bgType === "file" && !String(next.bgFile || "").trim()
+        ? defaultWallpaperPath()
+        : String(next.bgFile || "").trim(),
     bgCategory: BG_CATEGORIES.includes(next.bgCategory) ? next.bgCategory : cur.bgCategory,
     bgUnsplashKey: String(next.bgUnsplashKey || "").trim(),
     bgRotate: clampRotate(next.bgRotate),
     bgBlur: clampBlur(next.bgBlur),
     bgDim: clampDim(next.bgDim),
     glass: next.glass === true,
+    pointerHalo: next.pointerHalo === true,
     autoTheme: next.autoTheme === true,
     // 缓存只在 date/url 都齐全时保留
     bgResolved:
@@ -170,4 +200,4 @@ function backgroundSrc() {
   return "";
 }
 
-module.exports = { get, set, needsRestart, backgroundSrc, PRESETS, DEFAULTS, BG_TYPES, BG_CATEGORIES, FILE };
+module.exports = { get, set, needsRestart, backgroundSrc, defaultWallpaperPath, PRESETS, DEFAULTS, BG_TYPES, BG_CATEGORIES, FILE };

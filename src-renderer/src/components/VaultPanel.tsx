@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button, Card, Tag, toast } from "@ttqtt/liquid-glass-react";
 import { api, IS_WEB } from "../api/ipc";
+import { VaultRescue } from "./VaultRescue";
 import { evaluatePassword, STRENGTH_COLORS } from "../utils/passwordStrength";
 import type { VaultStatus } from "../types";
 
@@ -388,6 +389,10 @@ export function VaultPanel() {
             保险库处于锁定状态，自动任务已暂停。请按界面提示解锁后再操作。
           </div>
         )}
+
+        {/* 忘记密码自救：有恢复密钥就重置密码，两样都没有就清空账号数据。
+            已配置保险库才有意义（没有密码可忘） */}
+        {status.configured && <VaultRescue onWiped={() => window.location.reload()} />}
 
         {err && <div className="wz-err">{err}</div>}
       </Card>

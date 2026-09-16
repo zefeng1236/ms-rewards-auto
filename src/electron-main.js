@@ -29,6 +29,7 @@ const setup = require("./setup");
 const sp = require("./storage-path");
 const vault = require("./vault");
 const vaultMigrate = require("./vault/migrate");
+const wipe = require("./wipe");
 
 const ROOT = path.join(__dirname, "..");
 const IS_SMOKE = process.argv.includes("--smoke");
@@ -120,18 +121,41 @@ async function loadRenderer() {
 }
 
 /**
- * 下载图片（跟随 302 重定向）。
+ * 下载图片（跟随 302 重定向），支持流式进度推送。
  * destFile 为 null 时只探测不落盘；否则写入该路径。返回状态/类型/大小。
+ *
+ * onProgress 回调在能取到 Content-Length 时周期性触发 { loaded, total, pct }，
+ * 用于渲染端「正在切换壁纸，已下载 xx%」气泡；取不到总长度时不回调。
  */
 async function downloadImage(url, destFile, opts = {}) {
-  const { maxBytes = 60 * 1024 * 1024, headOnly = false } = opts;
+  const { maxBytes = 60 * 1024 * 1024, headOnly = false, onProgress } = opts;
   const res = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(20000) });
   const ct = res.headers.get("content-type") || "";
   const isImage = /^image\//.test(ct);
   if (!res.ok) return { ok: false, status: res.status, contentType: ct, finalUrl: res.url, error: `HTTP ${res.status}` };
   if (!isImage) return { ok: false, status: res.status, contentType: ct, finalUrl: res.url, error: `返回类型不是图片（${ct || "未知"}）` };
   if (headOnly) { res.body.cancel(); return { ok: true, status: res.status, contentType: ct, finalUrl: res.url }; }
-  const buf = Buffer.from(await res.arrayBuffer());
+
+  const total = Number(res.headers.get("content-length")) || 0;
+  const reader = res.body.getReader();
+  const chunks = [];
+  let loaded = 0;
+  let lastReport = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    loaded += value.length;
+    if (onProgress && total > 0) {
+      // 每 5% 或每 50KB 至少报一次，避免高频回调卡渲染进程
+      const pct = Math.round((loaded / total) * 100);
+      if (pct !== lastReport) {
+        lastReport = pct;
+        onProgress({ loaded, total, pct });
+      }
+    }
+  }
+  const buf = Buffer.concat(chunks);
   if (buf.length > maxBytes) return { ok: false, status: res.status, contentType: ct, finalUrl: res.url, error: "图片过大" };
   fs.writeFileSync(destFile, buf);
   return { ok: true, status: res.status, contentType: ct, finalUrl: res.url, bytes: buf.length };
@@ -183,13 +207,25 @@ async function backgroundSrc(opts = {}) {
 
   if (!fresh && fs.existsSync(cacheFile)) return pathToFileURL(cacheFile).href;
 
+  // 推送壁纸下载进度给渲染端，用于「正在切换壁纸，已下载 xx%」气泡
+  const onProgress = (info) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("bg-progress", info);
+    }
+  };
+
   try {
     fs.mkdirSync(BG_CACHE_DIR, { recursive: true });
-    const r = await downloadImage(url, cacheFile);
+    const r = await downloadImage(url, cacheFile, { onProgress });
     if (r.ok) return pathToFileURL(cacheFile).href;
     logger.warn(`壁纸缓存失败: ${r.error || "未知错误"}`);
   } catch (e) {
     logger.warn(`壁纸缓存失败: ${e.message}`);
+  } finally {
+    // 无论成功失败都通知渲染端结束气泡
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("bg-progress", { done: true });
+    }
   }
 
   // 下载失败但有旧缓存就继续用旧的，避免整块背景突然消失
@@ -1277,6 +1313,38 @@ function registerIpc() {
 
   /** 取恢复密钥：仅限已解锁时，避免成为绕过密码的后门（内部会轮换一把新的） */
   ipcMain.handle("vault:recoveryKey", () => vault.getRecoveryKey());
+
+  /**
+   * 忘记密码时的退路之一：有恢复密钥 → 直接重置密码（无需原密码）。
+   * 重置成功后主密钥不变，已加密的账户数据无需重写。
+   */
+  ipcMain.handle("vault:resetPasswordWithRecovery", (_e, key, next, hint) => {
+    const r = vault.resetPasswordWithRecovery(key, next, hint);
+    if (r.ok) {
+      // 重置后保险库处于解锁态，补一次迁移并恢复后台工作
+      vaultMigrate.migrateAll();
+      startBackgroundWork();
+      pushAccounts();
+    }
+    return r;
+  });
+
+  /**
+   * 忘记密码时的退路之二：密钥也没了 → 清空账号数据回到可用状态。
+   * 会连保险库一起删除（密码与密钥都丢了，它已经解不开），但保留个性化设置。
+   */
+  ipcMain.handle("app:wipeAccountData", () => {
+    if (running) return { ok: false, error: "任务运行中，请先停止任务再清空数据" };
+    const r = wipe.wipeAccountData();
+    if (r.ok) {
+      pushAccounts();
+      // 保险库已删除 → 让渲染端重新拉一次状态（锁屏自然消失）
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("vault-status", vault.status());
+      }
+    }
+    return r;
+  });
 
   // ---- 推送测试 ----
   ipcMain.handle("notify:test", async (_e, notice) => {

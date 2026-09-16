@@ -21,6 +21,7 @@ import type {
   TestUrlResult,
   VaultResult,
   VaultStatus,
+  WipeResult,
 } from "../types";
 
 /**
@@ -84,7 +85,8 @@ type EventType =
   | "appearance"
   | "chromium-status"
   | "account-status"
-  | "account-log";
+  | "account-log"
+  | "bg-progress";
 
 const listeners: Record<string, Set<(v: unknown) => void>> = {};
 
@@ -335,6 +337,17 @@ export function createWebApi(): ElectronApi {
     vaultLock: () => rpc<VaultStatus>("vaultLock"),
     vaultChangePassword: (current, next, hint) => rpc<VaultResult>("vaultChangePassword", current, next, hint),
     vaultRecoveryKey: () => rpc<VaultResult>("vaultRecoveryKey"),
+    vaultResetPasswordWithRecovery: async (key, next, hint) => {
+      // 服务端在重置成功后直接建立登录会话，因此这里走独立路由（与 unlock 一致）
+      const r = await postJSON<VaultResult>("/api/vault/reset", {
+        recoveryKey: key,
+        next,
+        hint,
+      });
+      if (r.ok) openStream();
+      return r;
+    },
+    wipeAccountData: () => postJSON<WipeResult>("/api/vault/wipe", {}),
 
     /* ---------------- 推送测试 ---------------- */
     testPush: (notice) => rpc<PushTestResult>("testPush", notice),
@@ -363,6 +376,7 @@ export function createWebApi(): ElectronApi {
     onLog: (cb) => { subscribe("log", cb as (v: never) => void); },
     onAccounts: (cb) => { subscribe("accounts", cb as (v: never) => void); },
     onAppearance: (cb) => { subscribe("appearance", cb as (v: never) => void); },
+    onBgProgress: (cb) => subscribe("bg-progress", cb as (v: never) => void),
     onChromiumStatus: (cb) => { subscribe("chromium-status", cb as (v: never) => void); },
     onAccountStatus: (cb) => subscribe("account-status", cb as (v: never) => void),
     onAccountLog: (cb) => subscribe("account-log", cb as (v: never) => void),

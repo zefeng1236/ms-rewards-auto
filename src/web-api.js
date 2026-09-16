@@ -27,6 +27,7 @@ const appearance = require("./appearance");
 const launch = require("./launch");
 const setup = require("./setup");
 const vault = require("./vault");
+const wipe = require("./wipe");
 const browser = require("./browser");
 const logger = require("./logger");
 const notify = require("./notify");
@@ -40,9 +41,9 @@ const UPLOAD_DIR = path.join(path.dirname(appearance.FILE), "uploads");
 
 /* ============================== 工具 ============================== */
 
-/** 下载图片（跟随重定向）。destFile 为 null 时只探测不落盘 */
+/** 下载图片（跟随重定向），支持流式进度推送。destFile 为 null 时只探测不落盘 */
 async function downloadImage(url, destFile, opts = {}) {
-  const { maxBytes = 60 * 1024 * 1024, headOnly = false } = opts;
+  const { maxBytes = 60 * 1024 * 1024, headOnly = false, onProgress } = opts;
   const res = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(20000) });
   const ct = res.headers.get("content-type") || "";
   const isImage = /^image\//.test(ct);
@@ -52,7 +53,25 @@ async function downloadImage(url, destFile, opts = {}) {
     try { res.body.cancel(); } catch {}
     return { ok: true, status: res.status, contentType: ct, finalUrl: res.url };
   }
-  const buf = Buffer.from(await res.arrayBuffer());
+  const total = Number(res.headers.get("content-length")) || 0;
+  const reader = res.body.getReader();
+  const chunks = [];
+  let loaded = 0;
+  let lastReport = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    loaded += value.length;
+    if (onProgress && total > 0) {
+      const pct = Math.round((loaded / total) * 100);
+      if (pct !== lastReport) {
+        lastReport = pct;
+        onProgress({ loaded, total, pct });
+      }
+    }
+  }
+  const buf = Buffer.concat(chunks);
   if (buf.length > maxBytes) return { ok: false, status: res.status, contentType: ct, finalUrl: res.url, error: "图片过大" };
   fs.mkdirSync(path.dirname(destFile), { recursive: true });
   fs.writeFileSync(destFile, buf);
@@ -90,8 +109,9 @@ function localPathFromSrc(src) {
 /**
  * 当前背景应显示的图片地址（Web 版）。
  * 随机图源先缓存到本地（保证各处看到同一张），再返回可被浏览器加载的 HTTP 地址。
+ * emitFn 可选：传入时下载过程会推送 bg-progress 事件给 SSE。
  */
-async function bgSrc(opts = {}) {
+async function bgSrc(opts = {}, emitFn) {
   const { fresh = false } = opts || {};
   const cfg = appearance.get();
   const url = await rawBackgroundSrc(cfg);
@@ -106,10 +126,14 @@ async function bgSrc(opts = {}) {
     if (fresh || !fs.existsSync(cacheFile)) {
       try {
         fs.mkdirSync(BG_CACHE_DIR, { recursive: true });
-        const r = await downloadImage(url, cacheFile);
+        const r = await downloadImage(url, cacheFile, {
+          onProgress: emitFn ? (info) => emitFn("bg-progress", info) : undefined,
+        });
         if (!r.ok) logger.warn(`壁纸缓存失败: ${r.error || "未知错误"}`);
       } catch (e) {
         logger.warn(`壁纸缓存失败: ${e.message}`);
+      } finally {
+        if (emitFn) emitFn("bg-progress", { done: true });
       }
     }
     if (fs.existsSync(cacheFile)) return `/api/bg/cache?f=${encodeURIComponent(cacheName)}`;
@@ -257,7 +281,7 @@ function createApi({ emit }) {
     },
     async getBgSrc(opts) {
       try {
-        const src = await bgSrc(opts);
+        const src = await bgSrc(opts, emit);
         // luma 由前端 canvas 采样（同源图片不污染画布），服务端不重复解码
         return { src, luma: null };
       } catch (e) {
@@ -331,6 +355,21 @@ function createApi({ emit }) {
     },
     vaultRecoveryKey() {
       return vault.getRecoveryKey();
+    },
+    // 忘记密码：用恢复密钥重置密码（无需原密码）
+    vaultResetPasswordWithRecovery(key, next, hint) {
+      const r = vault.resetPasswordWithRecovery(key, next, hint);
+      if (r.ok) {
+        vaultMigrate.migrateAll();
+        pushAccounts();
+      }
+      return r;
+    },
+    // 忘记密码且密钥也丢失：清空账号数据（含保险库），保留个性化设置
+    wipeAccountData() {
+      const r = wipe.wipeAccountData();
+      if (r.ok) pushAccounts();
+      return r;
     },
 
     /* ---------------------------- 通知 ---------------------------- */

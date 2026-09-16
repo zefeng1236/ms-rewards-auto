@@ -65,6 +65,7 @@ const DEFAULT_APPEARANCE: Appearance = {
   bgBlur: 4,
   bgDim: 0.25,
   glass: true,
+  pointerHalo: true,
   autoTheme: false,
   bgResolved: null,
 };
@@ -382,6 +383,20 @@ export function createMockApi(): ElectronApi {
       return { ok: true };
     },
     vaultRecoveryKey: async (): Promise<VaultResult> => ({ ok: true, recoveryKey: MOCK_RECOVERY }),
+    vaultResetPasswordWithRecovery: async (key, next) => {
+      if (key !== MOCK_RECOVERY) return { ok: false, error: "恢复密钥不正确" };
+      if (!next || next.length < 6) return { ok: false, error: "新密码至少 6 位" };
+      mockVaultPw = next;
+      mockVault = { ...mockVault, unlocked: true };
+      return { ok: true };
+    },
+    wipeAccountData: async () => {
+      const n = mockAccounts.length;
+      mockAccounts.length = 0;
+      mockVault = { configured: false, unlocked: true, keychain: false, hint: "", byEnv: false };
+      mockVaultPw = "";
+      return { ok: true, accounts: n, logs: n, vault: true, wallpaperKey: true, wizardReset: true };
+    },
 
     testPush: async () => ({ ok: false, error: "浏览器预览模式不支持推送" }),
 
@@ -455,6 +470,7 @@ export function createMockApi(): ElectronApi {
     onLog: noop,
     onAccounts: noop,
     onAppearance: noop,
+    onBgProgress: () => () => {},
     onChromiumStatus: noop,
     onAccountStatus: (cb) => {
       statusCbs.add(cb);

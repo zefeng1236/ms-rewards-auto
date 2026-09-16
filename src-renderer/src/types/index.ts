@@ -203,6 +203,8 @@ export interface Appearance {
   bgDim: number;
   /** 液态玻璃表面开关 */
   glass: boolean;
+  /** 鼠标指针光晕开关（需配合 glass 才有视觉意义） */
+  pointerHalo: boolean;
   /** 跟随壁纸亮度自动反色（亮壁纸→浅色主题，暗壁纸→深色主题） */
   autoTheme: boolean;
   /** Bing 每日图解析缓存 */
@@ -221,6 +223,18 @@ export interface BgSrcResult {
   src: string;
   /** 壁纸平均亮度 0–1；取不到时为 null（autoTheme 此时退回手动模式） */
   luma: number | null;
+}
+
+/** 壁纸下载进度推送（用于「正在切换壁纸，已下载 xx%」气泡） */
+export interface BgProgress {
+  /** 已下载字节 */
+  loaded?: number;
+  /** 总字节（取不到 Content-Length 时为 0） */
+  total?: number;
+  /** 进度百分比 0–100 */
+  pct?: number;
+  /** 下载结束（成功或失败）时为 true */
+  done?: boolean;
 }
 
 export interface TestUrlResult {
@@ -308,6 +322,22 @@ export interface VaultResult {
   error?: string;
   /** 建库或取回时下发的恢复密钥（忘记密码时的唯一退路） */
   recoveryKey?: string;
+}
+
+/** 「清空账号数据」的执行结果（返回实际清掉了多少东西，便于界面反馈） */
+export interface WipeResult {
+  ok: boolean;
+  error?: string;
+  /** 被清空的账户数量 */
+  accounts: number;
+  /** 被清空的历史日志份数（按账号目录计） */
+  logs: number;
+  /** 保险库是否已随之移除（密码与密钥都丢失时它已无法解开） */
+  vault: boolean;
+  /** 是否清掉了壁纸 API 密钥（个性化设置里的第三方凭据） */
+  wallpaperKey: boolean;
+  /** 向导状态是否被重置（账号与保险库都没了，下次启动重新进入首次启动向导） */
+  wizardReset: boolean;
 }
 
 /** 运行类操作的统一返回 */

@@ -12,6 +12,7 @@ import { api } from "./api/ipc";
 import { AppStateProvider, useAppState } from "./hooks/useAppState";
 import { useBackground } from "./hooks/useBackground";
 import { useTheme } from "./hooks/useTheme";
+import { useLiquidGlassHalo } from "./hooks/useLiquidGlassHalo";
 import { Sidebar } from "./components/Sidebar";
 import { LogConsole } from "./components/LogConsole";
 import { Dashboard } from "./views/Dashboard";
@@ -22,6 +23,7 @@ import { LaunchSettings } from "./views/LaunchSettings";
 import { SetupWizard } from "./views/SetupWizard";
 import { VaultLock } from "./views/VaultLock";
 import { ClosePrompt } from "./components/ClosePrompt";
+import { BgProgressBubble } from "./components/BgProgressBubble";
 import type { SetupState, VaultStatus } from "./types";
 
 export type ViewKey = "dashboard" | "account" | "settings" | "personalize" | "launch";
@@ -45,6 +47,9 @@ export default function App() {
 function Shell() {
   const { appearance, loading } = useAppState();
   const { src: bgSrc, ambient, reload: shuffleBg, luma } = useBackground();
+  // 修复玻璃库指针光晕不跟手的 bug（详见 hook 注释）
+  // 指针光晕独立开关：与玻璃表面解耦（玻璃 fallback 面板同样带 .lg-surface，光晕仍可见）
+  useLiquidGlassHalo(appearance?.pointerHalo === true);
   // 解析深浅主题并写入 <html data-theme>；autoTheme 打开时由壁纸亮度 +
   // 两套主题色的合成对比度决定（亮壁纸→深色主题白字，暗壁纸→浅色主题黑字），
   // 花色壁纸按「哪套主题的文字真的看得清」来选，而不是简单看平均亮度。
@@ -144,6 +149,7 @@ function Shell() {
             保存数字密钥 / 下载 txt 等操作的 toast 必须在这里单独挂一个，
             否则 toast.success() 发出去却没有容器渲染 → 用户看到「点了没反应」 */}
         <Toaster position="bottom-right" max={3} />
+        <BgProgressBubble />
         {closePrompt}
       </>
     );
@@ -155,6 +161,7 @@ function Shell() {
       <>
         <VaultLock onUnlocked={() => setVault({ ...vault, unlocked: true })} />
         <Toaster position="bottom-right" max={3} />
+        <BgProgressBubble />
         {closePrompt}
       </>
     );
@@ -214,6 +221,7 @@ function Shell() {
         <LogConsole />
         {closePrompt}
         <Toaster position="bottom-right" max={3} />
+        <BgProgressBubble />
       </div>
     </LiquidGlassConfig>
   );

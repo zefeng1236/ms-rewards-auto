@@ -202,9 +202,43 @@ function changePassword(current, next, hint) {
   }
 }
 
-/** 取出恢复密钥（仅在已解锁时允许，避免成为绕过密码的后门） */
-function getRecoveryKey() {
+/**
+ * 忘记密码时用恢复密钥重置密码。
+ *
+ * 与 changePassword 的区别：这里不需要原密码，而是用恢复密钥解出主密钥
+ * （与「用恢复密钥解锁」同一套校验），再用新密码重新包裹同一把主密钥 ——
+ * 因此已加密的账户数据无需重写，旧恢复密钥依然有效（主密钥没变）。
+ *
+ * @returns {{ok:boolean, error?:string}}
+ */
+function resetPasswordWithRecovery(recoveryKey, next, hint) {
   const meta = readMeta();
+  if (!meta) return { ok: false, error: "尚未配置保险库" };
+  const key = String(recoveryKey == null ? "" : recoveryKey).trim();
+  if (!key) return { ok: false, error: "请输入恢复密钥" };
+  if (!next || String(next).length < 6) return { ok: false, error: "新密码至少 6 位" };
+  let nextVk;
+  try {
+    nextVk = crypto.vkFromRecovery(meta, key);
+    if (!crypto.verifyVk(meta, nextVk)) throw new Error("校验失败");
+  } catch {
+    return { ok: false, error: "恢复密钥不正确" };
+  }
+  try {
+    const nextMeta = crypto.rewrapPassword(meta, nextVk, next, hint);
+    writeMeta(nextMeta);
+    adoptVk(nextVk);
+    unlockedByEnv = false;
+    logger.ok("已用恢复密钥重置保险库密码");
+    return { ok: true };
+  } catch (e) {
+    logger.error(`重置保险库密码失败: ${e.message}`);
+    return { ok: false, error: e.message };
+  }
+}
+
+/** 取出恢复密钥（仅在已解锁时允许，避免成为绕过密码的后门） */
+function getRecoveryKey() {  const meta = readMeta();
   if (!meta || !isUnlocked()) return { ok: false, error: "保险库未解锁" };
   try {
     // VK 是用 RK 加密的，反过来无法从 VK 推出 RK；
@@ -254,6 +288,7 @@ module.exports = {
   unlockWithRecovery,
   tryAutoUnlock,
   changePassword,
+  resetPasswordWithRecovery,
   getRecoveryKey,
   lock,
   status,

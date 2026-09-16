@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Button, toast } from "@ttqtt/liquid-glass-react";
 import { api, IS_WEB } from "../api/ipc";
 import { saveRecoveryKeyToBrowser } from "../api/web";
+import { PasswordInput } from "../components/PasswordInput";
 import { evaluatePassword, STRENGTH_COLORS } from "../utils/passwordStrength";
 import type { SetupState } from "../types";
 
@@ -349,51 +350,6 @@ function CountdownNext({ onNext }: { onNext: () => void }) {
 
 /* ---------------- 第 4 页：加密保险库 ---------------- */
 
-/** 密码输入框：带小眼睛切换显隐 */
-function PasswordInput({
-  value,
-  onChange,
-  placeholder,
-  autoComplete,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  placeholder?: string;
-  autoComplete?: string;
-}) {
-  const [visible, setVisible] = useState(false);
-  return (
-    <div className="wz-password-wrap">
-      <input
-        type={visible ? "text" : "password"}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        autoComplete={autoComplete}
-      />
-      <button
-        type="button"
-        className="wz-password-eye"
-        onClick={() => setVisible((v) => !v)}
-        aria-label={visible ? "隐藏密码" : "显示密码"}
-        tabIndex={-1}
-      >
-        {visible ? (
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-            <circle cx="12" cy="12" r="3" />
-          </svg>
-        ) : (
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
-            <line x1="1" y1="1" x2="23" y2="23" />
-          </svg>
-        )}
-      </button>
-    </div>
-  );
-}
-
 /**
  * 设置加密密码。
  *
@@ -414,6 +370,10 @@ function PageVault({ onNext }: { onNext: () => void }) {
   // 关掉「启用加密」时的风险确认弹窗
   const [confirmDisable, setConfirmDisable] = useState(false);
   const [countdown, setCountdown] = useState(5);
+  // 升级老用户防御：保险库已配置时（覆盖安装、setup.json 缺失等场景），
+  // 本页不能显示创建表单 —— vaultSetup 会报「保险库已配置，请勿重复设置」。
+  // null=查询中，true=已配置（渲染「已就绪」分支），false=未配置（正常表单）。
+  const [vaultCfg, setVaultCfg] = useState<boolean | null>(null);
 
   // ⚠ 下面这段 Hook 与 st 必须写在 `if (recovery)` 之前。
   // 提前 return 会让「已生成恢复密钥」的那一次渲染少调用一个 Hook，
@@ -428,6 +388,22 @@ function PageVault({ onNext }: { onNext: () => void }) {
 
   // 实时强度评估（仅用于界面提示，不参与加密）
   const st = evaluatePassword(pw);
+
+  // 查询保险库状态（Hook 必须在所有 early return 之前调用，原因同上）
+  useEffect(() => {
+    let alive = true;
+    api
+      .getVaultStatus()
+      .then((v) => {
+        if (alive) setVaultCfg(!!v.configured);
+      })
+      .catch(() => {
+        if (alive) setVaultCfg(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   // 建库成功后先钉住用户把恢复密钥抄走，再放行下一步
   if (recovery) {
@@ -506,7 +482,37 @@ function PageVault({ onNext }: { onNext: () => void }) {
     );
   }
 
+  // 保险库已配置（升级覆盖安装等场景）：不再显示创建表单，直接放行。
+  // 主进程的 setup:get 迁移 normally 会让向导根本不弹，这里是渲染端兜底，
+  // 两层都挡住才能保证老用户永远不会看到「保险库已配置，请勿重复设置」。
+  if (vaultCfg) {
+    return (
+      <div className="wz-page wz-vault">
+        <h2>加密保险库已就绪</h2>
+        <p className="wz-lead">
+          检测到本机已配置加密保险库，<strong>无需重复设置</strong>。
+          你的登录态继续以密文保存；日常启动由系统钥匙串自动解锁，不需要每次输密码。
+        </p>
+        <div className="wz-alert">
+          <strong>忘记密码？</strong>
+          <span>完成后可在「全局设置 → 安全」里查看密码提示，或用恢复密钥解锁。</span>
+        </div>
+        <div className="wz-next">
+          <Button variant="accent" size="sm" onClick={onNext}>
+            下一步 →
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   const submit = async () => {
+    // 状态查询已确认「已配置」时（或尚未返回、处于未知态）不再尝试建库，
+    // 避免和主进程的「保险库已配置」报错撞车
+    if (vaultCfg !== false) {
+      onNext();
+      return;
+    }
     if (!enable) {
       onNext();
       return;

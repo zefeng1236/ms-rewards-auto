@@ -89,15 +89,28 @@ async function runOnce(ctx, opts = {}) {
   cancel.throwIfAborted();
 
   // 3. 同步浏览器 Cookie（活动/搜索依赖，顺带刷新登录态）
-  let loggedIn = false;
+  // null = 没能判定（同步失败，沿用旧行为继续跑）；true/false = 明确判定
+  let loggedIn = null;
   try {
     const sync = await browser.syncCookies(ctx);
-    loggedIn = sync.loggedIn;
+    loggedIn = !!sync.loggedIn;
   } catch (e) {
     if (e && e.isAbort) throw e;
     logger.warn(`Cookie 同步失败: ${e.message}`);
   }
   cancel.throwIfAborted();
+
+  // 明确判定为「未登录」时直接收工：后面的签入/阅读/活动/搜索全部依赖登录态，
+  // 硬跑只会把「未授权」的空结果写回状态，还会在未登录的帮助页上点一堆无效入口
+  // （既拿不到分，又白搭一轮时间，日志里也全是误导性的"已点击领取入口"）。
+  if (loggedIn === false) {
+    result.ok = false;
+    result.reason = "未登录，已跳过本轮任务";
+    state.get().lastResult = "未登录：请先在账户里点「授权登录」";
+    state.save();
+    logger.warn(`账户「${ctx.name}」未检测到登录态，跳过本轮全部任务（请先点「授权登录」）`);
+    return result;
+  }
 
   // 4. 顺序执行任务（签入/阅读依赖 access token，无 token 则跳过并提示授权）
   // 每个任务完成后增量保存今日合计，避免在搜索长等待中被中断时数据全丢
@@ -460,6 +473,14 @@ function shouldRunNow(ctx, now = new Date()) {
   const state = ctx.state;
   if (!sc.enable) return { run: false, reason: "未启用自动运行" };
 
+  // 从未登录过的账户不纳入自动调度：没有登录态时跑一轮纯属空转（任务全判未授权，
+  // 还会在未登录页面上点无效入口）。刚添加的账号默认就是这个状态，
+  // 等它授权登录一次（有认证 Cookie 或 refreshToken）后自然进入循环。
+  const st0 = state.get();
+  if (!browser.hasAuthCookies(st0.cookies || []) && !st0.refreshToken) {
+    return { run: false, reason: "账户尚未登录，跳过自动运行" };
+  }
+
   // 跨天先清账，否则昨天的「今日已完成」标记会一直挡着
   state.resetIfNewDay();
 
@@ -502,6 +523,9 @@ function shouldRunNow(ctx, now = new Date()) {
 function nextRunTime(ctx) {
   const sc = normalizeSchedule(ctx.config.get());
   if (!sc.enable) return null;
+  // 未登录的账户没有可预期的运行时间（自动调度会跳过它）
+  const st0 = ctx.state.get();
+  if (!browser.hasAuthCookies(st0.cookies || []) && !st0.refreshToken) return null;
   const now = new Date();
 
   if (sc.mode === "daily") {

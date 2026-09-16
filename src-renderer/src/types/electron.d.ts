@@ -7,6 +7,7 @@ import type {
   Appearance,
   AppearanceSetResult,
   BgSrcResult,
+  BgProgress,
   ChromiumStatus,
   CloseAction,
   DeepPartial,
@@ -21,6 +22,7 @@ import type {
   TestUrlResult,
   VaultResult,
   VaultStatus,
+  WipeResult,
 } from "./index";
 
 /**
@@ -84,6 +86,17 @@ export interface ElectronApi {
   vaultChangePassword(current: string, next: string, hint?: string): Promise<VaultResult>;
   /** 取恢复密钥（仅已解锁时可用，内部会轮换一把新的） */
   vaultRecoveryKey(): Promise<VaultResult>;
+  /** 忘记密码：用恢复密钥重置密码（无需原密码，主密钥不变） */
+  vaultResetPasswordWithRecovery(
+    key: string,
+    next: string,
+    hint?: string
+  ): Promise<VaultResult>;
+  /**
+   * 忘记密码且恢复密钥也丢失：清空全部账号数据（含保险库与历史日志），
+   * 个性化设置与启动设置保留（壁纸 API 密钥作为凭据一并清除）。
+   */
+  wipeAccountData(): Promise<WipeResult>;
 
   // ---- 推送测试 ----
   testPush(notice: AppConfig["notice"]): Promise<PushTestResult>;
@@ -118,6 +131,8 @@ export interface ElectronApi {
   onLog(cb: (line: string) => void): void;
   onAccounts(cb: (list: Account[]) => void): void;
   onAppearance(cb: (v: Appearance) => void): void;
+  /** 壁纸下载进度推送：{ loaded, total, pct } 或 { done: true }；返回退订函数 */
+  onBgProgress(cb: (v: BgProgress) => void): () => void;
   onChromiumStatus(cb: (v: ChromiumStatus) => void): void;
   /** 每账号运行态变更；返回退订函数 */
   onAccountStatus(cb: (v: { id: string; status: AccountRunStatusMap[string]["status"]; reason?: string }) => void): () => void;

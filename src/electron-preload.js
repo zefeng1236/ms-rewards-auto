@@ -62,6 +62,11 @@ contextBridge.exposeInMainWorld("api", {
   vaultChangePassword: (cur, next, hint) =>
     ipcRenderer.invoke("vault:changePassword", cur, next, hint),
   vaultRecoveryKey: () => ipcRenderer.invoke("vault:recoveryKey"),
+  // 忘记密码：用恢复密钥重置密码（无需原密码）
+  vaultResetPasswordWithRecovery: (key, next, hint) =>
+    ipcRenderer.invoke("vault:resetPasswordWithRecovery", key, next, hint),
+  // 忘记密码且密钥也丢失：清空账号数据（含保险库），保留个性化设置
+  wipeAccountData: () => ipcRenderer.invoke("app:wipeAccountData"),
 
   // 推送通知测试：把当前表单填的通道试发一遍，日志输出具体（脱敏）地址
   testPush: (notice) => ipcRenderer.invoke("notify:test", notice),
@@ -112,4 +117,10 @@ contextBridge.exposeInMainWorld("api", {
   onAccounts: (cb) => ipcRenderer.on("accounts", (_e, list) => cb(list)),
   // 外观变更推送（主进程保存后实时同步到渲染进程）
   onAppearance: (cb) => ipcRenderer.on("appearance", (_e, v) => cb(v)),
+  // 壁纸下载进度推送：{ loaded, total, pct } 或 { done: true }
+  onBgProgress: (cb) => {
+    const handler = (_e, v) => cb(v);
+    ipcRenderer.on("bg-progress", handler);
+    return () => ipcRenderer.removeListener("bg-progress", handler);
+  },
 });

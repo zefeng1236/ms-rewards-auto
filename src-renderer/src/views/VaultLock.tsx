@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button, toast } from "@ttqtt/liquid-glass-react";
 import { api, IS_WEB } from "../api/ipc";
 import { clearSavedRecoveryKey, getSavedRecoveryKey, saveRecoveryKeyToBrowser } from "../api/web";
+import { VaultRescue, extractRecoveryKey } from "../components/VaultRescue";
 import type { VaultStatus } from "../types";
 
 /**
@@ -23,6 +24,10 @@ export function VaultLock({ onUnlocked }: { onUnlocked: () => void }) {
   const [mode, setMode] = useState<"pw" | "rk">("pw");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  // 恢复密钥除了手输，也支持直接上传建库时下载的 txt（文件里含标题/时间行，
+  // 由 extractRecoveryKey 过滤出密钥本体，与自救面板共用同一套解析）
+  const keyFileRef = useRef<HTMLInputElement | null>(null);
+  const [rkFromFile, setRkFromFile] = useState("");
   // 本机浏览器里保存的恢复密钥（数字密钥）
   const [savedKey, setSavedKey] = useState<string | null>(() => (IS_WEB ? getSavedRecoveryKey() : null));
 
@@ -63,6 +68,23 @@ export function VaultLock({ onUnlocked }: { onUnlocked: () => void }) {
   };
 
   const submit = () => unlockWith(mode === "pw" ? pw : rk, mode === "rk");
+
+  /** 从密钥文件里读出恢复密钥填进输入框，用户确认后再点解锁 */
+  const pickKeyFile = async (file: File | null | undefined) => {
+    if (!file) return;
+    setErr("");
+    try {
+      const key = extractRecoveryKey(await file.text());
+      if (!key) {
+        setErr("这个文件里没找到有效的恢复密钥（应是一串 44 位的字符）");
+        return;
+      }
+      setRk(key);
+      setRkFromFile(file.name);
+    } catch (e) {
+      setErr(`读取文件失败：${(e as Error).message}`);
+    }
+  };
 
   const oneClick = async () => {
     if (!savedKey) return;
@@ -157,6 +179,29 @@ export function VaultLock({ onUnlocked }: { onUnlocked: () => void }) {
                   autoFocus
                 />
               </label>
+
+              {/* 恢复密钥支持从建库时下载的 txt 直接读取，省去手抄 44 位密钥 */}
+              {mode === "rk" && (
+                <div className="wz-key-file">
+                  <input
+                    ref={keyFileRef}
+                    type="file"
+                    accept=".txt,text/plain"
+                    style={{ display: "none" }}
+                    onChange={(e) => {
+                      void pickKeyFile(e.target.files?.[0]);
+                      // 允许重复选同一个文件
+                      e.target.value = "";
+                    }}
+                  />
+                  <Button variant="glass" size="sm" onClick={() => keyFileRef.current?.click()}>
+                    📄 上传密钥文件
+                  </Button>
+                  <span className="hint">
+                    {rkFromFile ? `已从「${rkFromFile}」读取密钥` : "选择建库时下载的 txt 文件"}
+                  </span>
+                </div>
+              )}
             </div>
 
             {err && <div className="wz-err">{err}</div>}
@@ -165,6 +210,11 @@ export function VaultLock({ onUnlocked }: { onUnlocked: () => void }) {
               密码不会被保存到任何地方，忘记时只能用恢复密钥解锁。
               连续输错不会锁定，但也请谨慎尝试。
             </p>
+
+            {/* 自助退路：有恢复密钥→重设密码；两样都没有→清空账号数据。
+                忘了密码的人正被挡在这一屏，这里不放入口等于没有退路。
+                清空数据后主进程已把向导状态重置，重载即重新进入首次启动向导。 */}
+            <VaultRescue onReset={afterUnlocked} onWiped={() => window.location.reload()} />
           </div>
         </div>
 

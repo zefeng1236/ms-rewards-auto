@@ -42,6 +42,11 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
   // 「随机美图」只展开二级区、不立刻切源（选源要先过免责声明），
   // 所以它无法从外观设置反推，需要一个临时的分组覆盖值。
   const [groupOverride, setGroupOverride] = useState<string | null>(null);
+  // 滑动条拖动草稿：受控值只在 onChangeEnd 提交（避免拖动中高频写盘），
+  // 拖动过程中用本地草稿让滑块与数值实时跟手，松手后回落到已提交值。
+  const [blurDraft, setBlurDraft] = useState<number | null>(null);
+  const [dimDraft, setDimDraft] = useState<number | null>(null);
+  const [opacityDraft, setOpacityDraft] = useState<number | null>(null);
 
   if (!appearance) return null;
 
@@ -129,6 +134,7 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
       bgBlur: 4,
       bgDim: 0.25,
       glass: false,
+      pointerHalo: false,
       autoTheme: false,
     });
     toast.success("已恢复默认外观");
@@ -406,11 +412,15 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
               min={0}
               max={40}
               step={1}
-              value={appearance.bgBlur}
-              onChangeEnd={(v) => void patchAppearance({ bgBlur: v })}
+              value={blurDraft ?? appearance.bgBlur}
+              onChange={(v) => setBlurDraft(v)}
+              onChangeEnd={(v) => {
+                setBlurDraft(null);
+                void patchAppearance({ bgBlur: v });
+              }}
               aria-label="背景高斯模糊"
             />
-            <span className="rng-val">{appearance.bgBlur}px</span>
+            <span className="rng-val">{blurDraft ?? appearance.bgBlur}px</span>
           </div>
           <div className="range-field">
             <span>背景暗化</span>
@@ -419,11 +429,15 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
               min={0}
               max={85}
               step={5}
-              value={Math.round(appearance.bgDim * 100)}
-              onChangeEnd={(v) => void patchAppearance({ bgDim: v / 100 })}
+              value={dimDraft ?? Math.round(appearance.bgDim * 100)}
+              onChange={(v) => setDimDraft(v)}
+              onChangeEnd={(v) => {
+                setDimDraft(null);
+                void patchAppearance({ bgDim: v / 100 });
+              }}
               aria-label="背景暗化"
             />
-            <span className="rng-val">{Math.round(appearance.bgDim * 100)}%</span>
+            <span className="rng-val">{dimDraft ?? Math.round(appearance.bgDim * 100)}%</span>
           </div>
         </div>
 
@@ -438,6 +452,20 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
             checked={appearance.glass}
             onCheckedChange={(v) => void patchAppearance({ glass: v })}
             aria-label="液态玻璃表面"
+          />
+        </div>
+
+        <div className="field-row" style={{ marginTop: 12 }}>
+          <div>
+            <div>鼠标指针光晕</div>
+            <div className="hint">
+              光标划过面板时跟随的一大团柔光（独立于玻璃表面，随时可开关）
+            </div>
+          </div>
+          <Switch
+            checked={appearance.pointerHalo === true}
+            onCheckedChange={(v) => void patchAppearance({ pointerHalo: v })}
+            aria-label="鼠标指针光晕"
           />
         </div>
       </div>
@@ -472,11 +500,15 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
                 min={30}
                 max={100}
                 step={5}
-                value={Math.round(appearance.opacity * 100)}
-                onChangeEnd={(v) => void patchAppearance({ opacity: v / 100 })}
+                value={opacityDraft ?? Math.round(appearance.opacity * 100)}
+                onChange={(v) => setOpacityDraft(v)}
+                onChangeEnd={(v) => {
+                  setOpacityDraft(null);
+                  void patchAppearance({ opacity: v / 100 });
+                }}
                 aria-label="面板不透明度"
               />
-              <span className="rng-val">{Math.round(appearance.opacity * 100)}%</span>
+              <span className="rng-val">{opacityDraft ?? Math.round(appearance.opacity * 100)}%</span>
             </div>
           </div>
           <div style={{ marginTop: 12 }}>

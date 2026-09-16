@@ -151,6 +151,140 @@ const tasksSource = fs.readFileSync(path.join(ROOT, "src", "tasks.js"), "utf8");
 checkTrue("领取入口改用 DOM click 避免遮罩拦截", tasksSource.includes("await el.evaluate((n) => n.click())"));
 checkTrue("领取后会处理可见确认对话框", tasksSource.includes("[role='dialog']") && tasksSource.includes("已确认领取对话框"));
 
+/* ============ 7. 向导升级兼容静态守卫 ============ */
+console.log("\n【7】向导升级兼容（覆盖安装老用户）");
+const setupSource = fs.readFileSync(path.join(ROOT, "src", "setup.js"), "utf8");
+checkTrue("setup:get 检测到 vault.json 自动补写向导完成状态", setupSource.includes("migrateUpgradedVaultUser") && setupSource.includes('sp.resolve("vault.json")'));
+const wizardSource = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "views", "SetupWizard.tsx"), "utf8");
+checkTrue("向导加密页对已配置保险库渲染「已就绪」分支而非创建表单", wizardSource.includes("if (vaultCfg)") && wizardSource.includes("加密保险库已就绪"));
+
+/* ============ 8. 忘记密码自救：重置密码 + 清空账号数据 ============ */
+console.log("\n【8】忘记密码自救（重置密码 / 清空账号数据）");
+const wipeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ms-rewards-wipe-selfcheck-"));
+process.env.MS_REWARDS_STORAGE_DIR = path.join(wipeRoot, "storage");
+
+const appearance = require(path.join(ROOT, "src", "appearance.js"));
+const launch = require(path.join(ROOT, "src", "launch.js"));
+const setupMod = require(path.join(ROOT, "src", "setup.js"));
+const vault = require(path.join(ROOT, "src", "vault"));
+const wipe = require(path.join(ROOT, "src", "wipe.js"));
+
+// 造两个账号（含登录态与配置），并留下个性化 / 启动 / 向导设置
+const w1 = accounts.create("待清空甲");
+const w2 = accounts.create("待清空乙");
+const c1 = accounts.context(w1.id);
+c1.state.setCookies([{ name: "SID", value: "secret", domain: ".bing.com" }]);
+c1.state.get().lastBalance = 1234;
+c1.state.save();
+appearance.set({ bgBlur: 22, bgUnsplashKey: "test-unsplash-key" });
+launch.set({ autoLaunch: true });
+setupMod.set({ done: true, agreed: true });
+const vaultReset = vault.setup("TestPass1!@", "测试提示");
+
+check("清空前账号数为 2", accounts.list().length, 2);
+checkTrue("清空前保险库已配置", vault.isConfigured());
+
+// 先用真实恢复密钥验证「重置密码」这条路径（主密钥不变，旧密钥仍有效）
+const vsRk = vaultReset.recoveryKey;
+vault.lock();
+checkTrue(
+  "错误的恢复密钥无法重置密码",
+  vault.resetPasswordWithRecovery("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "NewPass2!@").ok === false
+);
+checkTrue("用恢复密钥重置密码成功", vault.resetPasswordWithRecovery(vsRk, "NewPass2!@", "新提示").ok === true);
+vault.lock();
+checkTrue("重置后可用新密码解锁", vault.unlock("NewPass2!@").ok === true);
+checkTrue("重置后旧密码已失效", vault.unlock("TestPass1!@").ok === false);
+
+const wr = wipe.wipeAccountData();
+checkTrue("清空操作返回成功", wr.ok === true && wr.accounts === 2);
+check("清空后账号列表为空", accounts.list().length, 0);
+checkTrue("清空后加密保险库已移除", !vault.isConfigured() && !fs.existsSync(vault.VAULT_FILE));
+checkTrue("账号目录已整体删除", !fs.existsSync(path.join(wipeRoot, "storage", "accounts")));
+check("清空后个性化设置保留（模糊值）", appearance.get().bgBlur, 22);
+check("清空后壁纸 API 密钥被清除", appearance.get().bgUnsplashKey, "");
+check("清空后启动设置保留", launch.get().autoLaunch, true);
+// 账号与保险库都被删除 → 向导状态必须重置，下次启动重新引导（含重新建库）
+checkTrue("清空返回标记向导已重置", wr.wizardReset === true);
+check("清空后向导状态被重置（重新引导）", setupMod.get().done, false);
+fs.rmSync(wipeRoot, { recursive: true, force: true });
+
+/* ============ 9. 自救面板静态守卫 ============ */
+console.log("\n【9】自救面板静态守卫");
+const rescueSource = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "components", "VaultRescue.tsx"),
+  "utf8"
+);
+checkTrue("支持上传密钥文件并解析出密钥", rescueSource.includes("extractRecoveryKey") && rescueSource.includes("type=\"file\""));
+checkTrue("重置密码调用专用接口（无需原密码）", rescueSource.includes("vaultResetPasswordWithRecovery"));
+checkTrue("清空数据需经红色确认弹窗", rescueSource.includes("确定清空!!!(不可恢复)") && rescueSource.includes("wz-modal-mask"));
+const lockSource = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "views", "VaultLock.tsx"),
+  "utf8"
+);
+checkTrue("锁屏页也提供自救入口", lockSource.includes("<VaultRescue"));
+checkTrue(
+  "锁屏页用恢复密钥解锁时也能上传密钥文件",
+  lockSource.includes("extractRecoveryKey") && lockSource.includes("type=\"file\"") && lockSource.includes("上传密钥文件")
+);
+const wipeSource = fs.readFileSync(path.join(ROOT, "src", "wipe.js"), "utf8");
+checkTrue(
+  "清空数据会重置向导状态以重新引导",
+  wipeSource.includes("setup.set(") && wipeSource.includes("wizardReset")
+);
+const mainSource = fs.readFileSync(path.join(ROOT, "src", "electron-main.js"), "utf8");
+checkTrue("主进程暴露重置密码与清空数据两个通道", mainSource.includes("\"vault:resetPasswordWithRecovery\"") && mainSource.includes("\"app:wipeAccountData\""));
+
+/* ============ 10. 设置页布局守卫（窗口缩放） ============ */
+console.log("\n【10】设置页布局守卫（窗口缩放）");
+const cssSource = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "styles", "global.css"),
+  "utf8"
+);
+checkTrue(
+  "积分目标行改为可折行布局（不再固定 4 列却塞 5 个元素）",
+  /\.goal-row\s*\{[^}]*flex-wrap:\s*wrap/.test(cssSource)
+);
+checkTrue(
+  "网格内的开关紧跟标签（不随列宽飘到列右缘）",
+  /\.form-grid\s*>\s*\.field-row\s*\{[^}]*justify-content:\s*flex-start/.test(cssSource)
+);
+checkTrue(
+  "网格项允许收缩，1fr 列真正等分",
+  /\.form-grid\s*>\s*\*\s*\{[^}]*min-width:\s*0/.test(cssSource)
+);
+
+/* ============ 11. 登录守卫（未登录账户不自动运行、不空跑） ============ */
+console.log("\n【11】登录守卫（未登录账户不空跑）");
+const runnerSource = fs.readFileSync(path.join(ROOT, "src", "runner.js"), "utf8");
+checkTrue(
+  "Cookie 同步后明确未登录即收工，不再硬跑全部任务",
+  /if \(loggedIn === false\)/.test(runnerSource) && /跳过本轮全部任务/.test(runnerSource)
+);
+checkTrue(
+  "未登录账户不纳入自动调度（刚添加的账号不会立刻空跑一轮）",
+  /尚未登录，跳过自动运行/.test(runnerSource)
+);
+checkTrue(
+  "未登录时不写回误导性的运行结果",
+  /lastResult = "未登录：请先在账户里点「授权登录」"/.test(runnerSource)
+);
+
+// 运行时断言：临时 storage 里建一个从未登录的账户
+const guardDir = fs.mkdtempSync(path.join(os.tmpdir(), "ms-rewards-guard-"));
+process.env.MS_REWARDS_STORAGE_DIR = guardDir;
+const guardAccounts = require(path.join(ROOT, "src", "account.js"));
+const guardRunner = require(path.join(ROOT, "src", "runner.js"));
+const gAcc = guardAccounts.create("守卫自检账户");
+const gCtx = guardAccounts.context(gAcc.id);
+const g1 = guardRunner.shouldRunNow(gCtx);
+checkTrue("刚创建的未登录账户：自动调度跳过", g1.run === false, `实际 ${JSON.stringify(g1)}`);
+checkTrue("未登录账户没有下次运行时间", guardRunner.nextRunTime(gCtx) === null);
+gCtx.state.get().refreshToken = "selfcheck-fake-token";
+gCtx.state.save();
+const g2 = guardRunner.shouldRunNow(gCtx);
+checkTrue("授权后（有 refreshToken）恢复自动调度", g2.run === true, `实际 ${JSON.stringify(g2)}`);
+
 /* ============ 汇总 ============ */
 console.log(`\n${"=".repeat(46)}`);
 console.log(`结果: ${pass} 通过 / ${fail} 失败`);
