@@ -27,7 +27,10 @@ ARG NPM_REGISTRY=https://registry.npmmirror.com
 WORKDIR /build
 
 # 依赖层：只依赖 package*.json，源码改动不会触发重新 npm ci
+# @ttqtt/liquid-glass-react 上游已从 npm 撤版（0.2.0 各镜像站 404），
+# 依赖改为 file:docker/vendor/…tgz 离线包，npm ci 需要该 tarball 在上下文里
 COPY package.json package-lock.json ./
+COPY docker/vendor ./docker/vendor
 # --ignore-scripts：跳过 electron / playwright 的 postinstall 下载（构建前端用不到）
 RUN npm config set registry "$NPM_REGISTRY" \
     && npm ci --no-audit --no-fund --ignore-scripts \
@@ -84,7 +87,9 @@ RUN set -eux; \
 WORKDIR /app
 
 # ③ 后端依赖层：单独一层，源码变动不会重装依赖
+#    liquid-glass-react 为 file: 离线依赖（见阶段一注释），需带上 vendor tarball
 COPY package.json package-lock.json ./
+COPY docker/vendor ./docker/vendor
 RUN npm config set registry "$NPM_REGISTRY" \
     && npm ci --omit=dev --no-audit --no-fund --ignore-scripts \
     && npm cache clean --force
