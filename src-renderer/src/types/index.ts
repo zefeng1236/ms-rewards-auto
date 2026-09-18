@@ -56,6 +56,20 @@ export interface AppConfig {
     span: number;
     api: SearchApi;
   };
+  /**
+   * 单次执行数量上限（把当天任务摊到多轮里做）
+   *
+   * read / promos 为 0 表示不限制（一次做完）。
+   * random 打开后在设定值上随机 ±2–4：不会一次做完、也不会变成 0 个，
+   * 命中保护条件时放弃随机并保持设定值。
+   */
+  limits: {
+    random: boolean;
+    /** 阅读文章每次最多几篇，0 = 不限制 */
+    read: number;
+    /** 活动交卷每次最多几个，0 = 不限制 */
+    promos: number;
+  };
   schedule: {
     enable: boolean;
     mode: ScheduleMode;
@@ -64,6 +78,12 @@ export interface AppConfig {
     maxRounds: number;
     time: string;
     windows: ScheduleWindow[];
+    /** 定时触发后先随机延迟再开始（规避固定时刻特征） */
+    randomDelay: boolean;
+    /** 随机延迟下限（秒） */
+    randomDelayMin: number;
+    /** 随机延迟上限（秒） */
+    randomDelayMax: number;
   };
   notice: {
     wework: string;

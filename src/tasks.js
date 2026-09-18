@@ -5,6 +5,7 @@ const notify = require("./notify");
 const cancel = require("./cancel");
 const browser = require("./browser");
 const { randomUUID, randomUUIDHex, randInt, randArr, getRandomSubstring, getDateSlash, getDayEn, isJSON } = require("./utils");
+const { resolveTaskCount, normalizeLimits } = require("./task-limit");
 
 // 使用可被「停止任务」中断的 sleep（中止时立即抛出 AbortError）
 const sleep = cancel.sleep;
@@ -133,7 +134,8 @@ async function taskSign(ctx, token) {
 /* ============ 阅读 ============ */
 async function taskRead(ctx, token) {
   const state = ctx.state;
-  if (!ctx.config.get().tasks.read || state.isTaskDoneToday("read")) {
+  const cfg = ctx.config.get();
+  if (!cfg.tasks.read || state.isTaskDoneToday("read")) {
     const ra = state.get().readArticles || {};
     return {
       status: "skip",
@@ -162,11 +164,20 @@ async function taskRead(ctx, token) {
     const readsNeeded = Math.ceil((max - cur) / rewards.POINTS_PER_ARTICLE);
     const articlesTotal = Math.ceil(max / rewards.POINTS_PER_ARTICLE);
     let articlesDone = Math.floor(cur / rewards.POINTS_PER_ARTICLE);
+    // 单次数量限制：把剩余篇数摊到多轮里读，随机开关打开时还会小幅波动
+    const limits = normalizeLimits(cfg.limits);
+    const plan = resolveTaskCount({ base: limits.read, total: readsNeeded, random: limits.random });
+    const toRead = plan.count;
     // 写入初始篇数，GUI 卡片可实时显示「已读/总数」
     state.get().readArticles = { done: articlesDone, total: articlesTotal };
     state.save();
-    logger.log("📖", `需要阅读 ${readsNeeded} 篇文章（当前 ${articlesDone}/${articlesTotal} 篇）`);
-    for (let i = 0; i < readsNeeded; i++) {
+    logger.log(
+      "📖",
+      `需要阅读 ${readsNeeded} 篇文章（当前 ${articlesDone}/${articlesTotal} 篇），本轮计划阅读 ${toRead} 篇${
+        plan.applied || plan.cancelled ? `（${plan.note}）` : ""
+      }`
+    );
+    for (let i = 0; i < toRead; i++) {
       cancel.throwIfAborted();
       await httpRequest({
         method: "POST",
@@ -189,22 +200,33 @@ async function taskRead(ctx, token) {
         ctx,
       });
       articlesDone = Math.min(articlesTotal, articlesDone + 1);
-      logger.log("📖", `正在阅读第 ${i + 1}/${readsNeeded} 篇文章...（累计 ${articlesDone}/${articlesTotal} 篇）`);
+      logger.log("📖", `正在阅读第 ${i + 1}/${toRead} 篇文章...（累计 ${articlesDone}/${articlesTotal} 篇）`);
       // 每篇后即时落盘，中途被停止也能在界面看到真实进度
       state.get().readArticles = { done: articlesDone, total: articlesTotal };
       state.get().readPoint = Math.min(cur + (i + 1) * rewards.POINTS_PER_ARTICLE, max);
       state.save();
       await sleep(randInt(3000, 7000));
     }
-    state.setTaskDone("read", state.getDateNum());
-    const finalCur = Math.min(cur + readsNeeded * rewards.POINTS_PER_ARTICLE, max);
+    const finalCur = Math.min(cur + toRead * rewards.POINTS_PER_ARTICLE, max);
     state.get().readPoint = finalCur;
-    state.get().readArticles = { done: articlesTotal, total: articlesTotal };
+    // 只有把剩余篇数读完才算完成；受单次数量限制时保持「未完成」，
+    // 让今日汇总与自动循环如实反映出「还有篇数留待下轮」
+    if (toRead >= readsNeeded) {
+      state.setTaskDone("read", state.getDateNum());
+      state.get().readArticles = { done: articlesTotal, total: articlesTotal };
+      state.save();
+      const msg = `📖阅读任务已完成！\n✨今日阅读：${articlesTotal}/${articlesTotal} 篇`;
+      logger.success(msg);
+      await notify.sendText(ctx, "微软积分任务-阅读", msg);
+      return { status: "done", point: finalCur, articles: articlesTotal, articlesTotal };
+    }
+    state.get().readArticles = { done: articlesDone, total: articlesTotal };
     state.save();
-    const msg = `📖阅读任务已完成！\n✨今日阅读：${articlesTotal}/${articlesTotal} 篇`;
-    logger.success(msg);
-    await notify.sendText(ctx, "微软积分任务-阅读", msg);
-    return { status: "done", point: finalCur, articles: articlesTotal, articlesTotal };
+    logger.log(
+      "📖",
+      `本轮已阅读 ${toRead} 篇（累计 ${articlesDone}/${articlesTotal} 篇），剩余 ${readsNeeded - toRead} 篇留待下轮`
+    );
+    return { status: "partial", point: finalCur, articles: articlesDone, articlesTotal, planned: toRead };
   } catch (e) {
     if (e && e.isAbort) throw e;
     logger.error(`阅读任务出错！${e.message}`);
@@ -397,7 +419,8 @@ async function taskClaimRewards(ctx) {
 
 async function taskPromos(ctx) {
   const state = ctx.state;
-  if (!ctx.config.get().tasks.promos || state.isTaskDoneToday("promos")) {
+  const cfg = ctx.config.get();
+  if (!cfg.tasks.promos || state.isTaskDoneToday("promos")) {
     return { status: "skip" };
   }
   let promosArr = [];
@@ -478,24 +501,37 @@ async function taskPromos(ctx) {
     return { status: "done", points: dashPoints + earnPoints };
   }
 
+  // 单次数量限制：本轮只做其中一部分，剩下的留到下一轮（随机开关可小幅波动）
+  const limits = normalizeLimits(cfg.limits);
+  const plan = resolveTaskCount({ base: limits.promos, total: totalNewTasks, random: limits.random });
+  const queue = promosArr.slice(0, plan.count);
+  const runCount = queue.length;
+  const queueDash = queue.filter((i) => i.type === "dash").length;
+  const queueEarn = queue.filter((i) => i.type === "earn").length;
+
   try {
     const taskMsgs = [];
-    if (dashTasks > 0) taskMsgs.push(`${dashTasks}个手机端活动`);
-    if (earnTasks > 0) taskMsgs.push(`${earnTasks}个电脑端活动`);
-    logger.log("🧩", `检测到有${taskMsgs.join("、")}未完成，开始执行...`);
+    if (queueDash > 0) taskMsgs.push(`${queueDash}个手机端活动`);
+    if (queueEarn > 0) taskMsgs.push(`${queueEarn}个电脑端活动`);
+    logger.log(
+      "🧩",
+      `检测到 ${totalNewTasks} 个未完成活动（${taskMsgs.join("、")}），本轮计划执行 ${runCount} 个${
+        plan.applied || plan.cancelled ? `（${plan.note}）` : ""
+      }`
+    );
     await sleep(500);
 
     let dashCurrent = 1;
     let earnCurrent = 1;
     let i = 0;
-    for (const item of promosArr) {
+    for (const item of queue) {
       cancel.throwIfAborted();
       i++;
       if (item.type === "dash") {
-        logger.log("📱", `正在执行第${dashCurrent}/${dashTasks}个手机端活动...`);
+        logger.log("📱", `正在执行第${dashCurrent}/${queueDash}个手机端活动...`);
         dashCurrent++;
       } else {
-        logger.log("💻", `正在执行第${earnCurrent}/${earnTasks}个电脑端活动...`);
+        logger.log("💻", `正在执行第${earnCurrent}/${queueEarn}个电脑端活动...`);
         earnCurrent++;
       }
       const reqHeaders = {
@@ -530,16 +566,27 @@ async function taskPromos(ctx) {
       else earnPoints += item.points;
       state.get().promosPoint = Math.max(state.get().promosPoint, dashPoints + earnPoints);
       state.save();
-      if (i < totalNewTasks) await sleep(randInt(2000, 4000));
+      if (i < runCount) await sleep(randInt(2000, 4000));
     }
 
-    state.setTaskDone("promos", state.getDateNum());
     const dashReport = dashMax > 0 ? `\n📱手机端活动：${dashPoints}/${dashMax}` : "";
     const earnReport = earnMax > 0 ? `\n💻电脑端活动：${earnPoints}/${earnMax}` : "";
-    const msg = `🧩活动任务已完成！${dashReport}${earnReport}`;
-    logger.success(msg);
-    await notify.sendText(ctx, "微软积分任务-活动", msg);
-    return { status: "done", points: dashPoints + earnPoints };
+
+    // 只有把剩余活动全做完才算完成；受单次数量限制时保持「未完成」，
+    // 让今日汇总与自动循环如实反映出「还有活动留待下轮」
+    if (runCount >= totalNewTasks) {
+      state.setTaskDone("promos", state.getDateNum());
+      const msg = `🧩活动任务已完成！${dashReport}${earnReport}`;
+      logger.success(msg);
+      await notify.sendText(ctx, "微软积分任务-活动", msg);
+      return { status: "done", points: dashPoints + earnPoints };
+    }
+
+    const partialMsg = `🧩本轮已执行 ${runCount}/${totalNewTasks} 个活动，剩余 ${
+      totalNewTasks - runCount
+    } 个留待下轮`;
+    logger.log("🧩", partialMsg);
+    return { status: "partial", points: dashPoints + earnPoints, pending: totalNewTasks - runCount };
   } catch (e) {
     if (e && e.isAbort) throw e;
     logger.error(`活动交卷出错！${e.message}`);

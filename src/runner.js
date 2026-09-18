@@ -434,6 +434,11 @@ function normalizeSchedule(cfg) {
   if (!windows.length) windows = [{ start: 9 * 60, end: 23 * 60 }];
   let maxRounds = Number(raw.maxRounds);
   if (!Number.isFinite(maxRounds) || maxRounds < 0) maxRounds = 0;
+  // 随机启动延迟（秒）：老配置没有这两个字段时回落 20–300（20 秒 ~ 5 分钟）
+  let delayMin = Number(raw.randomDelayMin);
+  if (!Number.isFinite(delayMin) || delayMin < 0) delayMin = 20;
+  let delayMax = Number(raw.randomDelayMax);
+  if (!Number.isFinite(delayMax) || delayMax < delayMin) delayMax = 300;
   return {
     enable: raw.enable !== false,
     mode,
@@ -442,7 +447,27 @@ function normalizeSchedule(cfg) {
     maxRounds,
     time: hhmmToMinutes(raw.time) !== null ? raw.time : "08:00",
     windows,
+    randomDelay: raw.randomDelay !== false,
+    randomDelayMin: delayMin,
+    randomDelayMax: delayMax,
   };
+}
+
+/**
+ * 为一次「定时触发」抽取随机启动延迟
+ *
+ * 固定间隔/固定时刻启动本身就是一个很明显的特征，所以在真正开跑前先随机
+ * 等一段时间（默认 20 秒 ~ 5 分钟），把启动时刻打散。手动运行不走这里。
+ *
+ * @param {object} cfg 该账户的有效配置
+ * @param {() => number} [rng] 随机源（自检用）
+ * @returns {{seconds:number, ms:number}} 关闭时返回 {seconds:0, ms:0}
+ */
+function pickStartDelay(cfg, rng) {
+  const sc = normalizeSchedule(cfg);
+  if (!sc.randomDelay) return { seconds: 0, ms: 0 };
+  const seconds = randomBetween(sc.randomDelayMin, sc.randomDelayMax, rng);
+  return { seconds, ms: seconds * 1000 };
 }
 
 /**
@@ -606,6 +631,27 @@ function startDaemon(opts = {}) {
 
       for (let i = 0; i < due.length; i++) {
         const { acc, ctx, reason } = due[i];
+
+        // 随机启动延迟：不在固定时刻精确开跑，弱化「定时器」特征。
+        // 每个账户按自己的调度设置各等一次；等待期间可被「停止任务」立即打断。
+        const delay = pickStartDelay(ctx.config.get());
+        if (delay.seconds > 0) {
+          cancel.setActiveScope(null);
+          logger.info(
+            `账户「${acc.name}」随机延迟 ${delay.seconds} 秒后开始（规避固定时刻特征）…`
+          );
+          try {
+            await cancel.sleep(delay.ms);
+          } catch (e) {
+            if (e && e.isAbort) break; // 全局停止：结束本轮巡检
+          }
+          // 延迟窗口最长达 5 分钟，期间用户可能已经手动开跑，别再插一脚
+          if (typeof opts.isBusy === "function" && opts.isBusy()) {
+            logger.info("检测到手动任务已在运行，本轮定时触发跳过。");
+            break;
+          }
+        }
+
         const round = ctx.state.bumpAutoRound();
         logger.info(`账户「${acc.name}」自动运行第 ${round} 轮（${reason}）`);
         // 上一轮若被手动停止，中止标志还留着，不重置会导致本轮立刻抛 AbortError
@@ -672,6 +718,8 @@ module.exports = {
   nextRunTime,
   shouldRunNow,
   normalizeSchedule,
+  pickStartDelay,
+  randomBetween,
   hhmmToMinutes,
   minutesToHHmm,
   inAnyWindow,

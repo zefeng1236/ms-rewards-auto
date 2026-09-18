@@ -26,6 +26,7 @@ const DEFAULT_CONFIG: AppConfig = {
   tasks: { sign: true, read: true, promos: true, search: true },
   region: { lock: true },
   search: { span: 30, api: "offline" },
+  limits: { random: false, read: 0, promos: 0 },
   schedule: {
     enable: true,
     mode: "interval",
@@ -34,6 +35,9 @@ const DEFAULT_CONFIG: AppConfig = {
     maxRounds: 0,
     time: "08:00",
     windows: [{ start: "09:00", end: "23:00" }],
+    randomDelay: true,
+    randomDelayMin: 20,
+    randomDelayMax: 300,
   },
   notice: {
     wework: "",

@@ -27,6 +27,16 @@ const DEFAULTS = {
     span: 30,   // 搜索间隔（秒），实际会在 ±15 秒随机
     api: "hot.nntool.cc", // 搜索词来源: hot.nntool.cc | hot.baiwumm.com | hot.cnxiaobai.com | offline
   },
+  // 单次执行数量上限（把当天任务摊到多轮里做，避免一轮清空）
+  //
+  //   read / promos 为 0 表示不限制（一次做完），保持旧行为。
+  //   random 打开后，在设定值上随机 ±2–4，但绝不会一次做完、也不会变成 0 个，
+  //   命中保护条件时直接放弃这次随机、保持设定值。规则见 src/task-limit.js。
+  limits: {
+    random: false,
+    read: 0,
+    promos: 0,
+  },
   // 自动运行（本地调度，按账户独立）
   //
   // 三种模式：
@@ -44,6 +54,11 @@ const DEFAULTS = {
     windows: [              // windows 模式的时间段，可多段
       { start: "09:00", end: "23:00" },
     ],
+    // 随机启动延迟：定时触发后先随机等一段时间再真正开跑，
+    // 避免每次都在「整点/固定间隔」上精确启动，弱化定时器特征。
+    randomDelay: true,
+    randomDelayMin: 20,     // 秒
+    randomDelayMax: 300,    // 秒（5 分钟）
   },
   // 推送通知（留空则不启用）
   notice: {

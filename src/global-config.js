@@ -32,6 +32,12 @@ const GLOBAL_DEFAULTS = {
     span: 30,
     api: "hot.nntool.cc",
   },
+  // 单次执行数量上限：0 = 不限制（一次做完）；random 打开后随机 ±2–4，见 src/task-limit.js
+  limits: {
+    random: false,
+    read: 0,
+    promos: 0,
+  },
   schedule: {
     enable: true,
     mode: "interval",
@@ -40,6 +46,10 @@ const GLOBAL_DEFAULTS = {
     maxRounds: 0,
     time: "08:00",
     windows: [{ start: "09:00", end: "23:00" }],
+    // 定时触发后随机延迟再开始（秒），弱化固定时刻特征
+    randomDelay: true,
+    randomDelayMin: 20,
+    randomDelayMax: 300,
   },
   notice: {
     wework: "",

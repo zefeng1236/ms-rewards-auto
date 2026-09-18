@@ -109,6 +109,33 @@ export function SettingsForm({
         </div>
       </Section>
 
+      <Section title="单次执行数量" desc="把当天的阅读与活动摊到多轮里做，避免一轮全部清空">
+        <SwitchField
+          label="随机波动"
+          hint="在设定数量上随机 ±2–4 个；不会一次做完，也不会少到 0 个（不满足时自动放弃随机）"
+          checked={value.limits?.random === true}
+          onChange={(v) => onChange({ limits: { random: v } } as DeepPartial<AppConfig>)}
+        />
+        <div className="form-grid" style={{ marginTop: 12 }}>
+          <NumberField
+            label="阅读文章每次篇数"
+            hint="0 = 不限制（一次读完）"
+            value={value.limits?.read ?? 0}
+            min={0}
+            max={50}
+            onChange={(v) => onChange({ limits: { read: Math.max(0, v) } } as DeepPartial<AppConfig>)}
+          />
+          <NumberField
+            label="活动交卷每次个数"
+            hint="0 = 不限制（一次做完）"
+            value={value.limits?.promos ?? 0}
+            min={0}
+            max={50}
+            onChange={(v) => onChange({ limits: { promos: Math.max(0, v) } } as DeepPartial<AppConfig>)}
+          />
+        </div>
+      </Section>
+
       <Section title="区域设置">
         <SwitchField
           label="锁定国区"
@@ -223,6 +250,34 @@ export function SettingsForm({
               label="每天运行时刻"
               value={value.schedule?.time ?? "08:00"}
               onChange={(v) => patchSchedule({ time: v })}
+            />
+          </div>
+        )}
+
+        <div style={{ marginTop: 14 }}>
+          <SwitchField
+            label="随机延迟启动"
+            hint="定时触发后先随机等待一段时间再开始，避免每次都卡在固定时刻"
+            checked={value.schedule?.randomDelay !== false}
+            onChange={(v) => patchSchedule({ randomDelay: v })}
+          />
+        </div>
+        {value.schedule?.randomDelay !== false && (
+          <div className="form-grid" style={{ marginTop: 10 }}>
+            <NumberField
+              label="最短等待（秒）"
+              value={value.schedule?.randomDelayMin ?? 20}
+              min={0}
+              max={3600}
+              onChange={(v) => patchSchedule({ randomDelayMin: Math.max(0, v) })}
+            />
+            <NumberField
+              label="最长等待（秒）"
+              hint="默认 20 — 300 秒（5 分钟）"
+              value={value.schedule?.randomDelayMax ?? 300}
+              min={0}
+              max={3600}
+              onChange={(v) => patchSchedule({ randomDelayMax: Math.max(0, v) })}
             />
           </div>
         )}

@@ -314,6 +314,141 @@ checkTrue(
   `CHANGELOG 中未找到「## ${pkgVersion}」`
 );
 
+/* ============ 13. 单次执行数量规划 + 随机启动延迟 ============ */
+console.log("\n【13】单次执行数量（limits）与随机启动延迟");
+const { resolveTaskCount, normalizeLimits } = require(path.join(ROOT, "src", "task-limit.js"));
+const runnerModule = require(path.join(ROOT, "src", "runner.js"));
+
+// 固定随机源：实现里先抽幅度（2–4），再抽方向（rng<0.5 为加，否则为减）
+const magR = (m) => (m === 2 ? 0 : m === 3 ? 0.5 : 0.99);
+const seqRng = (...vals) => {
+  let i = 0;
+  return () => vals[Math.min(i++, vals.length - 1)];
+};
+const plus = (m) => seqRng(magR(m), 0.1);
+const minus = (m) => seqRng(magR(m), 0.9);
+const plan = (o) => resolveTaskCount(o);
+
+// —— 需求原例 ——
+const lim1 = plan({ base: 6, total: 10, random: true, rng: plus(4) });
+check("例①总10/设6/随机+4：会一次做完 → 取消随机，仍执行 6", lim1.count, 6);
+check("例①：随机未生效", lim1.applied, false);
+const lim2 = plan({ base: 4, total: 10, random: true, rng: minus(4) });
+check("例②总10/设4/随机-4：会变成 0 个 → 取消随机，仍执行 4", lim2.count, 4);
+check("例②：随机未生效", lim2.applied, false);
+check("例③总10/设3/随机-4：减不动 → 取消随机，仍执行 3", plan({ base: 3, total: 10, random: true, rng: minus(4) }).count, 3);
+
+// —— 正常波动 ——
+check("总10/设6/随机-4 → 2", plan({ base: 6, total: 10, random: true, rng: minus(4) }).count, 2);
+check("总10/设6/随机+2 → 8", plan({ base: 6, total: 10, random: true, rng: plus(2) }).count, 8);
+check("总10/设6/随机-2 → 4", plan({ base: 6, total: 10, random: true, rng: minus(2) }).count, 4);
+check("总10/设4/随机+3 → 7", plan({ base: 4, total: 10, random: true, rng: plus(3) }).count, 7);
+check(
+  "随机生效时 applied=true 且 delta 带符号",
+  [plan({ base: 6, total: 10, random: true, rng: plus(2) }).applied, plan({ base: 6, total: 10, random: true, rng: plus(2) }).delta],
+  [true, 2]
+);
+
+// —— 开关关闭 / 不限制 ——
+check("随机关闭时保持设定值", plan({ base: 6, total: 10, random: false }).count, 6);
+check("随机关闭时 applied=false", plan({ base: 6, total: 10, random: false }).applied, false);
+const cUn = plan({ base: 0, total: 10, random: true, rng: plus(4) });
+check("设定 0 = 不限制，本轮全做", [cUn.count, cUn.unlimited], [10, true]);
+
+// —— 保护边界 ——
+check("设定值大于任务总数 → 截到总数", plan({ base: 99, total: 10, random: false }).count, 10);
+check("没有可执行任务 → 0", plan({ base: 6, total: 0, random: true, rng: plus(4) }).count, 0);
+check("只有 1 个任务且设定 1 → 随机制造不出 0 个", plan({ base: 1, total: 1, random: true, rng: minus(2) }).count, 1);
+check(
+  "缺字段 / 负数 / NaN 等脏数据不炸",
+  [plan({}).count, plan({ base: -5, total: 3 }).count, plan({ base: NaN, total: 3 }).count],
+  [0, 3, 3]
+);
+
+// —— 穷举：任意组合下数量恒在 [0,total]，随机生效时恒在 1..total-1 ——
+let bad = 0;
+let appliedCount = 0;
+for (let total = 0; total <= 12; total++) {
+  for (let base = 0; base <= 14; base++) {
+    for (const r1 of [0, 0.1, 0.49, 0.5, 0.51, 0.99]) {
+      for (const r2 of [0, 0.1, 0.49, 0.5, 0.51, 0.99]) {
+        const p = resolveTaskCount({ base, total, random: true, rng: seqRng(r1, r2) });
+        if (!Number.isInteger(p.count) || p.count < 0 || p.count > total) bad++;
+        if (p.applied) {
+          appliedCount++;
+          if (p.count < 1 || p.count >= total) bad++;
+        }
+      }
+    }
+  }
+}
+check("穷举组合：数量恒在 [0,total]，随机生效时恒在 1..total-1", bad, 0);
+checkTrue("穷举中确有随机生效的样本（断言非空转）", appliedCount > 200, `applied 样本仅 ${appliedCount} 个`);
+
+// —— 归一化 ——
+check(
+  "limits 归一化：随机只认 true，篇数取整、负数回 0",
+  normalizeLimits({ random: "yes", read: 6.9, promos: -3 }),
+  { random: false, read: 6, promos: 0 }
+);
+check("limits 归一化：空值 → 全部不限制", normalizeLimits(null), { random: false, read: 0, promos: 0 });
+
+// —— 静态守卫：任务侧接入 ——
+const tasksSrc2 = fs.readFileSync(path.join(ROOT, "src", "tasks.js"), "utf8");
+checkTrue("阅读任务接入单次数量限制", /resolveTaskCount\(\{ base: limits\.read/.test(tasksSrc2));
+checkTrue("活动任务接入单次数量限制", /resolveTaskCount\(\{ base: limits\.promos/.test(tasksSrc2));
+checkTrue("阅读未读完不标记完成", /if \(toRead >= readsNeeded\)/.test(tasksSrc2));
+checkTrue("活动未做完不标记完成", /if \(runCount >= totalNewTasks\)/.test(tasksSrc2));
+
+// 曾经踩过的坑：加了 limits 引用却漏了 `const cfg = ctx.config.get()`，
+// 类型检查看不出来，只有真跑到阅读任务时才 ReferenceError。这里静态拦住。
+const fnBody = (src, name) => {
+  const start = src.indexOf(`async function ${name}(`);
+  if (start < 0) return "";
+  const next = src.indexOf("\nasync function ", start + 10);
+  return src.slice(start, next < 0 ? undefined : next);
+};
+for (const fn of ["taskRead", "taskPromos"]) {
+  const body = fnBody(tasksSrc2, fn);
+  checkTrue(
+    `${fn} 先取有效配置再读 limits（防止 cfg 未定义）`,
+    body.includes("const cfg = ctx.config.get()") && body.indexOf("const cfg") < body.indexOf("cfg.limits"),
+    "函数体内缺少 cfg 定义或顺序不对"
+  );
+}
+
+// —— 静态守卫 + 行为断言：随机启动延迟 ——
+checkTrue("定时运行为每个账户抽取随机启动延迟", /pickStartDelay\(ctx\.config\.get\(\)\)/.test(runnerSource));
+checkTrue("延迟期间可被「停止任务」打断", /await cancel\.sleep\(delay\.ms\)/.test(runnerSource));
+const dOn = runnerModule.pickStartDelay({ schedule: { randomDelay: true } });
+checkTrue("默认随机延迟落在 20 秒 ~ 5 分钟", dOn.seconds >= 20 && dOn.seconds <= 300, `实际 ${dOn.seconds} 秒`);
+check("延迟毫秒与秒一致", dOn.ms, dOn.seconds * 1000);
+const dOff = runnerModule.pickStartDelay({ schedule: { randomDelay: false } });
+check("关闭随机延迟后为 0", [dOff.seconds, dOff.ms], [0, 0]);
+check("自定义区间生效（固定 60 秒）", runnerModule.pickStartDelay({ schedule: { randomDelay: true, randomDelayMin: 60, randomDelayMax: 60 } }).seconds, 60);
+const dSwapped = runnerModule.pickStartDelay({ schedule: { randomDelay: true, randomDelayMin: 500, randomDelayMax: 10 } });
+checkTrue("区间写反时仍取到合法值", dSwapped.seconds >= 10 && dSwapped.seconds <= 500, `实际 ${dSwapped.seconds}`);
+const scOld = runnerModule.normalizeSchedule({});
+check("老配置归一化补上 20/300 且默认开启", [scOld.randomDelay, scOld.randomDelayMin, scOld.randomDelayMax], [true, 20, 300]);
+
+// —— 默认值三处同步（config / global-config / 渲染层 mock） ——
+const cfgDefaults = require(path.join(ROOT, "src", "config.js")).DEFAULTS;
+const globalDefaults = require(path.join(ROOT, "src", "global-config.js")).GLOBAL_DEFAULTS;
+const mockSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "api", "mock.ts"), "utf8");
+check("config.DEFAULTS 含 limits", cfgDefaults.limits, { random: false, read: 0, promos: 0 });
+check("global-config 默认值同步含 limits", globalDefaults.limits, { random: false, read: 0, promos: 0 });
+checkTrue("渲染层 mock 默认值同步含 limits", /limits: \{ random: false, read: 0, promos: 0 \}/.test(mockSrc));
+for (const [name, d] of [["config", cfgDefaults], ["global-config", globalDefaults]]) {
+  check(`${name} 随机延迟默认 开启/20/300`, [d.schedule.randomDelay, d.schedule.randomDelayMin, d.schedule.randomDelayMax], [true, 20, 300]);
+}
+checkTrue("渲染层 mock 随机延迟默认同步", /randomDelay: true,\s*\n\s*randomDelayMin: 20,\s*\n\s*randomDelayMax: 300,/.test(mockSrc));
+
+// —— 静态守卫：设置页 ——
+const formSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "components", "SettingsForm.tsx"), "utf8");
+checkTrue("设置页有阅读/活动单次数量输入", /阅读文章每次篇数/.test(formSrc) && /活动交卷每次个数/.test(formSrc));
+checkTrue("设置页有随机波动开关", /limits: \{ random: v \}/.test(formSrc));
+checkTrue("设置页有随机延迟开关与区间", /randomDelay: v/.test(formSrc) && /randomDelayMin/.test(formSrc) && /randomDelayMax/.test(formSrc));
+
 /* ============ 汇总 ============ */
 console.log(`\n${"=".repeat(46)}`);
 console.log(`结果: ${pass} 通过 / ${fail} 失败`);
