@@ -285,6 +285,35 @@ gCtx.state.save();
 const g2 = guardRunner.shouldRunNow(gCtx);
 checkTrue("授权后（有 refreshToken）恢复自动调度", g2.run === true, `实际 ${JSON.stringify(g2)}`);
 
+/* ============ 12. 版本号一致性守卫 ============ */
+console.log("\n【12】版本号一致性（package.json / 关于页 / README / CHANGELOG）");
+// 发版时最容易漏改的就是这几处；任一处漂移都会被这里拦下。
+const pkgVersion = require(path.join(ROOT, "package.json")).version;
+const aboutSrc = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "views", "About.tsx"),
+  "utf8"
+);
+const aboutVersion = (aboutSrc.match(/APP_VERSION\s*=\s*"([^"]+)"/) || [])[1];
+checkTrue(
+  "关于页 APP_VERSION 与 package.json 一致",
+  aboutVersion === pkgVersion,
+  `关于页 ${aboutVersion}，package.json ${pkgVersion}`
+);
+
+const readmeSrc = fs.readFileSync(path.join(ROOT, "README.md"), "utf8");
+checkTrue(
+  "README 顶部版本横幅与 package.json 一致",
+  readmeSrc.includes(`当前版本：V${pkgVersion}`),
+  `README 中未找到「当前版本：V${pkgVersion}」`
+);
+
+const changelogSrc = fs.readFileSync(path.join(ROOT, "CHANGELOG.md"), "utf8");
+checkTrue(
+  "CHANGELOG 含当前版本章节",
+  new RegExp(`^## ${pkgVersion.replace(/\./g, "\\.")}\\s*$`, "m").test(changelogSrc),
+  `CHANGELOG 中未找到「## ${pkgVersion}」`
+);
+
 /* ============ 汇总 ============ */
 console.log(`\n${"=".repeat(46)}`);
 console.log(`结果: ${pass} 通过 / ${fail} 失败`);

@@ -2,7 +2,7 @@
 
 独立于浏览器油猴插件的微软积分（Microsoft Rewards）自动任务软件。基于 Electron + Playwright，提供多账户隔离、干净浏览器、图形界面与定时自动运行。
 
-> **当前版本：V0.9.2** · [下载安装包](https://github.com/zefeng1236/ms-rewards-auto/releases)
+> **当前版本：V0.9.3** · [下载安装包](https://github.com/zefeng1236/ms-rewards-auto/releases)
 >
 > ⚠️ 本软件为个人学习交流用途的开源工具，**非微软官方授权产品**，与 Microsoft Corporation 无任何关联。使用产生的风险请阅读文末免责声明。
 
@@ -22,6 +22,7 @@
 
 ## 近期新增
 
+- **「关于」页**：侧栏新增「其它 → 关于」，列出全部第三方开源组件（版本取自 `package-lock.json`）与友情链接，并支持一键复制邀请链接。
 - **加密保险库（Vault）**：账户 Cookie / 令牌统一 scrypt + AES-256-GCM 加密存储（磁盘无明文），临时 profile 用完即删；支持日常免密（系统钥匙串）、恢复密钥、锁屏闸门。详见 [CHANGELOG](CHANGELOG.md)。
 - **真实总积分**：积分查询直接读取官网 earn 页 `balance` / `availablePoints` 字段，界面总积分与官网一致，不再把「今日积分」误当总积分。
 - **每日活动自动化**：自动访问每日活动卡片内的 Bing 奖励搜索链接完成活动（替代已失效的交卷接口）。
@@ -69,7 +70,7 @@
 │   ├── utils.js            # 工具函数
 │   └── main.js             # CLI 入口
 ├── src-renderer/           # 渲染进程 React + TypeScript 源码
-│   ├── src/views/          # 仪表盘 / 账户详情 / 全局设置 / 个性化 / 启动与托盘 / 向导
+│   ├── src/views/          # 仪表盘 / 账户详情 / 全局设置 / 个性化 / 启动与托盘 / 向导 / 关于
 │   ├── src/components/     # 设置表单、日志控制台、侧栏等组件
 │   └── src/styles/         # 主题 token 与全局样式
 ├── gui-react/              # 渲染进程构建产物（vite build 输出，打包进安装包）
