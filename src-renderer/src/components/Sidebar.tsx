@@ -19,6 +19,8 @@ const NAV_ITEMS: SideNavItem[] = [
   { key: "personalize", label: "个性化", icon: "✺" },
   // 开机自启 / 驻留托盘是桌面端语义，Docker 版由 compose 的 restart 策略接管
   ...(IS_WEB ? [] : [{ key: "launch", label: "启动与托盘", icon: "⏻" } as SideNavItem]),
+  { type: "group", label: "其它" },
+  { key: "about", label: "关于", icon: "ⓘ" },
 ];
 
 export function Sidebar({

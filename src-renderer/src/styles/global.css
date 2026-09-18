@@ -2165,3 +2165,205 @@ html[data-preset="opaque"] .log-console {
   flex-wrap: wrap;
   justify-content: flex-end;
 }
+
+/* ---- 关于页（About） ---- */
+.about-hero {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.about-logo {
+  width: 58px;
+  height: 58px;
+  flex-shrink: 0;
+  border-radius: 14px;
+  object-fit: contain;
+  background: rgb(255 255 255 / 0.06);
+  padding: 6px;
+}
+
+.about-name {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+
+.about-ver {
+  font-size: 11.5px;
+  color: var(--lg-text-secondary);
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.about-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+
+/* 依赖分组标题 */
+.dep-group-title {
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  color: var(--lg-text-secondary);
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+
+/* 直接依赖：逐条列出，带说明 */
+.dep-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.dep-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--lg-clear-tint, rgb(255 255 255 / 0.06));
+}
+
+.dep-main {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.dep-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  word-break: break-word;
+}
+
+.dep-ver {
+  font-size: 11px;
+  color: var(--lg-text-disabled);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.dep-desc {
+  flex: 1 1 220px;
+  min-width: 0;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--lg-text-secondary);
+}
+
+/* 间接 / 构建依赖：紧凑 chip 排布 */
+.dep-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.dep-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  background: var(--lg-clear-tint, rgb(255 255 255 / 0.06));
+  border: 1px solid var(--lg-highlight, rgb(255 255 255 / 0.1));
+  white-space: nowrap;
+}
+
+.dep-chip-ver {
+  font-size: 10px;
+  color: var(--lg-text-disabled);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- 友情链接 ---- */
+.friend-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.friend-item {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 14px;
+  border-radius: 12px;
+  background: var(--lg-clear-tint, rgb(255 255 255 / 0.06));
+}
+
+.friend-logo {
+  width: 46px;
+  height: 46px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+}
+
+.friend-mark {
+  width: 26px;
+  height: 26px;
+  color: var(--accent-hi, #60a5fa);
+}
+
+.friend-main {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.friend-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.friend-name {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.friend-desc {
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--lg-text-secondary);
+  margin-top: 3px;
+}
+
+.friend-url {
+  font-size: 10.5px;
+  color: var(--lg-text-disabled);
+  margin-top: 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+.friend-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+/* 窄窗口下按钮整行落到下方，避免把说明文字挤成竖排 */
+@media (max-width: 720px) {
+  .friend-actions {
+    flex: 1 1 100%;
+    justify-content: flex-start;
+  }
+  .dep-desc {
+    flex-basis: 100%;
+  }
+}
+

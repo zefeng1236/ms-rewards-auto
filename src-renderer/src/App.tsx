@@ -20,13 +20,14 @@ import { AccountDetail } from "./views/AccountDetail";
 import { SettingsView } from "./views/SettingsView";
 import { Personalize } from "./views/Personalize";
 import { LaunchSettings } from "./views/LaunchSettings";
+import { About } from "./views/About";
 import { SetupWizard } from "./views/SetupWizard";
 import { VaultLock } from "./views/VaultLock";
 import { ClosePrompt } from "./components/ClosePrompt";
 import { BgProgressBubble } from "./components/BgProgressBubble";
 import type { SetupState, VaultStatus } from "./types";
 
-export type ViewKey = "dashboard" | "account" | "settings" | "personalize" | "launch";
+export type ViewKey = "dashboard" | "account" | "settings" | "personalize" | "launch" | "about";
 
 const VIEW_META: Record<ViewKey, { title: string; desc: string }> = {
   dashboard: { title: "仪表盘", desc: "所有账户的运行概况与今日进度。" },
@@ -34,6 +35,7 @@ const VIEW_META: Record<ViewKey, { title: string; desc: string }> = {
   settings: { title: "全局设置", desc: "所有「遵循全局设置」的账号共用这份配置，改动立即生效。" },
   personalize: { title: "个性化", desc: "主题、壁纸与液态玻璃效果。" },
   launch: { title: "启动与托盘", desc: "开机自启动、驻留托盘与启动延迟等系统行为设置。" },
+  about: { title: "关于", desc: "版本信息、第三方开源组件与友情链接。" },
 };
 
 export default function App() {
@@ -214,6 +216,7 @@ function Shell() {
               {view === "settings" && <SettingsView />}
               {view === "personalize" && <Personalize bgSrc={bgSrc} onShuffle={shuffleBg} />}
               {view === "launch" && <LaunchSettings />}
+              {view === "about" && <About />}
             </div>
           </div>
         </div>
