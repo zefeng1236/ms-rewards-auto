@@ -98,7 +98,7 @@ const LINKS = [
     href: "https://akile.ai/register?aff_code=1d7e06e0-2922-457e-bada-f814833f7c40",
     name: "AkileCloud",
     title: "AI 网关 / 云服务",
-    desc: "本项目开发环境使用的 AI 网关服务，注册即赠体验额度",
+    desc: "本项目调用其 GPT 系列模型，价格实惠、稳定不降智",
     tint: "#3b82f6",
   },
   {
