@@ -42,15 +42,13 @@ scrape-out/
 scrape-profile/
 
 # ============ 实验性 / 可行性方案（未完成，暂不入库）============
-# 这些是 Docker / Web / Android / OpenWrt 方向的调研与半成品，
-# 尚未接入主程序。等真正开工时再从下面移除对应条目即可。
+# Android / OpenWrt 仍是调研半成品。Docker/Web 已正式入库（2026-09-18）：
+#   docker/（Dockerfile/compose/entrypoint/README）、.dockerignore、src/server.js、src/web/index.html。
+#   只有 src/web/dist/（构建产物）继续排除。
 /Android/
 /OpenWrt/
 /docs/
-/docker/
-.dockerignore
-src/server.js
-src/web/
+/src/web/dist/
 /build/*.txt
 /build/*.log
 /icon-result*.txt

@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Microsoft Rewards 自动任务 · Docker 版</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#fff; --ink:#1f2328; --ink2:#57606a; --ink3:#848d97;
+    --line:#e3e6ea; --accent:#0f6fbf; --accent-soft:#e8f2fd;
+    --ok:#1a7f37; --ok-soft:#e6f4ea; --warn:#9a6700; --warn-soft:#fff8e5;
+    --risk:#cf222e; --risk-soft:#ffebe9;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    line-height:1.65;font-size:15px;-webkit-text-size-adjust:100%}
+  .wrap{max-width:940px;margin:0 auto;padding:24px 16px 64px}
+  header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:18px}
+  header h1{font-size:19px;margin:0}
+  header .ver{font-family:var(--mono);font-size:12px;color:var(--ink3)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:18px 20px;margin-bottom:14px}
+  .card h3{margin:0 0 12px;font-size:15px}
+  .kv{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px dashed var(--line);font-size:14px}
+  .kv:last-child{border-bottom:none}
+  .kv span:first-child{color:var(--ink2);flex-shrink:0}
+  .kv span:last-child{font-family:var(--mono);font-size:12.5px;text-align:right;word-break:break-all}
+  .ok{color:var(--ok)} .warn{color:var(--warn)} .bad{color:var(--risk)}
+  button{font:inherit;font-size:14px;padding:9px 16px;border-radius:8px;border:1px solid var(--line);
+    background:#fff;color:var(--ink);cursor:pointer;transition:.15s}
+  button:hover{border-color:var(--ink3)}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  button.primary:hover{filter:brightness(1.08)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  button.ghost{background:transparent}
+  input[type=password],input[type=text]{width:100%;font:inherit;font-size:15px;padding:10px 12px;
+    border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink)}
+  input:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
+  label.chk{display:flex;align-items:flex-start;gap:8px;font-size:14px;margin:12px 0;cursor:pointer}
+  label.chk input{margin-top:4px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .msg{font-size:13.5px;padding:10px 12px;border-radius:8px;margin-top:12px;display:none}
+  .msg.err{background:var(--risk-soft);color:var(--risk);display:block}
+  .msg.ok{background:var(--ok-soft);color:var(--ok);display:block}
+  .msg.info{background:var(--accent-soft);color:var(--accent);display:block}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{padding:9px 10px;border-bottom:1px solid var(--line);text-align:left}
+  th{color:var(--ink2);font-size:12.5px;font-weight:600;background:#fbfcfd}
+  .tbl-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .tag{display:inline-block;font-family:var(--mono);font-size:11.5px;padding:2px 8px;border-radius:5px}
+  .t-ok{background:var(--ok-soft);color:var(--ok)}
+  .t-warn{background:var(--warn-soft);color:var(--warn)}
+  .t-risk{background:var(--risk-soft);color:var(--risk)}
+  pre.log{background:#0f1720;color:#c9d6e2;border-radius:9px;padding:12px 14px;height:300px;overflow:auto;
+    font-family:var(--mono);font-size:12px;line-height:1.6;margin:0;white-space:pre-wrap;word-break:break-all}
+  .key-box{background:#fff8e5;border:1px dashed var(--warn);border-radius:8px;padding:12px 14px;
+    font-family:var(--mono);font-size:12.5px;word-break:break-all;margin:10px 0}
+  .steps{display:flex;gap:6px;margin-bottom:16px}
+  .steps i{flex:1;height:4px;background:var(--line);border-radius:2px}
+  .steps i.on{background:var(--accent)}
+  .hide{display:none !important}
+  .hint{font-size:12.5px;color:var(--ink3);margin-top:6px}
+  @media(max-width:600px){
+    .wrap{padding:16px 12px 48px}
+    header h1{font-size:17px}
+    .card{padding:15px 15px}
+    pre.log{height:240px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Microsoft Rewards 自动任务</h1>
+    <span class="ver" id="ver"></span>
+  </header>
+
+  <!-- ============ 安装向导 ============ -->
+  <div id="view-setup" class="card hide">
+    <div class="steps"><i class="on"></i><i id="stp2"></i><i id="stp3"></i></div>
+    <h3 id="su-title">欢迎使用 · 初始设置</h3>
+    <div id="su-body"></div>
+    <div class="row" style="margin-top:16px">
+      <button id="su-next" class="primary">下一步</button>
+      <button id="su-skip" class="ghost hide">跳过加密</button>
+    </div>
+    <div id="su-msg" class="msg"></div>
+  </div>
+
+  <!-- ============ 登录 ============ -->
+  <div id="view-login" class="card hide">
+    <h3 id="lg-title">请输入保险库密码</h3>
+    <div id="lg-saved" class="hide" style="margin-bottom:14px">
+      <button id="lg-onekey" class="primary" style="width:100%">使用本机保存的数字密钥登录</button>
+      <div class="hint">密钥保存在此浏览器中，点击即可登录，无需输入密码</div>
+    </div>
+    <div id="lg-pwd">
+      <input type="password" id="lg-input" placeholder="保险库密码" autocomplete="current-password">
+      <label class="chk"><input type="checkbox" id="lg-remember">
+        <span>登录后将数字密钥保存到本机浏览器（下次一键登录）</span></label>
+      <button id="lg-submit" class="primary" style="width:100%">登 录</button>
+    </div>
+    <div id="lg-msg" class="msg"></div>
+  </div>
+
+  <!-- ============ 主界面 ============ -->
+  <div id="view-main" class="hide">
+    <div class="card">
+      <h3>运行状态</h3>
+      <div class="kv"><span>保险库</span><span id="m-vault"></span></div>
+      <div class="kv"><span>Chromium</span><span id="m-chromium"></span></div>
+      <div class="kv"><span>自动任务守护</span><span id="m-daemon"></span></div>
+      <div class="kv"><span>时区</span><span id="m-tz"></span></div>
+      <div class="kv"><span>存储目录</span><span id="m-storage"></span></div>
+    </div>
+
+    <div class="card">
+      <h3>账户 <span id="m-count" style="color:var(--ink3);font-weight:400"></span></h3>
+      <div class="tbl-scroll">
+        <table>
+          <thead><tr><th>名称</th><th>状态</th><th>登录</th><th>今日</th><th>总积分</th><th></th></tr></thead>
+          <tbody id="m-accounts"></tbody>
+        </table>
+      </div>
+      <div class="row" style="margin-top:14px">
+        <button id="m-runall" class="primary">运行全部账户</button>
+        <button id="m-refresh">刷新</button>
+        <button id="m-stop">停止</button>
+        <button id="m-lock">锁定保险库</button>
+        <button id="m-logout" class="ghost">退出登录</button>
+      </div>
+      <div id="m-msg" class="msg"></div>
+    </div>
+
+    <div class="card">
+      <h3>实时日志</h3>
+      <pre class="log" id="m-log"></pre>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var LS_KEY = "msr_vault_key";   // 浏览器保存的「数字密钥」（恢复密钥）
+  var $ = function(id){ return document.getElementById(id); };
+  var state = { boot:null, wizardStep:1, recoveryKey:null, es:null };
+
+  function show(id){
+    ["view-setup","view-login","view-main"].forEach(function(v){
+      $(v).classList.toggle("hide", v !== id);
+    });
+  }
+  function msg(el, text, kind){
+    var m = $(el);
+    m.textContent = text || "";
+    m.className = "msg" + (kind ? " " + kind : "");
+  }
+  function api(path, opts){
+    opts = opts || {};
+    opts.credentials = "same-origin";
+    opts.headers = Object.assign({"Content-Type":"application/json"}, opts.headers || {});
+    if (opts.body && typeof opts.body !== "string") opts.body = JSON.stringify(opts.body);
+    return fetch(path, opts).then(function(r){
+      return r.json().catch(function(){ return {}; }).then(function(d){
+        if (!r.ok) { var e = new Error(d.error || ("HTTP " + r.status)); e.status = r.status; e.data = d; throw e; }
+        return d;
+      });
+    });
+  }
+
+  /* ------------------------------ 启动 ------------------------------ */
+  function bootstrap(){
+    return api("/api/bootstrap").then(function(b){
+      state.boot = b;
+      $("ver").textContent = "v" + (b.version || "") + " · Docker";
+      if (!b.vault.configured && !b.setup.done) {
+        renderSetup();
+      } else if (!b.loggedIn) {
+        renderLogin();
+      } else {
+        renderMain();
+      }
+    }).catch(function(e){ document.body.innerHTML = '<div class="wrap"><div class="card">服务连接失败：' + e.message + '</div></div>'; });
+  }
+
+  /* ------------------------------ 安装向导 ------------------------------ */
+  var su = {
+    1: function(){
+      $("stp2").className = ""; $("stp3").className = "";
+      $("su-title").textContent = "欢迎使用 · 初始设置";
+      $("su-body").innerHTML =
+        '<p style="margin-top:0">这是 Microsoft Rewards 自动任务的 Docker 版。</p>' +
+        '<p>接下来为你创建一个<b>保险库</b>：它用你设置的密码把账户登录态（Cookie / Token）加密后存盘，' +
+        '磁盘上不会出现明文。</p>' +
+        '<p class="hint">密码只存在你的记忆里，服务端不保存明文。忘记密码可用「恢复密钥」找回。</p>';
+      $("su-next").textContent = "开始设置";
+      $("su-skip").classList.remove("hide");
+    },
+    2: function(){
+      $("stp2").className = "on"; $("stp3").className = "";
+      $("su-title").textContent = "设置保险库密码";
+      $("su-body").innerHTML =
+        '<input type="password" id="su-pwd" placeholder="密码（至少 6 位）" autocomplete="new-password">' +
+        '<div class="hint" style="margin-bottom:12px">请牢记，服务端无法帮你找回。</div>' +
+        '<input type="text" id="su-hint" placeholder="密码提示（可选，会明文显示）">';
+      $("su-next").textContent = "创建保险库";
+      $("su-skip").classList.add("hide");
+      setTimeout(function(){ var p = $("su-pwd"); if (p) p.focus(); }, 50);
+    },
+    3: function(){
+      $("stp2").className = "on"; $("stp3").className = "on";
+      $("su-title").textContent = "保存你的恢复密钥";
+      $("su-body").innerHTML =
+        '<p style="margin-top:0">这是<b>恢复密钥</b>（数字密钥）。忘记密码时可用它解锁，' +
+        '它等同于密码，<b>请妥善保管</b>。</p>' +
+        '<div class="key-box" id="su-key"></div>' +
+        '<label class="chk"><input type="checkbox" id="su-save">' +
+        '<span>保存到本机浏览器（下次登录可一键点击，无需输入密码）</span></label>' +
+        '<label class="chk"><input type="checkbox" id="su-agree">' +
+        '<span>我已复制/保存该密钥</span></label>';
+      $("su-key").textContent = state.recoveryKey || "";
+      $("su-next").textContent = "完成";
+      $("su-skip").classList.add("hide");
+    }
+  };
+
+  function renderSetup(){ show("view-setup"); su[state.wizardStep](); }
+
+  $("su-next").addEventListener("click", function(){
+    msg("su-msg", "");
+    if (state.wizardStep === 1) { state.wizardStep = 2; return renderSetup(); }
+    if (state.wizardStep === 2) {
+      var pwd = ($("su-pwd") || {}).value || "";
+      if (pwd.length < 6) return msg("su-msg", "密码至少 6 位", "err");
+      $("su-next").disabled = true;
+      api("/api/vault/setup", {method:"POST", body:{password:pwd, hint:($("su-hint")||{}).value || ""}})
+        .then(function(r){
+          state.recoveryKey = r.recoveryKey;
+          state.wizardStep = 3;
+          renderSetup();
+        })
+        .catch(function(e){ msg("su-msg", e.message, "err"); })
+        .then(function(){ $("su-next").disabled = false; });
+      return;
+    }
+    if (state.wizardStep === 3) {
+      if (!$("su-agree").checked) return msg("su-msg", "请先确认已保存恢复密钥", "err");
+      if ($("su-save").checked) { try{ localStorage.setItem(LS_KEY, state.recoveryKey); }catch(e){} }
+      api("/api/setup", {method:"POST", body:{done:true, agreed:true}})
+        .then(renderMain)
+        .catch(function(e){ msg("su-msg", e.message, "err"); });
+    }
+  });
+
+  $("su-skip").addEventListener("click", function(){
+    api("/api/setup", {method:"POST", body:{done:true, agreed:true}}).then(renderMain);
+  });
+
+  /* ------------------------------ 登录 ------------------------------ */
+  function renderLogin(){
+    show("view-login");
+    var saved = null;
+    try { saved = localStorage.getItem(LS_KEY); } catch(e){}
+    state.savedKey = saved;
+    $("lg-saved").classList.toggle("hide", !saved);
+    $("lg-title").textContent = saved ? "登录" : "请输入保险库密码";
+    setTimeout(function(){ if(!saved) $("lg-input").focus(); }, 50);
+  }
+
+  function doLogin(body){
+    $("lg-submit") && ($("lg-submit").disabled = true);
+    api("/api/vault/unlock", {method:"POST", body:body})
+      .then(function(){
+        if (body.recoveryKey && $("lg-remember") && $("lg-remember").checked) {
+          try { localStorage.setItem(LS_KEY, body.recoveryKey); } catch(e){}
+        }
+        msg("lg-msg","");
+        renderMain();
+      })
+      .catch(function(e){ msg("lg-msg", e.message || "解锁失败", "err"); })
+      .then(function(){ $("lg-submit") && ($("lg-submit").disabled = false); });
+  }
+
+  $("lg-submit").addEventListener("click", function(){
+    var v = $("lg-input").value || "";
+    if (!v) return msg("lg-msg","请输入密码","err");
+    doLogin({password:v});
+  });
+  $("lg-input").addEventListener("keydown", function(e){ if(e.key==="Enter") $("lg-submit").click(); });
+  $("lg-onekey").addEventListener("click", function(){
+    var k = null; try{ k = localStorage.getItem(LS_KEY); }catch(e){}
+    if (!k) return msg("lg-msg","本机未保存密钥","err");
+    doLogin({recoveryKey:k});
+  });
+
+  /* ------------------------------ 主界面 ------------------------------ */
+  function renderMain(){
+    show("view-main");
+    loadStatus();
+    startLog();
+  }
+
+  function loadStatus(){
+    api("/api/status").then(function(s){
+      $("m-vault").innerHTML = s.vault.configured
+        ? (s.vault.unlocked ? '<span class="ok">已解锁' + (s.vault.byEnv ? "（环境变量）" : "") + '</span>'
+                            : '<span class="bad">未解锁</span>')
+        : '<span class="warn">未启用加密</span>';
+      $("m-chromium").innerHTML = s.chromium.ready
+        ? '<span class="ok">就绪</span>'
+        : '<span class="bad">未就绪</span>';
+      $("m-daemon").innerHTML = s.daemon ? '<span class="ok">运行中</span>' : '<span class="warn">未启动</span>';
+      $("m-tz").textContent = (state.boot && state.boot.tz) || "-";
+      $("m-storage").textContent = s.storage || "-";
+
+      var tb = $("m-accounts");
+      tb.textContent = "";
+      var list = s.accounts || [];
+      $("m-count").textContent = "（" + list.length + "）";
+      if (!list.length){
+        var tr0 = document.createElement("tr");
+        var td0 = document.createElement("td");
+        td0.colSpan = 6; td0.textContent = "暂无账户 —— 请先从桌面版迁移 storage，或用 noVNC 完成授权登录";
+        td0.style.color = "var(--ink3)";
+        tr0.appendChild(td0); tb.appendChild(tr0);
+      }
+      list.forEach(function(a){
+        var st = a.state || {};
+        var tr = document.createElement("tr");
+        [a.name || "(未命名)",
+         a.enabled ? "启用" : "停用",
+         st.loggedIn ? "已登录" : "未登录",
+         String(st.todayPoints || 0),
+         String(st.lastBalance || 0)].forEach(function(v){
+          var td = document.createElement("td"); td.textContent = v; tr.appendChild(td);
+        });
+        var tdRun = document.createElement("td");
+        var btn = document.createElement("button");
+        btn.textContent = "运行"; btn.className = "ghost";
+        btn.addEventListener("click", function(){
+          btn.disabled = true; btn.textContent = "运行中";
+          api("/api/accounts/" + a.id + "/run", {method:"POST"})
+            .then(function(){ msg("m-msg", "账户「" + a.name + "」运行完成", "ok"); loadStatus(); })
+            .catch(function(e){ msg("m-msg", e.message, "err"); })
+            .then(function(){ btn.disabled = false; btn.textContent = "运行"; });
+        });
+        tdRun.appendChild(btn); tr.appendChild(tdRun);
+        tb.appendChild(tr);
+      });
+    }).catch(function(e){
+      if (e.status === 401) return renderLogin();
+      msg("m-msg", e.message, "err");
+    });
+  }
+
+  function startLog(){
+    if (state.es) return;
+    try {
+      var es = new EventSource("/api/logs/stream");
+      state.es = es;
+      var box = $("m-log");
+      es.onmessage = function(ev){
+        try{
+          var d = JSON.parse(ev.data);
+          var line = "[" + d.time + "] [" + d.level + "] " + (d.line ? d.line.split("] ").slice(1).join("] ") : d.msg);
+          box.textContent += line + "\n";
+          if (box.textContent.length > 40000) box.textContent = box.textContent.slice(-30000);
+          box.scrollTop = box.scrollHeight;
+        }catch(e){}
+      };
+    }catch(e){}
+  }
+
+  $("m-refresh").addEventListener("click", loadStatus);
+  $("m-runall").addEventListener("click", function(){
+    var b = $("m-runall"); b.disabled = true; b.textContent = "运行中…";
+    api("/api/run-all", {method:"POST"})
+      .then(function(){ msg("m-msg","全部账户运行完成","ok"); loadStatus(); })
+      .catch(function(e){ msg("m-msg", e.message, "err"); })
+      .then(function(){ b.disabled = false; b.textContent = "运行全部账户"; });
+  });
+  $("m-stop").addEventListener("click", function(){
+    api("/api/stop", {method:"POST"}).then(function(){ msg("m-msg","已发送停止指令","info"); });
+  });
+  $("m-lock").addEventListener("click", function(){
+    api("/api/vault/lock", {method:"POST"}).then(function(){ location.reload(); });
+  });
+  $("m-logout").addEventListener("click", function(){
+    api("/api/logout", {method:"POST"}).then(function(){ location.reload(); });
+  });
+
+  bootstrap();
+})();
+</script>
+</body>
+</html>
