@@ -309,6 +309,11 @@ async function visitDailySetUrl(ctx, url) {
  */
 async function taskClaimRewards(ctx) {
   const state = ctx.state;
+  // 开关守卫：默认关闭（见 config DEFAULTS.tasks.claim）。关闭时 runner 也不会调用，
+  // 这里再守一层，避免任何旧调用路径绕过开关。
+  if (!ctx.config.get().tasks.claim) {
+    return { status: "skip", reason: "未开启定期收取积分" };
+  }
   const todayNum = Number(state.getDateNum()); // YYYYMMDD
 
   /** 两个 YYYYMMDD 之间相差的天数 */
@@ -417,6 +422,119 @@ async function taskClaimRewards(ctx) {
   }
 }
 
+/**
+ * 每日活动（dashboard 页的 dailySet，每日三格）
+ *
+ * 从原混合活动任务里拆出来的独立任务，由 tasks.daily 开关控制（默认关闭）。
+ * 与网页浏览（taskPromos，earn 页）分开统计、分开标记完成。
+ * 每日活动通常只有固定的 2–3 条，一次做完即可，不做单次数量限流。
+ */
+async function taskDaily(ctx) {
+  const state = ctx.state;
+  const cfg = ctx.config.get();
+  if (!cfg.tasks.daily || state.isTaskDoneToday("daily")) {
+    return { status: "skip", point: state.get().dailyPoint, doneToday: state.isTaskDoneToday("daily") };
+  }
+  let queue = [];
+  let donePoints = 0, maxPoints = 0;
+  try {
+    const dashHtml = (await httpRequest({ url: "https://rewards.bing.com/dashboard", ctx })).text.replace(/\\"/g, '"');
+    const todayStr = getDateSlash();
+    const dailySetItems = extractJsonArray(dashHtml, '"dailySetItems":', "[", "]");
+    if (dailySetItems) {
+      for (const item of dailySetItems) {
+        if (item.points === 0 || item.date !== todayStr) continue;
+        maxPoints += item.points;
+        if (item.isCompleted) {
+          donePoints += item.points;
+        } else {
+          queue.push({
+            id: item.offerId,
+            hash: item.hash,
+            points: item.points,
+            // 改版后真正的完成方式是访问这条 destination（Bing 搜索奖励链接），
+            // 与用户手工「点开标签→等加载→关闭」等价；POST 交卷仅作兜底
+            destination: item.destination,
+          });
+        }
+      }
+    }
+  } catch (e) {
+    logger.error(`每日活动解析出错！${e.message}`);
+  }
+
+  state.get().dailyPoint = Math.max(state.get().dailyPoint || 0, donePoints);
+  state.save();
+
+  if (queue.length < 1) {
+    state.setTaskDone("daily", state.getDateNum());
+    const msg = `📆每日活动已完成！\n✨活动积分：${donePoints}/${maxPoints || donePoints}`;
+    logger.success(msg);
+    await notify.sendText(ctx, "微软积分任务-每日活动", msg);
+    return { status: "done", points: donePoints };
+  }
+
+  try {
+    logger.log("📆", `检测到 ${queue.length} 个未完成每日活动，本轮全部执行`);
+    await sleep(500);
+    let i = 0;
+    for (const item of queue) {
+      cancel.throwIfAborted();
+      i++;
+      logger.log("📆", `正在执行第 ${i}/${queue.length} 个每日活动...`);
+
+      // ① 先按「手工点开标签」真正访问活动链接（服务端按 URL 追踪参数记分）
+      if (item.destination) {
+        try {
+          await visitDailySetUrl(ctx, item.destination);
+        } catch (e) {
+          if (e && e.isAbort) throw e;
+          logger.warn(`访问每日活动链接失败（将继续尝试交卷）: ${e.message}`);
+        }
+      }
+
+      // ② next-action 交卷兜底（旧结构 / 链接无效时仍可能生效）
+      try {
+        await httpRequest({
+          method: "POST",
+          url: "https://rewards.bing.com/dashboard",
+          headers: {
+            "content-type": "text/plain;charset=UTF-8",
+            "next-action": NEXT_ACTION,
+            "next-router-state-tree": NEXT_ROUTER_TREE,
+            referer: "https://rewards.bing.com/dashboard",
+          },
+          data: JSON.stringify([item.hash, 11, { offerid: item.id, isPromotional: "$undefined", timezoneOffset: "-480" }]),
+          ctx,
+        });
+      } catch (e) {
+        if (e && e.isAbort) throw e;
+        logger.warn(`每日活动交卷失败: ${e.message}`);
+      }
+      donePoints += item.points;
+      state.get().dailyPoint = Math.max(state.get().dailyPoint || 0, donePoints);
+      state.save();
+      if (i < queue.length) await sleep(randInt(2000, 4000));
+    }
+
+    state.setTaskDone("daily", state.getDateNum());
+    const msg = `📆每日活动已完成！\n✨活动积分：${donePoints}/${maxPoints || donePoints}`;
+    logger.success(msg);
+    await notify.sendText(ctx, "微软积分任务-每日活动", msg);
+    return { status: "done", points: donePoints };
+  } catch (e) {
+    if (e && e.isAbort) throw e;
+    logger.error(`每日活动出错！${e.message}`);
+    return { status: "error", error: e.message };
+  }
+}
+
+/**
+ * 网页浏览 / 更多活动（earn 页 activityCards）
+ *
+ * 由 tasks.promos 开关控制。只处理 earn 页的更多活动；dashboard 的每日三格
+ * 已拆到 taskDaily。受单次数量限制（limits.promos）时本轮只做一部分、不标记完成。
+ */
 async function taskPromos(ctx) {
   const state = ctx.state;
   const cfg = ctx.config.get();
@@ -425,35 +543,9 @@ async function taskPromos(ctx) {
   }
   let promosArr = [];
   const seenIds = new Set();
-  let dashPoints = 0, dashMax = 0;
   let earnPoints = 0, earnMax = 0;
 
   try {
-    const dashHtml = (await httpRequest({ url: "https://rewards.bing.com/dashboard", ctx })).text.replace(/\\"/g, '"');
-    const todayStr = getDateSlash();
-    const dailySetItems = extractJsonArray(dashHtml, '"dailySetItems":', "[", "]");
-    if (dailySetItems) {
-      for (const item of dailySetItems) {
-        if (item.points === 0 || seenIds.has(item.offerId) || item.date !== todayStr) continue;
-        seenIds.add(item.offerId);
-        dashMax += item.points;
-        if (item.isCompleted) {
-          dashPoints += item.points;
-        } else {
-          promosArr.push({
-            id: item.offerId,
-            hash: item.hash,
-            url: "https://rewards.bing.com/dashboard",
-            points: item.points,
-            type: "dash",
-            // 改版后真正的完成方式是访问这条 destination（Bing 搜索奖励链接），
-            // 与用户手工「点开标签→等加载→关闭」等价；POST 交卷仅作兜底
-            destination: item.destination,
-          });
-        }
-      }
-    }
-
     const earnHtml = (await httpRequest({ url: "https://rewards.bing.com/earn", ctx })).text.replace(/\\"/g, '"');
     if (earnHtml.includes('"activityCards":[')) {
       const todayDayEn = getDayEn();
@@ -476,29 +568,26 @@ async function taskPromos(ctx) {
         if (isCompleted) {
           earnPoints += points;
         } else {
-          promosArr.push({ id: offerId, hash, url: "https://rewards.bing.com/earn", points, type: "earn" });
+          promosArr.push({ id: offerId, hash, url: "https://rewards.bing.com/earn", points });
         }
       }
     }
   } catch (e) {
-    logger.error(`活动解析出错！${e.message}`);
+    logger.error(`网页浏览活动解析出错！${e.message}`);
   }
 
-  state.get().promosPoint = Math.max(state.get().promosPoint, dashPoints + earnPoints);
+  state.get().promosPoint = Math.max(state.get().promosPoint, earnPoints);
   state.save();
 
-  const dashTasks = promosArr.filter((i) => i.type === "dash").length;
-  const earnTasks = promosArr.filter((i) => i.type === "earn").length;
-  const totalNewTasks = dashTasks + earnTasks;
+  const totalNewTasks = promosArr.length;
 
   if (totalNewTasks < 1) {
     state.setTaskDone("promos", state.getDateNum());
-    const dashReport = dashMax > 0 ? `\n📱手机端活动：${dashPoints}/${dashMax}` : "";
-    const earnReport = earnMax > 0 ? `\n💻电脑端活动：${earnPoints}/${earnMax}` : "";
-    const msg = `🧩活动任务已完成！${dashReport}${earnReport}`;
+    const earnReport = earnMax > 0 ? `\n💻网页浏览活动：${earnPoints}/${earnMax}` : "";
+    const msg = `🧩网页浏览任务已完成！${earnReport}`;
     logger.success(msg);
-    await notify.sendText(ctx, "微软积分任务-活动", msg);
-    return { status: "done", points: dashPoints + earnPoints };
+    await notify.sendText(ctx, "微软积分任务-网页浏览", msg);
+    return { status: "done", points: earnPoints };
   }
 
   // 单次数量限制：本轮只做其中一部分，剩下的留到下一轮（随机开关可小幅波动）
@@ -506,55 +595,28 @@ async function taskPromos(ctx) {
   const plan = resolveTaskCount({ base: limits.promos, total: totalNewTasks, random: limits.random });
   const queue = promosArr.slice(0, plan.count);
   const runCount = queue.length;
-  const queueDash = queue.filter((i) => i.type === "dash").length;
-  const queueEarn = queue.filter((i) => i.type === "earn").length;
 
   try {
-    const taskMsgs = [];
-    if (queueDash > 0) taskMsgs.push(`${queueDash}个手机端活动`);
-    if (queueEarn > 0) taskMsgs.push(`${queueEarn}个电脑端活动`);
     logger.log(
       "🧩",
-      `检测到 ${totalNewTasks} 个未完成活动（${taskMsgs.join("、")}），本轮计划执行 ${runCount} 个${
+      `检测到 ${totalNewTasks} 个未完成网页浏览活动，本轮计划执行 ${runCount} 个${
         plan.applied || plan.cancelled ? `（${plan.note}）` : ""
       }`
     );
     await sleep(500);
 
-    let dashCurrent = 1;
-    let earnCurrent = 1;
     let i = 0;
     for (const item of queue) {
       cancel.throwIfAborted();
       i++;
-      if (item.type === "dash") {
-        logger.log("📱", `正在执行第${dashCurrent}/${queueDash}个手机端活动...`);
-        dashCurrent++;
-      } else {
-        logger.log("💻", `正在执行第${earnCurrent}/${queueEarn}个电脑端活动...`);
-        earnCurrent++;
-      }
+      logger.log("💻", `正在执行第 ${i}/${runCount} 个网页浏览活动...`);
       const reqHeaders = {
         "content-type": "text/plain;charset=UTF-8",
         "next-action": NEXT_ACTION,
         referer: item.url,
       };
-      if (item.type === "dash") {
-        reqHeaders["next-router-state-tree"] = NEXT_ROUTER_TREE;
-      }
 
-      // ① 先按「手工点开标签」的方式真正访问活动链接（服务端按 URL 里的
-      //    BTEPOKey / BTDSUOID 等追踪参数记分），这是当前改版后唯一可靠的方式
-      if (item.destination) {
-        try {
-          await visitDailySetUrl(ctx, item.destination);
-        } catch (e) {
-          if (e && e.isAbort) throw e;
-          logger.warn(`访问活动链接失败（将继续尝试交卷）: ${e.message}`);
-        }
-      }
-
-      // ② 保留原有的 next-action 交卷作为兜底（旧结构 / 链接无效时仍可能生效）
+      // ① next-action 交卷为主（earn 页活动无 destination 链接）
       await httpRequest({
         method: "POST",
         url: item.url,
@@ -562,34 +624,32 @@ async function taskPromos(ctx) {
         data: JSON.stringify([item.hash, 11, { offerid: item.id, isPromotional: "$undefined", timezoneOffset: "-480" }]),
         ctx,
       });
-      if (item.type === "dash") dashPoints += item.points;
-      else earnPoints += item.points;
-      state.get().promosPoint = Math.max(state.get().promosPoint, dashPoints + earnPoints);
+      earnPoints += item.points;
+      state.get().promosPoint = Math.max(state.get().promosPoint, earnPoints);
       state.save();
       if (i < runCount) await sleep(randInt(2000, 4000));
     }
 
-    const dashReport = dashMax > 0 ? `\n📱手机端活动：${dashPoints}/${dashMax}` : "";
-    const earnReport = earnMax > 0 ? `\n💻电脑端活动：${earnPoints}/${earnMax}` : "";
+    const earnReport = earnMax > 0 ? `\n💻网页浏览活动：${earnPoints}/${earnMax}` : "";
 
     // 只有把剩余活动全做完才算完成；受单次数量限制时保持「未完成」，
     // 让今日汇总与自动循环如实反映出「还有活动留待下轮」
     if (runCount >= totalNewTasks) {
       state.setTaskDone("promos", state.getDateNum());
-      const msg = `🧩活动任务已完成！${dashReport}${earnReport}`;
+      const msg = `🧩网页浏览任务已完成！${earnReport}`;
       logger.success(msg);
-      await notify.sendText(ctx, "微软积分任务-活动", msg);
-      return { status: "done", points: dashPoints + earnPoints };
+      await notify.sendText(ctx, "微软积分任务-网页浏览", msg);
+      return { status: "done", points: earnPoints };
     }
 
-    const partialMsg = `🧩本轮已执行 ${runCount}/${totalNewTasks} 个活动，剩余 ${
+    const partialMsg = `🧩本轮已执行 ${runCount}/${totalNewTasks} 个网页浏览活动，剩余 ${
       totalNewTasks - runCount
     } 个留待下轮`;
     logger.log("🧩", partialMsg);
-    return { status: "partial", points: dashPoints + earnPoints, pending: totalNewTasks - runCount };
+    return { status: "partial", points: earnPoints, pending: totalNewTasks - runCount };
   } catch (e) {
     if (e && e.isAbort) throw e;
-    logger.error(`活动交卷出错！${e.message}`);
+    logger.error(`网页浏览交卷出错！${e.message}`);
     return { status: "error", error: e.message };
   }
 }
@@ -766,4 +826,4 @@ async function taskSearch(ctx) {
   return { status: "partial", searched, pc: search.pc.progress, m: search.m.progress, progress: searchProgressSnapshot(state) };
 }
 
-module.exports = { taskSign, taskRead, taskPromos, taskClaimRewards, taskSearch, searchProgressSnapshot };
+module.exports = { taskSign, taskRead, taskDaily, taskPromos, taskClaimRewards, taskSearch, searchProgressSnapshot };

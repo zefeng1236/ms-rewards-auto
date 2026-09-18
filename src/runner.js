@@ -118,11 +118,12 @@ async function runOnce(ctx, opts = {}) {
     const g = state.get();
     const sp = Number.isFinite(g.signPoint) ? g.signPoint : 0;
     const rp = Number.isFinite(g.readPoint) ? g.readPoint : 0;
+    const dp = Number.isFinite(g.dailyPoint) ? g.dailyPoint : 0;
     const pp = Number.isFinite(g.promosPoint) ? g.promosPoint : 0;
     const srp = Number.isFinite(g.searchPoint) ? g.searchPoint : 0;
-    // 服务器权威值可用时不要用本地累加覆盖（promosPoint 是累计值，会虚高）
+    // 服务器权威值可用时不要用本地累加覆盖（promosPoint/dailyPoint 是累计值，会虚高）
     const server = Number.isFinite(g.todayPointsServer) ? g.todayPointsServer : 0;
-    g.todayPoints = server > 0 ? server : Math.max(0, sp) + rp + pp + srp;
+    g.todayPoints = server > 0 ? server : Math.max(0, sp) + rp + dp + pp + srp;
     if (extra) Object.assign(g, extra);
     state.save();
   };
@@ -152,12 +153,17 @@ async function runOnce(ctx, opts = {}) {
   result.tasks.read = rRead;
   persistSummary();
   cancel.throwIfAborted();
+  // 每日活动（dashboard dailySet），默认关闭，由 tasks.daily 控制
+  const rDaily = cfg.tasks.daily ? await tasks.taskDaily(ctx) : { status: "skip", disabled: true };
+  result.tasks.daily = rDaily;
+  persistSummary();
+  cancel.throwIfAborted();
   const rPromos = await tasks.taskPromos(ctx);
   result.tasks.promos = rPromos;
   persistSummary();
   cancel.throwIfAborted();
-  // 每周领取一次「可领取 / 待领取」积分（内部自带 7 天节流）
-  const rClaim = await tasks.taskClaimRewards(ctx);
+  // 定期收取积分：默认关闭（tasks.claim），开启后每周自动点一次「领取」（内部 7 天节流）
+  const rClaim = cfg.tasks.claim ? await tasks.taskClaimRewards(ctx) : { status: "skip", disabled: true };
   result.tasks.claim = rClaim;
   persistSummary();
   cancel.throwIfAborted();
@@ -177,12 +183,13 @@ async function runOnce(ctx, opts = {}) {
 
   const signPoint = state.get().signPoint;
   const readPoint = state.get().readPoint;
+  const dailyPoint = state.get().dailyPoint || 0;
   const promosPoint = state.get().promosPoint;
   // 今日合计：服务器权威值绝对优先。
-  // promosPoint 记录的是「已完成活动累计总分」，不等于当日增量，
+  // promosPoint/dailyPoint 记录的是「已完成活动累计总分」，不等于当日增量，
   // 因此本地累加只能在拿不到服务器值时兜底，不可与服务器值取 max。
   const searchPoint = state.get().searchPoint || 0;
-  const localTotal = Math.max(0, signPoint) + readPoint + promosPoint + searchPoint;
+  const localTotal = Math.max(0, signPoint) + readPoint + dailyPoint + promosPoint + searchPoint;
   const todayTotal = serverToday > 0 ? serverToday : localTotal;
 
   const lines = [];
@@ -220,7 +227,13 @@ async function runOnce(ctx, opts = {}) {
     }`
   );
 
-  lines.push(`🧩 活动: ${promosPoint > 0 ? promosPoint + " 分(累计)" : "未运行"}`);
+  // 每日活动：仅在开启该开关时显示一行，避免默认配置下汇总里多出无意义项
+  if (cfg.tasks.daily) {
+    const dailyDone = state.isTaskDoneToday("daily");
+    lines.push(`📆 每日活动: ${dailyDone ? "已完成" + (dailyPoint > 0 ? ` +${dailyPoint} 分` : "") : rDaily && rDaily.status === "error" ? `失败(${rDaily.error || "未知错误"})` : "未运行"}`);
+  }
+
+  lines.push(`🧩 网页浏览: ${promosPoint > 0 ? promosPoint + " 分(累计)" : "未运行"}`);
 
   // 搜索：显示「已完成多少、还剩多少」，而不是只说「已完成」
   const sp2 = (rSearch && rSearch.progress) || tasks.searchProgressSnapshot(state);

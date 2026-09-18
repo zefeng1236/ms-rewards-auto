@@ -15,12 +15,17 @@ const DEFAULTS = {
   tasks: {
     sign: true,    // 每日签入
     read: true,    // 阅读文章
-    promos: true,  // 活动交卷
+    promos: true,  // 网页浏览（earn 页更多活动）
+    daily: true,   // 每日活动（dashboard dailySet，每日三格）
+    claim: false,  // 定期收取积分（每周一次自动点「领取」），默认关闭
     search: true,  // 搜索积分
   },
   // 区域设置
   region: {
     lock: true, // 锁定国区（IP 非中国大陆则停止）
+    // 出口 IP / 归属地查询服务：bing（默认，用 Bing 首页 RevIpCC，与微软 Rewards 同源）| ipsb | pconline | ipinfo | ipapi | auto
+    // 设为 auto 时按 ip.sb → 太平洋 → ipinfo → ip-api 依次降级，全挂再由 Bing 兜底
+    ipProvider: "bing",
   },
   // 搜索设置
   search: {

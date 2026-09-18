@@ -26,10 +26,11 @@ const DEFAULT_STATE = {
   refreshToken: "",
   accessToken: "",
   accessTokenAt: 0,   // access token 获取时间戳
-  tasksDone: { sign: 0, read: 0, promos: 0, search: 0 }, // 完成任务时的日期数字 20260821
+  tasksDone: { sign: 0, read: 0, daily: 0, promos: 0, search: 0 }, // 完成任务时的日期数字 20260821
   signPoint: -1,
   readPoint: 0,
   readArticles: { done: 0, total: 0 }, // 阅读篇数进度（每篇 3 分，满额 30 分 = 10 篇）
+  dailyPoint: 0,    // 每日活动（dashboard dailySet）今日累计积分
   promosPoint: 0,
   searchPoint: 0,              // 搜索任务今日累计得分
   lastClaimDate: 0,            // 上次「领取积分」的日期（YYYYMMDD），用于 7 天节流
@@ -230,6 +231,7 @@ function createState(dir) {
     g.signPoint = -1;
     g.readPoint = 0;
     g.readArticles = { done: 0, total: 0 };
+    g.dailyPoint = 0;
     g.promosPoint = 0;
     g.todayPoints = 0;
     g.todayPointsServer = 0;
@@ -262,10 +264,12 @@ function createState(dir) {
     const today = getDateNum();
     const g = get();
     const t = (cfg && cfg.tasks) || {};
-    const names = { sign: "签入", read: "阅读", promos: "活动", search: "搜索" };
+    // 注意：claim（定期收取积分）内部 7 天节流一次，不纳入「今日完成」判定，
+    // 否则一周里有 6 天会永远显示「未完成」，自动循环无法收工。
+    const names = { sign: "签入", read: "阅读", daily: "每日活动", promos: "网页浏览", search: "搜索" };
     const enabled = [];
     const pending = [];
-    for (const key of ["sign", "read", "promos", "search"]) {
+    for (const key of ["sign", "read", "daily", "promos", "search"]) {
       if (!t[key]) continue;
       enabled.push(key);
       if ((g.tasksDone || {})[key] !== today) pending.push(names[key]);

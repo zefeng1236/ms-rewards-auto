@@ -1,5 +1,6 @@
 const logger = require("./logger");
 const { httpRequest } = require("./http");
+const ipLookup = require("./ip-lookup");
 
 const UA_PC = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0";
 const UA_MOBILE = "Mozilla/5.0 (Linux; Android 12; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36 EdgA/130.0.0.0";
@@ -15,11 +16,14 @@ function resolveHost(ctx) {
 }
 
 /**
- * 大陆 IP 检查：解析 bing 首页脚本中的 Region / RevIpCC
- * @returns {Promise<{ok: boolean, region: string, ipcc: string}>}
+ * 旧版区域检查：解析 bing 首页脚本中的 Region / RevIpCC
+ *
+ * 现在作为：① 用户在设置里显式选择「Bing 首页判定」时的主路径；
+ *           ② 第三方 IP 服务全部不可用时的内部兜底。
+ * @returns {Promise<{ok: boolean, region: string, ipcc: string, decisive: boolean}>}
+ *          decisive=false 表示没能解析出国家码（调用方应据此保守放行）
  */
-async function mainlandCheck(ctx) {
-  const cfg = ctx.config.get();
+async function bingRegionCheck(ctx) {
   const host = resolveHost(ctx);
   const res = await httpRequest({
     url: `https://${host}/`,
@@ -32,22 +36,64 @@ async function mainlandCheck(ctx) {
   });
   if (!res.text) {
     logger.warn("无法获取 bing 首页（区域检查跳过）");
-    return { ok: true, region: "", ipcc: "" };
+    return { ok: true, region: "", ipcc: "", decisive: false };
   }
   const clean = res.text.replace(/\s+/g, "");
   const m = clean.match(/Region:"(.*?)"(.*?)RevIpCC:"(.*?)"/);
   if (!m) {
     logger.warn("未从 bing 首页解析到区域信息（区域检查跳过）");
-    return { ok: true, region: "", ipcc: "" };
+    return { ok: true, region: "", ipcc: "", decisive: false };
   }
   const region = m[1].toUpperCase();
   const ipcc = m[3].toUpperCase();
-  logger.info(`区域检测: Region=${region}, RevIpCC=${ipcc}`);
-  if (cfg.region && cfg.region.lock && ipcc !== "CN") {
-    logger.warn("当前 IP 非中国大陆，已锁定国区，停止任务。");
-    return { ok: false, region, ipcc };
+  logger.info(`区域检测(Bing): Region=${region}, RevIpCC=${ipcc}`);
+  return { ok: true, region, ipcc, decisive: true };
+}
+
+/**
+ * 大陆 IP 检查
+ *
+ * 优先用用户选择的第三方 IP 归属地服务（默认 auto：ip.sb → 太平洋 → ipinfo → ip-api），
+ * 第三方不可用或给不出国家码时回落 Bing 首页的 RevIpCC，保证不会因为某个服务
+ * 抽风就误停任务。用户也可在设置里固定使用某一家（含旧的 Bing 方式）。
+ * @returns {Promise<{ok: boolean, region: string, ipcc: string}>}
+ */
+async function mainlandCheck(ctx) {
+  const cfg = ctx.config.get();
+  const lock = !!(cfg.region && cfg.region.lock);
+  const provider = (cfg.region && cfg.region.ipProvider) || "auto";
+
+  // 显式选择旧的 Bing 方式
+  if (provider === "bing") {
+    const b = await bingRegionCheck(ctx);
+    if (lock && b.decisive && b.ipcc !== "CN") {
+      logger.warn("当前 IP 非中国大陆，已锁定国区，停止任务。");
+      return { ok: false, region: b.region, ipcc: b.ipcc };
+    }
+    return { ok: true, region: b.region, ipcc: b.ipcc };
   }
-  return { ok: true, region, ipcc };
+
+  // 第三方服务（auto 会在内部按顺序降级）
+  const r = await ipLookup.lookupCountry(ctx, provider);
+  if (r && r.mainland !== null) {
+    const ipcc = r.countryCode || (r.mainland ? "CN" : "");
+    logger.info(`区域检测(${r.source}): ip=${r.ip} 国家码=${ipcc || "未知"} ${r.detail || ""}`.trim());
+    if (lock && r.mainland === false) {
+      logger.warn(`当前 IP 非中国大陆（${r.source} 判定），已锁定国区，停止任务。`);
+      return { ok: false, region: "", ipcc };
+    }
+    return { ok: true, region: "", ipcc };
+  }
+
+  // 第三方没给出可信结论：回落 Bing
+  if (r) logger.warn(`IP 服务 ${r.source} 未能确定国家码，回落 Bing 判定`);
+  else logger.warn("所有第三方 IP 查询服务均不可用，回落 Bing 判定");
+  const b = await bingRegionCheck(ctx);
+  if (lock && b.decisive && b.ipcc !== "CN") {
+    logger.warn("当前 IP 非中国大陆，已锁定国区，停止任务。");
+    return { ok: false, region: b.region, ipcc: b.ipcc };
+  }
+  return { ok: true, region: b.region, ipcc: b.ipcc };
 }
 
 /**

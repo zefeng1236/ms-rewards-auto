@@ -23,8 +23,8 @@ import type { ElectronApi } from "../types/electron";
 
 const DEFAULT_CONFIG: AppConfig = {
   useGlobal: true,
-  tasks: { sign: true, read: true, promos: true, search: true },
-  region: { lock: true },
+  tasks: { sign: true, read: true, daily: true, promos: true, claim: false, search: true },
+  region: { lock: true, ipProvider: "bing" },
   search: { span: 30, api: "offline" },
   limits: { random: false, read: 0, promos: 0 },
   schedule: {
@@ -250,7 +250,7 @@ const mockLogs = [
   "[2026-08-31 09:12:04] [INFO] 已加载 3 个账户",
   "[2026-08-31 09:12:10] [OK] 示例账户 A：签入完成 +15",
   "[2026-08-31 09:12:31] [OK] 示例账户 A：阅读 10/10 篇 +30",
-  "[2026-08-31 09:13:02] [WARN] 示例账户 A：活动交卷超时，下轮重试",
+  "[2026-08-31 09:13:02] [WARN] 示例账户 A：网页浏览活动超时，下轮重试",
   "[2026-08-31 09:14:44] [OK] 示例账户 B：今日任务全部完成",
 ];
 
@@ -455,7 +455,7 @@ export function createMockApi(): ElectronApi {
         mk("2026-08-31 09:12:10", "INFO", `===== 开始运行账户「${name}」 =====`),
         mk("2026-08-31 09:12:12", "OK", "签入完成 +15 分"),
         mk("2026-08-31 09:12:40", "OK", "阅读 10/10 篇 +30 分"),
-        mk("2026-08-31 09:13:02", "WARN", "活动交卷超时，下轮重试"),
+        mk("2026-08-31 09:13:02", "WARN", "网页浏览活动超时，下轮重试"),
       ];
     },
     getAccountLogDays: async () => ["2026-08-31", "2026-08-30"],

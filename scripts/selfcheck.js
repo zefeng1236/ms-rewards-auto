@@ -445,9 +445,104 @@ checkTrue("渲染层 mock 随机延迟默认同步", /randomDelay: true,\s*\n\s*
 
 // —— 静态守卫：设置页 ——
 const formSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "components", "SettingsForm.tsx"), "utf8");
-checkTrue("设置页有阅读/活动单次数量输入", /阅读文章每次篇数/.test(formSrc) && /活动交卷每次个数/.test(formSrc));
+checkTrue("设置页有阅读/网页浏览单次数量输入", /阅读文章每次篇数/.test(formSrc) && /网页浏览每次个数/.test(formSrc));
 checkTrue("设置页有随机波动开关", /limits: \{ random: v \}/.test(formSrc));
 checkTrue("设置页有随机延迟开关与区间", /randomDelay: v/.test(formSrc) && /randomDelayMin/.test(formSrc) && /randomDelayMax/.test(formSrc));
+
+console.log("\n【14】每日活动 / 定期收取积分开关 与 IP 多服务商");
+const ipLookup = require(path.join(ROOT, "src", "ip-lookup.js"));
+const { createState } = require(path.join(ROOT, "src", "state.js"));
+const rewardsSrc = fs.readFileSync(path.join(ROOT, "src", "rewards.js"), "utf8");
+const stateSrc = fs.readFileSync(path.join(ROOT, "src", "state.js"), "utf8");
+const typesSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "types", "index.ts"), "utf8");
+
+// —— 新开关默认值：config / global-config / mock 三处同步 ——
+check("config：每日活动默认启用", cfgDefaults.tasks.daily, true);
+check("config：定期收取积分默认关闭", cfgDefaults.tasks.claim, false);
+check("config：IP 服务默认 bing", cfgDefaults.region.ipProvider, "bing");
+check("global-config：每日活动默认启用", globalDefaults.tasks.daily, true);
+check("global-config：定期收取积分默认关闭", globalDefaults.tasks.claim, false);
+check("global-config：IP 服务默认 bing", globalDefaults.region.ipProvider, "bing");
+checkTrue(
+  "渲染层 mock 新开关默认同步（daily:true / claim:false / ipProvider:bing）",
+  /tasks: \{ sign: true, read: true, daily: true, promos: true, claim: false, search: true \}/.test(mockSrc) &&
+    /region: \{ lock: true, ipProvider: "bing" \}/.test(mockSrc)
+);
+
+// —— IP 服务纯解析：境内 / 境外 / 无法判定 ——
+const pcCn = ipLookup.parsePconline('{"ip":"49.81.64.227","proCode":"320000","city":"徐州市","addr":"江苏徐州 电信","err":""}');
+check("太平洋境内 → mainland=true", [pcCn.mainland, pcCn.countryCode], [true, "CN"]);
+const pcUs = ipLookup.parsePconline('{"ip":"8.8.8.8","proCode":"999999","addr":" 美国","err":"noprovince"}');
+check("太平洋境外(proCode 999999) → mainland=false", pcUs.mainland, false);
+const sbCn = ipLookup.parseIpsb('{"ip":"1.2.3.4","country_code":"CN","organization":"China Telecom"}');
+check("ip.sb 境内(CN)", [sbCn.mainland, sbCn.countryCode, sbCn.source], [true, "CN", "ipsb"]);
+const sbUs = ipLookup.parseIpsb('{"ip":"1.2.3.4","country_code":"US"}');
+check("ip.sb 境外(US) → mainland=false", [sbUs.mainland, sbUs.countryCode], [false, "US"]);
+const ifUs = ipLookup.parseIpinfo('{"ip":"1.2.3.4","country":"US","org":"x"}');
+check("ipinfo 境外(US)", ifUs.mainland, false);
+const iaCn = ipLookup.parseIpapi('{"status":"success","countryCode":"CN","query":"1.2.3.4"}');
+check("ip-api 境内(CN)", [iaCn.mainland, iaCn.ip], [true, "1.2.3.4"]);
+let iaThrew = false;
+try {
+  ipLookup.parseIpapi('{"status":"fail","message":"private range"}');
+} catch {
+  iaThrew = true;
+}
+checkTrue("ip-api fail 状态抛错（交由上层降级）", iaThrew);
+const sbUnknown = ipLookup.parseIpsb('{"ip":"1.2.3.4","country_code":""}');
+check("国家码缺失 → mainland=null（不武断判定）", sbUnknown.mainland, null);
+
+// —— auto 降级顺序：ip.sb 优先 ——
+check("auto 顺序为 ipsb→pconline→ipinfo→ipapi", ipLookup.AUTO_ORDER, ["ipsb", "pconline", "ipinfo", "ipapi"]);
+checkTrue("服务商列表包含 4 家第三方 + Bing", ipLookup.PROVIDERS.map((p) => p.id).join(","), "");
+for (const id of ["ipsb", "pconline", "ipinfo", "ipapi", "bing"]) {
+  checkTrue(`IP 服务商列表含 ${id}`, ipLookup.PROVIDERS.some((p) => p.id === id));
+}
+
+// —— evaluateDayDone：纳入 daily，但绝不纳入 claim（每周一次，否则永远无法收工） ——
+const stateTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "msr-daydone-"));
+const st = createState(stateTmpDir);
+const allTasks = { sign: true, read: true, daily: true, promos: true, claim: true, search: true };
+let ev0 = st.evaluateDayDone({ tasks: allTasks });
+check("全新状态：5 个每日任务都未完成", ev0.pending.length, 5);
+checkTrue("pending 含「每日活动」", ev0.pending.includes("每日活动"), ev0.pending.join(","));
+checkTrue("claim 开启也不在 pending（不计入今日完成）", !ev0.pending.some((p) => p.includes("收取") || p.includes("领取")));
+const dn = st.getDateNum();
+for (const k of ["sign", "read", "daily", "promos", "search"]) st.setTaskDone(k, dn);
+const ev1 = st.evaluateDayDone({ tasks: allTasks });
+check("5 个每日任务全标完成（claim 不影响）→ done", ev1.done, true);
+// 只关 daily：不启用的任务不参与判定
+const ev2 = st.evaluateDayDone({ tasks: { sign: true, read: true, daily: false, promos: true, claim: false, search: true } });
+check("关闭每日活动后不参与今日完成判定", ev2.done, true);
+
+// —— 静态守卫：主进程接线 ——
+checkTrue("tasks.js 导出 taskDaily", /taskSign, taskRead, taskDaily, taskPromos/.test(tasksSource));
+checkTrue("taskDaily 受 tasks.daily 开关守卫", /if \(!cfg\.tasks\.daily/.test(tasksSource));
+checkTrue("taskDaily 用独立 daily 完成标记", /setTaskDone\("daily"/.test(tasksSource));
+checkTrue("taskPromos 只处理 earn 页（不再抓 dashboard dailySet）",
+  /async function taskPromos[\s\S]*?rewards\.bing\.com\/earn/.test(tasksSource) &&
+  !/async function taskPromos[\s\S]*?dailySetItems/.test(tasksSource));
+checkTrue("taskPromos 仍受 tasks.promos 守卫", /if \(!cfg\.tasks\.promos/.test(tasksSource));
+checkTrue("定期收取积分受 tasks.claim 开关守卫", /if \(!ctx\.config\.get\(\)\.tasks\.claim\)/.test(tasksSource));
+checkTrue("runner 按开关调用 taskDaily", /cfg\.tasks\.daily \? await tasks\.taskDaily\(ctx\)/.test(runnerSource));
+checkTrue("runner 按开关调用 taskClaimRewards", /cfg\.tasks\.claim \? await tasks\.taskClaimRewards\(ctx\)/.test(runnerSource));
+checkTrue("runner 本地合计纳入 dailyPoint", /readPoint \+ dailyPoint \+ promosPoint/.test(runnerSource));
+checkTrue("rewards 区域检查接入 ip-lookup", /require\("\.\/ip-lookup"\)/.test(rewardsSrc) && /ipLookup\.lookupCountry\(ctx, provider\)/.test(rewardsSrc));
+checkTrue("rewards 第三方不可用时回落 Bing", /async function bingRegionCheck/.test(rewardsSrc));
+checkTrue("state 默认 tasksDone 含 daily", /tasksDone: \{ sign: 0, read: 0, daily: 0, promos: 0, search: 0 \}/.test(stateSrc));
+checkTrue("state 每日累计含 dailyPoint 且跨天清零", /dailyPoint: 0,/.test(stateSrc));
+
+// —— 静态守卫：渲染层 ——
+checkTrue("设置页有「每日活动」开关", /key: "daily", label: "每日活动"/.test(formSrc));
+checkTrue("设置页有「定期收取积分」开关", /key: "claim", label: "定期收取积分"/.test(formSrc));
+checkTrue("设置页 promos 文案改为「网页浏览」", /key: "promos", label: "网页浏览"/.test(formSrc));
+checkTrue("设置页有 IP 服务下拉", /IP_PROVIDER_OPTIONS/.test(formSrc) && /IP 归属地查询服务/.test(formSrc));
+checkTrue("设置页可选 ip.sb / 太平洋 / ipinfo / ip-api / Bing",
+  /value: "ipsb"/.test(formSrc) && /value: "pconline"/.test(formSrc) && /value: "ipinfo"/.test(formSrc) &&
+  /value: "ipapi"/.test(formSrc) && /value: "bing"/.test(formSrc));
+checkTrue("类型定义含 IpProvider 联合类型", /type IpProvider = "auto" \| "ipsb" \| "pconline" \| "ipinfo" \| "ipapi" \| "bing"/.test(typesSrc));
+const detailSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "views", "AccountDetail.tsx"), "utf8");
+checkTrue("账户详情页有条件渲染的「每日活动」卡片", /dailyEnabled/.test(detailSrc) && /label="每日活动"/.test(detailSrc));
 
 /* ============ 汇总 ============ */
 console.log(`\n${"=".repeat(46)}`);

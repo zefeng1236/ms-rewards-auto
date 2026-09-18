@@ -19,6 +19,9 @@ export type SearchApi =
   | "hot.baiwumm.com"
   | "hot.cnxiaobai.com";
 
+/** 出口 IP / 归属地查询服务（auto 时按 ip.sb→太平洋→ipinfo→ip-api 降级，全挂再由 Bing 兜底） */
+export type IpProvider = "auto" | "ipsb" | "pconline" | "ipinfo" | "ipapi" | "bing";
+
 export interface ScheduleWindow {
   start: string; // "HH:mm"
   end: string; //   "HH:mm"
@@ -46,11 +49,18 @@ export interface AppConfig {
   tasks: {
     sign: boolean;
     read: boolean;
+    /** 每日活动（dashboard dailySet），默认关闭 */
+    daily: boolean;
+    /** 网页浏览（earn 页更多活动） */
     promos: boolean;
+    /** 定期收取积分（每周自动点「领取」），默认关闭 */
+    claim: boolean;
     search: boolean;
   };
   region: {
     lock: boolean;
+    /** 出口 IP / 归属地查询服务 */
+    ipProvider: IpProvider;
   };
   search: {
     span: number;
@@ -67,7 +77,7 @@ export interface AppConfig {
     random: boolean;
     /** 阅读文章每次最多几篇，0 = 不限制 */
     read: number;
-    /** 活动交卷每次最多几个，0 = 不限制 */
+    /** 网页浏览每次最多几个，0 = 不限制 */
     promos: number;
   };
   schedule: {
@@ -132,6 +142,10 @@ export interface AccountState {
   lastRunDate: number;
   signDone: boolean;
   readDone: boolean;
+  /** 是否开启「每日活动」任务（关闭时详情页不显示该卡片） */
+  dailyEnabled?: boolean;
+  dailyDone?: boolean;
+  dailyPoint?: number;
   promosDone: boolean;
   searchDone: boolean;
   signPoint?: number;

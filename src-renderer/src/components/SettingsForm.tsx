@@ -24,11 +24,22 @@ const MODE_OPTIONS: SelectOption[] = [
 
 const SCOPE_OPTIONS: SelectOption[] = [{ label: "总积分余额", value: "balance" }];
 
-const TASK_LABELS: { key: keyof AppConfig["tasks"]; label: string }[] = [
-  { key: "sign", label: "每日签入" },
-  { key: "read", label: "阅读文章" },
-  { key: "promos", label: "活动交卷" },
-  { key: "search", label: "搜索积分" },
+const TASK_LABELS: { key: keyof AppConfig["tasks"]; label: string; hint?: string }[] = [
+  { key: "sign", label: "每日签入", hint: "每日打卡签到，获得固定积分奖励" },
+  { key: "read", label: "阅读文章", hint: "自动阅读 MSN 文章，每篇 3 分，满额 30 分" },
+  { key: "daily", label: "每日活动", hint: "首页每日三格活动，访问活动链接即可完成" },
+  { key: "promos", label: "网页浏览", hint: "earn 页更多活动，浏览指定网页获取积分" },
+  { key: "claim", label: "定期收取积分", hint: "每周自动点击「领取」按钮，收取待领取的积分" },
+  { key: "search", label: "搜索积分", hint: "自动使用 Bing 搜索，每次 3 分，满额为止" },
+];
+
+const IP_PROVIDER_OPTIONS: SelectOption[] = [
+  { label: "Bing 首页判定（默认，与微软 Rewards 同源）", value: "bing" },
+  { label: "ip.sb（备用，全球 CDN、标准国家码）", value: "ipsb" },
+  { label: "太平洋 IP 库（国内）", value: "pconline" },
+  { label: "ipinfo.io", value: "ipinfo" },
+  { label: "ip-api.com", value: "ipapi" },
+  { label: "自动选择（ip.sb 优先，失败自动降级，全挂再用 Bing）", value: "auto" },
 ];
 
 /**
@@ -98,10 +109,11 @@ export function SettingsForm({
     <div className="settings-form">
       <Section title="任务开关">
         <div className="form-grid">
-          {TASK_LABELS.map(({ key, label }) => (
+          {TASK_LABELS.map(({ key, label, hint }) => (
             <SwitchField
               key={key}
               label={label}
+              hint={hint}
               checked={!!value.tasks?.[key]}
               onChange={(v) => onChange({ tasks: { [key]: v } } as DeepPartial<AppConfig>)}
             />
@@ -126,7 +138,7 @@ export function SettingsForm({
             onChange={(v) => onChange({ limits: { read: Math.max(0, v) } } as DeepPartial<AppConfig>)}
           />
           <NumberField
-            label="活动交卷每次个数"
+            label="网页浏览每次个数"
             hint="0 = 不限制（一次做完）"
             value={value.limits?.promos ?? 0}
             min={0}
@@ -143,6 +155,15 @@ export function SettingsForm({
           checked={value.region?.lock !== false}
           onChange={(v) => onChange({ region: { lock: v } })}
         />
+        <div className="form-grid" style={{ marginTop: 12 }}>
+          <SelectField
+            label="IP 归属地查询服务"
+            hint="自动模式下 ip.sb 优先，失败依次降级太平洋 / ipinfo / ip-api，全部不可用再用 Bing 判定"
+            value={value.region?.ipProvider ?? "auto"}
+            options={IP_PROVIDER_OPTIONS}
+            onChange={(v) => onChange({ region: { ipProvider: v as AppConfig["region"]["ipProvider"] } })}
+          />
+        </div>
       </Section>
 
       <Section title="搜索设置">

@@ -529,8 +529,18 @@ export function AccountDetail({
             done={!!s.readDone}
             empty={!s.readDone && !s.readArticlesTotal && !s.readPoint}
           />
+          {s.dailyEnabled && (
+            <TaskCard
+              label="每日活动"
+              small
+              value={s.dailyDone ? "完成" : s.dailyPoint ? String(s.dailyPoint) : "--"}
+              sub={s.dailyDone ? `已完成 · ${s.dailyPoint || 0} 分` : undefined}
+              done={!!s.dailyDone}
+              empty={!s.dailyDone && !s.dailyPoint}
+            />
+          )}
           <TaskCard
-            label="活动"
+            label="网页浏览"
             small
             value={s.promosDone ? "完成" : s.promosPoint ? String(s.promosPoint) : "--"}
             sub={s.promosDone ? `已完成 · ${s.promosPoint || 0} 分` : undefined}

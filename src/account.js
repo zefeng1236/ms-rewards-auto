@@ -153,9 +153,10 @@ function describe(id) {
   // 取 max 会稳定选中错误的大数。服务器值可用时必须无条件采信。
   const signPt = Number.isFinite(st.signPoint) ? st.signPoint : 0;
   const readPt = Number.isFinite(st.readPoint) ? st.readPoint : 0;
+  const dailyPt = Number.isFinite(st.dailyPoint) ? st.dailyPoint : 0;
   const promosPt = Number.isFinite(st.promosPoint) ? st.promosPoint : 0;
   const searchPt = Number.isFinite(st.searchPoint) ? st.searchPoint : 0;
-  const computedToday = Math.max(0, signPt) + readPt + promosPt + searchPt;
+  const computedToday = Math.max(0, signPt) + readPt + dailyPt + promosPt + searchPt;
   // 服务器值仅在"今天运行/同步过"时才采用，避免显示昨天的旧值
   const ranToday = st.lastRunDate === dateNum;
   const serverToday = ranToday && Number.isFinite(st.todayPointsServer) ? st.todayPointsServer : 0;
@@ -226,6 +227,9 @@ function describe(id) {
       lastRunDate: st.lastRunDate || 0,
       signDone: ranToday && st.tasksDone?.sign === dateNum,
       readDone,
+      dailyEnabled: !!cfg.tasks?.daily,
+      dailyDone: ranToday && st.tasksDone?.daily === dateNum,
+      dailyPoint: st.dailyPoint || 0,
       promosDone: ranToday && st.tasksDone?.promos === dateNum,
       searchDone,
       signPoint: st.signPoint,

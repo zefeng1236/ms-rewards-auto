@@ -23,10 +23,13 @@ const GLOBAL_DEFAULTS = {
     sign: true,
     read: true,
     promos: true,
+    daily: true,
+    claim: false,
     search: true,
   },
   region: {
     lock: true,
+    ipProvider: "bing",
   },
   search: {
     span: 30,
