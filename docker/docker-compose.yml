@@ -4,7 +4,7 @@
 # 一键启动（在项目根目录执行）：
 #     docker compose -f docker/docker-compose.yml up -d --build
 #
-# 打开：http://<服务器IP>:3000
+# 打开：http://<服务器IP>:25560
 #   首次访问进入安装向导 → 设置保险库密码 → 保存恢复密钥到浏览器
 #   之后每次打开浏览器点「使用本机保存的数字密钥登录」即可
 #
@@ -27,8 +27,8 @@ services:
     restart: unless-stopped
 
     ports:
-      # 只改左边即可换端口，例如 "8080:3000"
-      - "3000:3000"
+      # 服务端口固定 25560（3000 太常见易冲突）；只改左边即可换宿主端口
+      - "25560:25560"
 
     environment:
       # ---------- 时区（很重要）----------
@@ -49,7 +49,7 @@ services:
       PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH: /usr/bin/chromium
       MS_REWARDS_CHROMIUM_ARGS: "--no-sandbox,--disable-dev-shm-usage,--disable-gpu"
 
-      MS_REWARDS_PORT: "3000"
+      MS_REWARDS_PORT: "25560"
 
     volumes:
       # 账户配置、登录态、保险库、日志 —— 全部在这里，容器重建不丢
@@ -69,7 +69,7 @@ services:
         max-file: "3"
 
     healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/api/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:25560/api/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
       interval: 60s
       timeout: 10s
       start_period: 20s

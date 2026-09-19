@@ -108,10 +108,10 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 RUN mkdir -p /data/storage && chown -R node:node /data /app
 VOLUME ["/data"]
 
-EXPOSE 3000
+EXPOSE 25560
 
 HEALTHCHECK --interval=60s --timeout=10s --start-period=20s --retries=3 \
-  CMD node -e "require('http').get('http://127.0.0.1:3000/api/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+  CMD node -e "require('http').get('http://127.0.0.1:25560/api/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
 
 # 以 root 启动（entrypoint 修完属主后自动降权到 node）
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

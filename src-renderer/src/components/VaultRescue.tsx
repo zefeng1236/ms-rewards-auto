@@ -83,7 +83,14 @@ export function VaultRescue({ onWiped, onReset }: { onWiped?: () => void; onRese
       return;
     }
     setBusy(true);
-    const r = await api.vaultResetPasswordWithRecovery(rk.trim(), next, hint || undefined);
+    let r: Awaited<ReturnType<typeof api.vaultResetPasswordWithRecovery>> | undefined;
+    try {
+      r = await api.vaultResetPasswordWithRecovery(rk.trim(), next, hint || undefined);
+    } catch (e) {
+      setBusy(false);
+      setErr((e as Error)?.message || "重置失败");
+      return;
+    }
     setBusy(false);
     if (!r.ok) {
       setErr(r.error || "重置失败，请检查恢复密钥");
@@ -100,7 +107,14 @@ export function VaultRescue({ onWiped, onReset }: { onWiped?: () => void; onRese
 
   const wipe = async () => {
     setWiping(true);
-    const r = await api.wipeAccountData();
+    let r: Awaited<ReturnType<typeof api.wipeAccountData>> | undefined;
+    try {
+      r = await api.wipeAccountData();
+    } catch (e) {
+      setWiping(false);
+      setErr((e as Error)?.message || "清空失败");
+      return;
+    }
     setWiping(false);
     setConfirmWipe(false);
     if (!r.ok) {

@@ -13,7 +13,7 @@ Docker 版把运行环境（Node + Chromium + 系统依赖）全部封进镜像�
 docker compose -f docker/docker-compose.yml up -d --build
 ```
 
-然后浏览器打开 `http://<服务器IP>:3000`。
+然后浏览器打开 `http://<服务器IP>:25560`。
 
 国内机器如果拉基础镜像慢，先配一次镜像加速器（只需做一次）：
 

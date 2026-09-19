@@ -21,7 +21,7 @@
  *   MS_REWARDS_STORAGE_DIR              存储根目录（容器内默认 /data/storage）
  *   MS_REWARDS_VAULT_PASSWORD           保险库密码（可选，注入后自动解锁）
  *   MS_REWARDS_VAULT_KEY                恢复密钥（可选，与密码二选一）
- *   MS_REWARDS_PORT                     监听端口（默认 3000）
+ *   MS_REWARDS_PORT                     监听端口（默认 25560）
  *   PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH 外部 Chromium 路径（apt 安装时用）
  *   MS_REWARDS_CHROMIUM_ARGS            额外 Chromium 启动参数
  */
@@ -47,7 +47,7 @@ const core = require("./app-core");
 const runner = require("./runner");
 const webApi = require("./web-api");
 
-const PORT = Number(process.env.MS_REWARDS_PORT) || 3000;
+const PORT = Number(process.env.MS_REWARDS_PORT) || 25560;
 /** React 前端产物目录（vite.web.config.ts 的 outDir） */
 const SPA_DIR = path.join(__dirname, "web", "dist");
 /** 产物缺失时的兜底轻量页面（保留了纯 REST 用法） */

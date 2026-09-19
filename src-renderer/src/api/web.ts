@@ -57,7 +57,15 @@ async function postJSON<T>(url: string, body: unknown): Promise<T> {
     body: JSON.stringify(body),
   });
   if (res.status === 401) throw new NotLoggedInError();
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok) {
+    // 保险库类接口（/api/vault/*）失败时返回 4xx + { ok:false, error }，
+    // 错误文案要原样带给界面（如「密码不正确」），不能只报 HTTP 状态码
+    try {
+      const parsed = (await res.json()) as { ok?: boolean; error?: string } | null;
+      if (parsed && typeof parsed === "object" && parsed.ok === false) return parsed as T;
+    } catch { /* 非 JSON 响应体，落到下面抛状态码 */ }
+    throw new Error(`HTTP ${res.status}`);
+  }
   return (await res.json()) as T;
 }
 

@@ -531,7 +531,14 @@ function PageVault({ onNext }: { onNext: () => void }) {
       return;
     }
     setBusy(true);
-    const r = await api.vaultSetup(pw, hint);
+    let r: Awaited<ReturnType<typeof api.vaultSetup>> | undefined;
+    try {
+      r = await api.vaultSetup(pw, hint);
+    } catch (e) {
+      setBusy(false);
+      setErr((e as Error)?.message || "设置失败，请重试");
+      return;
+    }
     setBusy(false);
     if (!r.ok) {
       setErr(r.error || "设置失败，请重试");

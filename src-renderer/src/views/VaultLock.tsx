@@ -56,7 +56,15 @@ export function VaultLock({ onUnlocked }: { onUnlocked: () => void }) {
       return;
     }
     setBusy(true);
-    const r = byKey ? await api.vaultUnlockRecovery(value) : await api.vaultUnlock(value);
+    let r: Awaited<ReturnType<typeof api.vaultUnlock>> | undefined;
+    try {
+      r = byKey ? await api.vaultUnlockRecovery(value) : await api.vaultUnlock(value);
+    } catch (e) {
+      // 网络断 / 会话 401 等异常也要恢复按钮，否则会永远转圈
+      setBusy(false);
+      setErr((e as Error)?.message || "解锁失败");
+      return;
+    }
     setBusy(false);
     if (!r.ok) {
       setErr(r.error || "解锁失败");
