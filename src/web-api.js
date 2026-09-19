@@ -383,7 +383,13 @@ function createApi({ emit }) {
     },
 
     /* ---------------------------- 任务 ---------------------------- */
-    login(id) { return core.loginInteractive(id); },
+    async login(id) {
+      const r = await core.loginInteractive(id);
+      if (r && !r.ok && /x server|display|cannot open/i.test(r.error || "")) {
+        r.error += "；服务器无图形环境时请先启动 noVNC：docker compose -f docker/docker-compose.yml --profile login up -d，再打开 http://<服务器IP>:6080 完成微软授权";
+      }
+      return r;
+    },
     run(id) { return core.runOne(id); },
     runAll() { return core.runAllEnabled(); },
     runSelected(ids) { return core.runSelected(ids); },

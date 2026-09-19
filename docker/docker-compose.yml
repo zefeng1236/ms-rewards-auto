@@ -51,6 +51,11 @@ services:
 
       MS_REWARDS_PORT: "25560"
 
+      # ---------- 图形转发（配合 --profile login 的 noVNC）----------
+      # 「去登录」弹出的微软授权窗口会渲染到 noVNC 容器的 X 服务上，
+      # 在 http://<服务器IP>:6080 里可见可操作；noVNC 未启动时该项无副作用
+      DISPLAY: "ms-rewards-novnc:0"
+
     volumes:
       # 账户配置、登录态、保险库、日志 —— 全部在这里，容器重建不丢
       - ../storage:/data/storage

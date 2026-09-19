@@ -145,6 +145,9 @@ export function Dashboard({ onOpenAccount }: { onOpenAccount?: (id: string) => v
       if (!r.ok) toast.error(r.error || "登录失败");
       else toast.success("登录成功");
       await refreshAccounts();
+    } catch (e) {
+      // rpc 层会把服务端 {ok:false,error} 抛成异常，这里必须接住，否则用户看不到任何反馈
+      toast.error((e as Error)?.message || "登录失败");
     } finally {
       setLoggingInId(null);
     }
