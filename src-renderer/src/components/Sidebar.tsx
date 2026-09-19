@@ -78,6 +78,20 @@ export function Sidebar({
 
         {IS_WEB && (
           <Button
+            variant="glass"
+            size="sm"
+            title="打开 noVNC 远程桌面（查看服务器浏览器授权窗口）"
+            onClick={() => {
+              const novncUrl = `${location.protocol}//${location.hostname}:6080/vnc.html`;
+              window.open(novncUrl, "_blank");
+            }}
+          >
+            🖥 远程桌面
+          </Button>
+        )}
+
+        {IS_WEB && (
+          <Button
             variant="ghost"
             size="sm"
             title="仅退出当前浏览器的登录，后台定时任务继续运行"

@@ -139,6 +139,9 @@ export function Dashboard({ onOpenAccount }: { onOpenAccount?: (id: string) => v
   // 状态列「去登录」：直接发起授权登录（弹出独立浏览器），完成后刷新列表
   const [loggingInId, setLoggingInId] = useState<string | null>(null);
   const onLogin = async (a: Account) => {
+    // 登录在服务器容器内的 Chromium 执行，自动打开 noVNC 让用户看到授权页面
+    const novncUrl = `${location.protocol}//${location.hostname}:6080/vnc.html`;
+    window.open(novncUrl, "_blank");
     setLoggingInId(a.id);
     try {
       const r = await api.login(a.id);
