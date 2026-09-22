@@ -76,6 +76,11 @@ services:
       # NAS 需要固定凭据时可取消注释并改成自己的值。
       # MS_REWARDS_KASM_USER: msrewards
       # MS_REWARDS_KASM_PASSWORD: "change-this-password"
+      #
+      # 免登录：置 1 关掉 6080 的登录框，浏览器打开直接进桌面。
+      # ⚠️ 仅可信内网使用——关掉后任何能访问 6080 的人都能直接操作你的账号。
+      #   （即使免登录，密码文件仍会保留一个用户，因为包装器硬性要求至少一个用户存在）
+      MS_REWARDS_KASM_NO_AUTH: "1"
 
     volumes:
       # 账户配置、登录态、保险库、日志 —— 全部在这里，容器重建不丢

@@ -1781,6 +1781,19 @@ checkTrue(
     /chmod 600/.test(entrySrc) &&
     !/touch \/home\/node\/\.kasmpasswd/.test(entrySrc)
 );
+// 免登录开关：-DisableBasicAuth 是 Xkasmvnc 二进制的参数（不是 perl 包装器的），
+// cli 里写 "-DisableBasicAuth" 会被包装器当未知参数原样透传给 Xkasmvnc，关掉 Web 层
+// HTTP Basic Auth。开关必须走 MS_REWARDS_KASM_NO_AUTH 变量 + compose 暴露，缺一不可。
+// 注意：不能把「至少一个用户」的凭据生成流程删掉（包装器 EnsureAtLeastOneKasmUserExists
+// 硬性要求密码文件里有用户，即使免登录也会校验），所以这里反向锁「凭据流程还在」。
+checkTrue(
+  "KasmVNC 免登录开关完整（MS_REWARDS_KASM_NO_AUTH → -DisableBasicAuth 透传）且凭据流程仍在",
+  /MS_REWARDS_KASM_NO_AUTH/.test(novncSrc) &&
+    /-DisableBasicAuth/.test(novncSrc) &&
+    /MS_REWARDS_KASM_NO_AUTH/.test(composeSrc) &&
+    /MS_REWARDS_KASM_USER/.test(entrySrc) &&
+    /kasmvncpasswd -u/.test(entrySrc)
+);
 const dashboardSrc = fs.readFileSync(
   path.join(ROOT, "src-renderer", "src", "views", "Dashboard.tsx"),
   "utf8"
