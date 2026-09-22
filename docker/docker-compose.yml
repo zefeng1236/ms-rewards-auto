@@ -20,8 +20,11 @@ services:
       dockerfile: docker/Dockerfile
       args:
         # npm 与 Debian 源，默认国内；海外环境可改成官方地址
+        # DEBIAN_MIRROR 是实测选出来的：按 chromium 真实 deb 采样（MB/s）
+        #   南大 35.8 > 清华 26.2 > 北外 9.3 > 中科大 7.0 > 华为 6.0 > 腾讯 1.9
+        # （阿里云当时 10.6，原默认值，已换掉；换源只影响首次构建）
         NPM_REGISTRY: https://registry.npmmirror.com
-        DEBIAN_MIRROR: https://mirrors.aliyun.com/debian
+        DEBIAN_MIRROR: https://mirror.nju.edu.cn/debian
     image: ms-rewards-auto:0.10.1
     container_name: ms-rewards
     restart: unless-stopped

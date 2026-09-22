@@ -11,9 +11,16 @@
 #   3. 前端（React）在镜像内构建，不依赖宿主机 npm：
 #      多阶段 builder 用同一份 src-renderer 源码跑 vite，产物拷进运行时镜像。
 #      用户只要 `docker compose up -d --build`，不必先在本地 npm install。
-#   4. apt / npm 默认都走国内源（阿里云 / npmmirror）：
-#      deb.debian.org 实测极慢（同一构建跑了 10 分钟还没下完）。
-#      海外环境可用 --build-arg 改回官方源。
+#   4. apt / npm 默认都走国内源，且源是**实测选出来的**：
+#      deb.debian.org 官方源极慢；国内镜像之间差异也很大。2026-09-22 在测试服务器上
+#      按 chromium 真实 deb 取前 12MB 采样实测（MB/s）：
+#        mirror.nju.edu.cn 35.8 > tuna 26.2 > bfsu 9.3 > ustc 7.0 > huawei 6.0 > tencent 1.9
+#      阿里云当时只有 10.6（原来的默认），故默认改用南大镜像。
+#      海外环境用 --build-arg DEBIAN_MIRROR= 改回官方源。
+#   5. apt 与 npm 都挂 BuildKit cache mount（/var/lib/apt、/var/cache/apt、/root/.npm）：
+#      前一次构建下过的包，即使 Dockerfile 改动导致层缓存失效也还能复用，
+#      不必每次重下 150MB+ 的 Chromium 依赖。因此这两处**不要**再写
+#      `apt-get clean` / `rm -rf /var/lib/apt/lists/*` / `npm cache clean`——那会把缓存清掉。
 # ---------------------------------------------------------------------------
 
 # ===========================================================================
@@ -37,9 +44,11 @@ WORKDIR /build
 #    0.2.0 上游已撤版，项目现在直接用 npm 上的 0.0.1（不再需要 vendor tarball）。
 COPY package.json package-lock.json ./
 # --ignore-scripts：跳过 electron / playwright 的 postinstall 下载（构建前端用不到）
-RUN npm config set registry "$NPM_REGISTRY" \
-    && npm ci --no-audit --no-fund --ignore-scripts \
-    && npm cache clean --force
+# /root/.npm 挂 cache mount：npm 缓存跨构建复用，重复构建秒过依赖层。
+# 不要在这里写 `npm cache clean`——那正好把刚挂上的缓存清空。
+RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+    npm config set registry "$NPM_REGISTRY" \
+    && npm ci --no-audit --no-fund --ignore-scripts
 
 COPY src-renderer ./src-renderer
 RUN node node_modules/vite/bin/vite.js build --config src-renderer/vite.web.config.ts \
@@ -51,7 +60,8 @@ RUN node node_modules/vite/bin/vite.js build --config src-renderer/vite.web.conf
 FROM node:22-bookworm-slim
 
 ARG NPM_REGISTRY=https://registry.npmmirror.com
-ARG DEBIAN_MIRROR=https://mirrors.aliyun.com/debian
+# 实测最快（见文件头第 4 条）。换成官方源：--build-arg DEBIAN_MIRROR=https://deb.debian.org/debian
+ARG DEBIAN_MIRROR=https://mirror.nju.edu.cn/debian
 
 ENV DEBIAN_FRONTEND=noninteractive \
     TZ=Asia/Shanghai \
@@ -70,21 +80,30 @@ ENV DEBIAN_FRONTEND=noninteractive \
 #    坑：node:*-slim 不带 ca-certificates，直接换 https 国内源会报
 #    "No system certificates available ... Certificate verification failed"，
 #    必须先装它，否则 https 源握手失败 → apt update 全红 → exit 100
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+#    走 cache mount：这一步的 .deb 与索引下次构建直接复用（不写 clean，否则清掉缓存）
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates
 
 # ② 换成国内源后装 Chromium 本体 + 时区 + 中文字体
-#    deb822（bookworm 默认）与传统 sources.list 都试一遍
+#    deb822（bookworm 默认）与传统 sources.list 都试一遍。
+#    sed 在 http://deb.debian.org/debian 上做前缀替换，因此 `debian-security` 会一并
+#    变成 `<镜像>/debian-security`——这是安全更新包的来源（chromium 本体 80MB 就在这），
+#    只换主仓不换 security 是常见的半吊子换源，务必一起换。
 #
 #    xz-utils 是给**指纹浏览器**用的：Linux 版资产是 .tar.xz，而 GNU tar 解 xz
 #    必须调用外部 `xz` 程序（不链接 liblzma）。实测不装它时 `tar -xf` 直接
 #    exit 127「xz: not found」——指纹浏览器会卡在解压这一步。体积只有几百 KB。
-RUN set -eux; \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    set -eux; \
     if [ -n "$DEBIAN_MIRROR" ]; then \
       sed -i "s|http://deb.debian.org/debian|$DEBIAN_MIRROR|g" /etc/apt/sources.list.d/debian.sources 2>/dev/null || \
       sed -i "s|http://deb.debian.org/debian|$DEBIAN_MIRROR|g" /etc/apt/sources.list 2>/dev/null || true; \
     fi; \
+    printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\nAcquire::http::Pipeline-Depth "10";\nAcquire::Queue-Mode "access";\n' \
+      > /etc/apt/apt.conf.d/99-msrewards-tuning; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
         chromium \
@@ -96,8 +115,6 @@ RUN set -eux; \
     ; \
     ln -snf /usr/share/zoneinfo/$TZ /etc/localtime; \
     echo $TZ > /etc/timezone; \
-    apt-get clean; \
-    rm -rf /var/lib/apt/lists/*; \
     chromium --version; \
     xz --version | head -1
 
@@ -105,10 +122,11 @@ WORKDIR /app
 
 # ③ 后端依赖层：单独一层，源码变动不会重装依赖
 #    （npm ci 严格校验 package.json 与 lock 的一致性，详见阶段一注释）
+#    同样挂 /root/.npm 缓存；调试时若怀疑缓存中毒，用 --no-cache-filter 或 docker builder prune 清
 COPY package.json package-lock.json ./
-RUN npm config set registry "$NPM_REGISTRY" \
-    && npm ci --omit=dev --no-audit --no-fund --ignore-scripts \
-    && npm cache clean --force
+RUN --mount=type=cache,target=/root/.npm,sharing=locked \
+    npm config set registry "$NPM_REGISTRY" \
+    && npm ci --omit=dev --no-audit --no-fund --ignore-scripts
 
 # ④ 源码（src/web/ 内含兜底轻量页）
 COPY src/ ./src/

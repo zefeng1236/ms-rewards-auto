@@ -15,14 +15,25 @@ docker compose -f docker/docker-compose.yml up -d --build
 
 然后浏览器打开 `http://<服务器IP>:25560`。
 
-国内机器如果拉基础镜像慢，先配一次镜像加速器（只需做一次）：
+国内机器如果拉基础镜像慢，先配一次镜像加速器（只需做一次；若已有 `daemon.json`
+请把 `registry-mirrors` 合并进去，别整个覆盖掉原有配置）：
 
 ```bash
 sudo tee /etc/docker/daemon.json <<'EOF'
-{ "registry-mirrors": ["https://docker.1ms.run"] }
+{ "registry-mirrors": [
+    "https://docker.1ms.run",
+    "https://docker.xuanyuan.me",
+    "https://docker.m.daocloud.io"
+] }
 EOF
 sudo systemctl daemon-reload && sudo systemctl restart docker
 ```
+
+> **镜像内部也已经全部走国内源**，无需额外处理：
+> apt 用实测最快的南大镜像（chromium 真实 deb 采样 35.8 MB/s，原阿里云只有 10.6），
+> npm 用 npmmirror，指纹浏览器下载走 gh-proxy 镜像链。
+> apt / npm 都挂了 BuildKit cache mount，**改了 Dockerfile 也不会重下那 150MB 的 Chromium 依赖**。
+> 想换 apt 源：`--build-arg DEBIAN_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/debian`（海外填 `https://deb.debian.org/debian`）。
 
 ## 二、首次使用（安装向导）
 
