@@ -1,0 +1,756 @@
+/**
+ * 指纹浏览器（可选增强）
+ *
+ * 用的是 fingerprint-chromium（adryfish，基于 Ungoogled Chromium 的 patch 版，BSD-3）：
+ *   https://github.com/adryfish/fingerprint-chromium
+ *
+ * 为什么需要它 —— 上一轮实测得出的硬结论：
+ *   用 Playwright 驱动普通 Chromium 时，`sec-ch-ua`（Client Hints）请求头**改不动**。
+ *   setExtraHTTPHeaders 和 page.route().continue({headers}) 两种方式都试过，服务端
+ *   收到的始终是浏览器如实生成的品牌值。而 JS 层的 UA 我们能改 —— 于是就会出现
+ *   「UA 自称 Edge / CH 说 Chromium」这种永久自相矛盾的指纹，比不伪装更可疑。
+ *
+ *   这个浏览器是 patch 源码的，UA / userAgentData / Client Hints 三者同源生成，
+ *   从根上解决了应用层够不到的那一层。
+ *
+ * 另外它用 `--fingerprint=<32 位整数>` 做**种子化**指纹：同一颗种子恒定产出同一套指纹，
+ *   不同种子互不相关。这正好避开了「Canvas 随机噪声」的坑 —— 随机噪声多次采样比对就露，
+ *   而种子化等价于「一个真人长期用同一台机器」。本项目按账户 ID 派生种子。
+ *
+ * ⚠️ 三个必须知道的约束：
+ *   1. 体积：Windows ZIP 约 181MB（解压 400MB+），**不能打进安装包**，只能运行时按需下载。
+ *   2. 与 src/stealth.js 的补丁会打架 —— 两边都改 UA/插件/CPU 核数，叠加出的就是矛盾指纹。
+ *      因此指纹模式下 stealth.js 会跳过自己那部分（见 browser.js 的 __MSR_FP 守卫）。
+ *   3. headless 下它只把 UA 的 HeadlessChrome 改成 Chrome，其余 headless 特征不变
+ *      （README 原话 "use with caution"）。它能修的是 UA/CH/插件/CPU/内存/字体/Canvas，
+ *      修不掉窗口内外框差、语音列表这类 headless 固有属性。
+ *
+ * 下载加速：GitHub Releases 在国内直连体验很差，这里默认走 gh-proxy 镜像前缀链
+ *   （https://gh-proxy.com/<原始 URL>），失败自动换 gh-proxy.org，再失败回落直连。
+ *   实测本机直连 raw.githubusercontent.com 直接 000 不可达，代理 206 正常。
+ *   下载支持 Range 断点续传，且换镜像时复用已下载的部分。
+ */
+
+const fs = require("fs");
+const path = require("path");
+const { spawn } = require("child_process");
+const { once } = require("events");
+const logger = require("./logger");
+const sp = require("./storage-path");
+
+const REPO = "adryfish/fingerprint-chromium";
+/** 固定版本：指纹浏览器的发布节奏与本项目不同步，钉死避免用户环境出现不可预期变化 */
+const PINNED_VERSION = "148.0.7778.215";
+
+/**
+ * 镜像前缀链：按顺序尝试，"" 表示直连。
+ *
+ * 都是 gh-proxy 官方文档里的多 CDN 节点（同一家服务的不同入口，用法一样：
+ * 把原始 URL 整个拼在后面）。顺序按 2026-09-21 实测吞吐排的（8MB 采样）：
+ *   gh-proxy.com 6.26 MB/s > v4.gh-proxy.org 1.68（官方标「推荐」）
+ *   > cdn.gh-proxy.org 0.99（Fastly）> gh-proxy.org 0.24
+ *   > axisnow 0.03 > v6（IPv6 线路，本机没测出数据，留给 v6 网络的用户）
+ * 节点速度随时间波动，这个顺序只是「当前更好的猜测」，真正的保障是
+ * 失败自动换下一个 + 空闲超时 + 两轮重试。
+ */
+const MIRROR_PREFIXES = [
+  "https://gh-proxy.com/",
+  "https://v4.gh-proxy.org/",
+  "https://cdn.gh-proxy.org/",
+  "https://gh-proxy.org/",
+  "https://axisnow.gh-proxy.org/",
+  "https://v6.gh-proxy.org/",
+  "",
+];
+
+/** 低于这个字节数视为「镜像返回了错误页」而不是真文件 */
+const MIN_ASSET_BYTES = 20 * 1024 * 1024;
+
+/**
+ * 空闲超时（毫秒）：超过这么久一个字节都没收到就判定连接已死。
+ *
+ * 实测踩到：经代理下载 181MB 的包，速度会从 700KB/s 一路衰减到接近 0 后**僵住**，
+ * 而 fetch 不会报错 —— 没有这道超时，安装界面会永远停在某个百分比上。
+ */
+const IDLE_TIMEOUT_MS = 30000;
+
+/**
+ * 连接阶段超时（毫秒）：fetch 发出后这么久还拿不到响应头就换源。
+ * 镜像节点半死不活时 TCP 能连上但 TLS/首字节永远等不到，空闲超时管不到这一段。
+ */
+const HEADER_TIMEOUT_MS = 20000;
+
+/**
+ * 低速熔断：连续 STALL_WINDOW_MS 内的均速低于 STALL_MIN_BPS 就判该源「卡住」，
+ * 立刻中断换下一个镜像。
+ *
+ * 与空闲超时的分工：空闲超时抓「一个字节都不来」，熔断抓「还在来但慢到不可用」。
+ * 用户实测截图就是后者 —— 10.9KB/s 的涓流，181MB 要下 4 个多小时，
+ * 而空闲超时因为一直有字节进来永远不会触发，界面就停在 70MB 不动弹。
+ * 阈值 32KB/s 的取值：实测最慢的可用节点 axisnow 也有 ~30KB/s 量级的突发，
+ * 而真正卡死的连接通常是个位数 KB/s；取 32KB/s 既能砍掉涓流又不会误伤慢节点
+ * （误伤的代价只是换源，不丢数据 —— 分片保留，下一源续传）。
+ */
+const STALL_WINDOW_MS = 20000;
+const STALL_MIN_BPS = 32 * 1024;
+
+/* ---------------- 平台与资产 ---------------- */
+
+/** 本项目支持的平台 → fingerprint-chromium 的 --fingerprint-platform 取值 */
+function platformName() {
+  if (process.platform === "win32") return "windows";
+  if (process.platform === "darwin") return "macos";
+  return "linux";
+}
+
+/**
+ * 当前平台对应的 release 资产文件名。
+ * macOS 是 .dmg（挂载镜像 + 拷贝 App 的流程在 Electron 里做太重），暂不支持。
+ * @returns {string|null} null 表示该平台不提供
+ */
+function assetName(version) {
+  const v = version || PINNED_VERSION;
+  if (process.platform === "win32") return `ungoogled-chromium_${v}-1.1_windows_x64.zip`;
+  if (process.platform === "linux") return `ungoogled-chromium-${v}-1-x86_64_linux.tar.xz`;
+  return null;
+}
+
+function isSupported() {
+  return assetName() !== null;
+}
+
+function releaseUrl(version) {
+  const asset = assetName(version);
+  if (!asset) return null;
+  return `https://github.com/${REPO}/releases/download/${version || PINNED_VERSION}/${asset}`;
+}
+
+/* ---------------- 安装位置 ---------------- */
+
+function installDir() {
+  return sp.resolve("fingerprint-chromium");
+}
+
+function versionFile() {
+  return path.join(installDir(), "version.txt");
+}
+
+function downloadDir() {
+  return sp.resolve("fp-download");
+}
+
+/** 已安装版本（未安装返回 null） */
+function installedVersion() {
+  try {
+    const v = fs.readFileSync(versionFile(), "utf8").trim();
+    return v || null;
+  } catch {
+    return null;
+  }
+}
+
+/* ---------------- 可执行文件探测 ---------------- */
+
+/**
+ * 在解压目录里找浏览器可执行文件。
+ *
+ * 不写死目录名 —— 上游 ZIP 的内部目录名随版本变（chrome-win64 / ungoogled-chromium_x64…），
+ * 硬编码会在某次升级后静默失效。改成广度优先找主程序：
+ *   Windows: chrome.exe，且同级目录里有 chrome.dll（排除 setup.exe、crashpad 之类）
+ *   Linux:   chrome / chromium / chrome-wrapper
+ * 找不到强信号的就退回任意一个同名可执行文件。
+ */
+function findExecutable(root) {
+  if (!root || !fs.existsSync(root)) return null;
+  const isWin = process.platform === "win32";
+  const names = isWin ? ["chrome.exe"] : ["chrome", "chromium", "headless_shell"];
+  const weak = [];
+  const queue = [{ dir: root, depth: 0 }];
+  while (queue.length) {
+    const { dir, depth } = queue.shift();
+    if (depth > 4) continue;
+    let ents;
+    try {
+      ents = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const e of ents) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        queue.push({ dir: full, depth: depth + 1 });
+        continue;
+      }
+      if (!e.isFile()) continue;
+      if (!names.includes(e.name)) continue;
+      try {
+        fs.accessSync(full, fs.X_OK);
+      } catch {
+        continue;
+      }
+      // 强信号：主程序与 chrome.dll / chrome_crashpad_handler 同级
+      const hasCore = fs.existsSync(path.join(dir, "chrome.dll")) ||
+        fs.existsSync(path.join(dir, "chrome_crashpad_handler"));
+      if (hasCore) return full;
+      weak.push(full);
+    }
+  }
+  return weak.length ? weak[0] : null;
+}
+
+function executablePath() {
+  return findExecutable(installDir());
+}
+
+function isReady() {
+  return !!executablePath();
+}
+
+/** 供 IPC / UI 展示的状态 */
+function status() {
+  const exe = executablePath();
+  return {
+    supported: isSupported(),
+    platform: process.platform,
+    ready: !!exe,
+    executable: exe,
+    version: installedVersion(),
+    pinned: PINNED_VERSION,
+    installDir: installDir(),
+    downloadUrl: releaseUrl(),
+  };
+}
+
+/* ---------------- 种子 ---------------- */
+
+/**
+ * 由账户标识派生 32 位指纹种子（FNV-1a）。
+ *
+ * 为什么要跟账户绑定而不是全局随机：同一个账户每次跑都必须是同一套指纹，
+ * 否则相当于「同一个人每天换一台电脑」；不同账户之间又要尽量不同，避免
+ * 多账户共用一台机器时被聚成一类。种子化正好同时满足这两点。
+ * @returns {number} 0 ~ 2^32-1
+ */
+function seedFor(key) {
+  const s = String(key == null || key === "" ? "default" : key);
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+/* ---------------- 下载 ---------------- */
+
+function fmtSize(n) {
+  if (!n || n < 0) return "--";
+  if (n < 1024) return n + "B";
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + "KB";
+  if (n < 1024 * 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + "MB";
+  return (n / 1024 / 1024 / 1024).toFixed(2) + "GB";
+}
+
+function fmtEta(sec) {
+  if (!sec || sec <= 0 || !isFinite(sec)) return "";
+  if (sec < 60) return `ETA ${Math.round(sec)}s`;
+  if (sec < 3600) return `ETA ${Math.round(sec / 60)}m`;
+  return `ETA ${(sec / 3600).toFixed(1)}h`;
+}
+
+/**
+ * 探测资源的权威总长度（不带 Range 的 HEAD）。
+ *
+ * 为什么非要单独探一次：实测 gh-proxy 对 Range 请求返回的是**重新压缩过的分片**，
+ * 它自报的 Content-Length / Content-Range 跟自己发的分片是一致的，
+ * 所以「实收 == 自报长度」这个校验在续传场景下形同虚设 —— 下出来的文件是
+ * 「前 N 字节原文 + 一大坨 gzip 垃圾」，看着完整其实坏了。
+ * 只有不带 Range 时拿到的总长度才可信，用它当唯一判据。
+ *
+ * @returns {number} 总字节数；取不到返回 0（调用方跳过该校验）
+ */
+async function probeTotal(rawUrl, version) {
+  // ① HEAD：直连 GitHub 会如实返回 content-length；经 gh-proxy 时拿不到（实测为 null）
+  for (const prefix of MIRROR_PREFIXES) {
+    try {
+      const res = await fetch(prefix + rawUrl, {
+        method: "HEAD",
+        redirect: "follow",
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res.ok) continue;
+      const n = parseInt(res.headers.get("content-length") || "0", 10);
+      if (n > 0) return n;
+    } catch {}
+  }
+  // ② GitHub Releases API 里的资产 size —— HEAD 不可用时这是唯一可信的总长来源
+  const asset = assetName(version);
+  if (asset) {
+    const api = `https://api.github.com/repos/${REPO}/releases/tags/${version || PINNED_VERSION}`;
+    for (const prefix of MIRROR_PREFIXES) {
+      try {
+        const res = await fetch(prefix + api, {
+          headers: { Accept: "application/vnd.github+json" },
+          signal: AbortSignal.timeout(10000),
+        });
+        if (!res.ok) continue;
+        const j = await res.json();
+        const hit = (j.assets || []).find((x) => x.name === asset);
+        if (hit && hit.size > 0) return hit.size;
+      } catch {}
+    }
+  }
+  return 0;
+}
+
+/**
+ * 单个 URL 的断点续传下载。
+ * 已存在的文件用 Range 续写；服务器不支持 Range（返回 200 而非 206）时从头重写。
+ * @param {number} [knownTotal] 权威总长度（见 probeTotal），用于验收
+ */
+async function downloadOnce(url, dest, onProgress, knownTotal, allowResume) {
+  let start = 0;
+  if (allowResume !== false) {
+    try {
+      if (fs.existsSync(dest)) start = fs.statSync(dest).size;
+    } catch {
+      start = 0;
+    }
+  }
+  const headers = {};
+  if (start > 0) headers.Range = `bytes=${start}-`;
+  // 连接阶段超时：半死节点 TCP 能连上但首字节永远等不到，空闲超时管不到这一段。
+  // 注意不能用 AbortSignal.timeout —— 它会在超时后连 body 读取一起 abort；
+  // 这里只在「拿到响应头之前」计时，拿到头就撤表，body 交给空闲超时与熔断管。
+  const ac = new AbortController();
+  const headerTimer = setTimeout(() => ac.abort(), HEADER_TIMEOUT_MS);
+  let res;
+  try {
+    res = await fetch(url, { headers, redirect: "follow", signal: ac.signal });
+  } finally {
+    clearTimeout(headerTimer);
+  }
+
+  // 416 = 本地已写字节超过远端长度（多半是上次下到一半换了版本）→ 重来
+  if (res.status === 416) {
+    try {
+      fs.rmSync(dest, { force: true });
+    } catch {}
+    start = 0;
+    const again = await fetch(url, { redirect: "follow" });
+    return pipeTo(again, dest, 0, onProgress);
+  }
+  if (res.status !== 200 && res.status !== 206) {
+    throw new Error(`HTTP ${res.status}`);
+  }
+  // 头部级哨兵：Content-Range 会自报整体总长，若它与权威总长对不上，
+  // 说明该镜像是在**压缩后的字节流**上做切片（实测 gh-proxy 正是如此：
+  // 22KB 的 README 被它当成 6092 字节的文件来切 Range）。
+  // 这种情况下续传必然产出坏文件，立刻放弃，别浪费带宽把垃圾下完。
+  if (knownTotal > 0 && start > 0 && res.status === 206) {
+    const cr = /\/(\d+)\s*$/.exec(res.headers.get("content-range") || "");
+    const declared = cr ? parseInt(cr[1], 10) : 0;
+    if (declared > 0 && declared !== knownTotal) {
+      const err = new Error(
+        `该下载源的 Range 语义不可信（自报总长 ${fmtSize(declared)}，实际 ${fmtSize(knownTotal)}），放弃续传改为整体重下`
+      );
+      err.integrity = true;
+      throw err;
+    }
+  }
+  const resumed = res.status === 206 && start > 0;
+  return pipeTo(res, dest, resumed ? start : 0, onProgress, knownTotal);
+}
+
+/**
+ * 期望的总字节数。优先用 Content-Range 末尾的 /total —— 它比 Content-Length 可靠：
+ * 206 响应里 Content-Length 只是本次片段长度，而 Content-Range 给出的是整体长度。
+ * 取不到就返回 0（调用方跳过完整性校验）。
+ */
+function expectedTotal(res, start) {
+  const cr = res.headers.get("content-range");
+  if (cr) {
+    const m = /\/(\d+)\s*$/.exec(cr);
+    if (m) return parseInt(m[1], 10);
+  }
+  const cl = parseInt(res.headers.get("content-length") || "0", 10);
+  if (cl > 0) return res.status === 206 ? start + cl : cl;
+  return 0;
+}
+
+async function pipeTo(res, dest, start, onProgress, knownTotal) {
+  if (!res.body) throw new Error("响应没有 body");
+  // 进度显示用响应自报长度，验收用权威总长度（knownTotal 优先）
+  const total = expectedTotal(res, start);
+  const want = knownTotal || total;
+  const ws = fs.createWriteStream(dest, { flags: start > 0 ? "a" : "w" });
+  const reader = res.body.getReader();
+  let loaded = start;
+  let lastEmit = 0;
+  let lastPct = -1;
+  const t0 = Date.now();
+  // 低速熔断的滑动窗口：窗口起点时间 + 窗口起点已收字节数
+  let winStart = t0;
+  let winBytes = start;
+
+  try {
+    for (;;) {
+      let timer = null;
+      const idle = new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          const err = new Error(`超过 ${IDLE_TIMEOUT_MS / 1000} 秒没有收到数据，判定连接已中断`);
+          err.idle = true;
+          reject(err);
+        }, IDLE_TIMEOUT_MS);
+      });
+      let chunk;
+      try {
+        chunk = await Promise.race([reader.read(), idle]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+      const { done, value } = chunk;
+      if (done) break;
+      const buf = Buffer.from(value);
+      if (!ws.write(buf)) await once(ws, "drain");
+      loaded += buf.length;
+      // 低速熔断：窗口满一个周期才结算，均速不达标就中断换源。
+      // 分片保留在磁盘上，换源后续传不浪费已下部分。
+      const nowWin = Date.now();
+      if (nowWin - winStart >= STALL_WINDOW_MS) {
+        const bps = (loaded - winBytes) / ((nowWin - winStart) / 1000);
+        if (bps < STALL_MIN_BPS) {
+          const err = new Error(
+            `下载源速度过低（${fmtSize(Math.round(bps))}/s，低于 ${fmtSize(STALL_MIN_BPS)}/s 熔断线），自动换源续传`
+          );
+          err.stall = true;
+          throw err;
+        }
+        winStart = nowWin;
+        winBytes = loaded;
+      }
+      const now = Date.now();
+      const pct = total > 0 ? Math.min(99, Math.round((loaded / total) * 100)) : 0;
+      if (now - lastEmit >= 800 || Math.abs(pct - lastPct) >= 1) {
+        const speed = loaded / Math.max(1, (now - t0) / 1000);
+        lastEmit = now;
+        lastPct = pct;
+        if (onProgress) {
+          onProgress({
+            message: `${fmtSize(loaded)}${total > 0 ? " / " + fmtSize(total) : ""}  ${fmtSize(speed)}/s  ${fmtEta(speed > 0 && total > 0 ? (total - loaded) / speed : 0)}`.trim(),
+            pct,
+            speed,
+            loaded,
+            total,
+          });
+        }
+      }
+    }
+    ws.end();
+    await once(ws, "close");
+  } catch (e) {
+    try {
+      ws.destroy();
+    } catch {}
+    throw e;
+  }
+  // 完整性校验：抓到的坑 —— 镜像可能提前关闭连接而 fetch 不报错，
+  // 于是「下了一半」会被当成成功，解压时才发现包是坏的。
+  // 没有长度信息（分块传输且没探到总长）时跳过校验。
+  if (want > 0 && loaded !== want) {
+    const err = new Error(`传输中断：实收 ${fmtSize(loaded)}，应为 ${fmtSize(want)}`);
+    err.integrity = true;
+    throw err;
+  }
+  return { loaded, total: want };
+}
+
+/**
+ * 按镜像链下载，中途失败换下一个镜像并复用已下载的部分。
+ */
+async function downloadAsset(version, onProgress) {
+  const asset = assetName(version);
+  const raw = releaseUrl(version);
+  if (!asset || !raw) throw new Error(`当前平台（${process.platform}）不提供指纹浏览器`);
+
+  const dir = downloadDir();
+  fs.mkdirSync(dir, { recursive: true });
+  const dest = path.join(dir, asset);
+
+  // 先探一次权威总长度：续传是否被接受、以及最终文件对不对，都靠它判定
+  const total = await probeTotal(raw, version);
+  if (total > 0) {
+    logger.info(`指纹浏览器包大小 ${fmtSize(total)}（HEAD / Releases API 探测）`);
+  }
+
+  let lastErr = null;
+  // 两轮：第一轮允许续传（省带宽）；一轮下来全挂过就清掉分片从头再来一次，
+  // 排除「分片不可信 / 连接僵死」这类只在续传路径上出现的问题。
+  for (const allowResume of [true, false]) {
+    if (!allowResume) {
+      try {
+        fs.rmSync(dest, { force: true });
+      } catch {}
+    }
+  for (const prefix of MIRROR_PREFIXES) {
+    const label = prefix ? prefix.replace(/\/$/, "") : "直连";
+    try {
+      if (onProgress) onProgress({ stage: "fingerprint/download", message: `下载源: ${label}`, pct: 0 });
+      const r = await downloadOnce(prefix + raw, dest, (p) =>
+        onProgress({ ...p, stage: "fingerprint/download", mirror: label })
+      , total, allowResume);
+      const size = fs.existsSync(dest) ? fs.statSync(dest).size : 0;
+      // 镜像出错时常常是 200 + 一个 HTML 错误页，按体积与长度双校验拦掉
+      if (size < MIN_ASSET_BYTES) throw new Error(`文件过小（${fmtSize(size)}），疑似镜像返回了错误页`);
+      if (r.total > 0 && size !== r.total) throw new Error(`文件不完整（${fmtSize(size)} / ${fmtSize(r.total)}）`);
+      return { file: dest, size, mirror: label };
+    } catch (e) {
+      lastErr = e;
+      logger.warn(`指纹浏览器下载失败（${label}）: ${e.message}`);
+      // 两种情况本地分片都不可信，必须清掉从头再来：
+      //   ① 完整性校验失败（镜像提前断流，分片是残缺的）
+      //   ② 体积异常的小文件（镜像返回了 HTML 错误页），留着会让续传一路错下去
+      // 其余（网络中断等）保留分片，下一个镜像接着续传。
+      try {
+        const st = fs.existsSync(dest) ? fs.statSync(dest).size : 0;
+        if (st > 0 && (e.integrity || st < MIN_ASSET_BYTES)) fs.rmSync(dest, { force: true });
+      } catch {}
+    }
+  }
+  }
+  throw new Error(`所有下载源均失败，最后一个错误: ${lastErr ? lastErr.message : "未知"}`);
+}
+
+/* ---------------- 解压 ---------------- */
+
+function runCmd(cmd, args) {
+  return new Promise((resolve, reject) => {
+    let err = "";
+    const child = spawn(cmd, args, { windowsHide: true });
+    child.stdout.on("data", () => {});
+    child.stderr.on("data", (d) => (err += d.toString()));
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`${cmd} 退出码 ${code}${err ? ": " + err.trim().slice(0, 200) : ""}`));
+    });
+  });
+}
+
+/** PowerShell 单引号转义（路径里出现单引号要写成两个） */
+function psQuote(s) {
+  return "'" + String(s).replace(/'/g, "''") + "'";
+}
+
+/**
+ * 解压。
+ *
+ * 刻意**不用** extract-zip / yauzl：它们在 package-lock.json 里是 dev=true，
+ * electron-builder 打包时会把 devDependencies 剪掉 —— 开发环境能跑，发布版直接
+ * 模块找不到。改用操作系统自带工具：优先 tar（Windows 10 17063+ 与 Win11 自带
+ * bsdtar，zip 和 tar.xz 都能解），失败时 Windows 再退 PowerShell Expand-Archive。
+ */
+async function extractArchive(file, dir) {
+  const isZip = /\.zip$/i.test(file);
+  try {
+    await runCmd("tar", ["-xf", file, "-C", dir]);
+    assertExtracted(dir, "tar");
+    return "tar";
+  } catch (e) {
+    if (!isZip || process.platform !== "win32") throw e;
+    logger.warn(`tar 解压失败，回落 PowerShell Expand-Archive: ${e.message}`);
+    await runCmd("powershell", [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      `Expand-Archive -LiteralPath ${psQuote(file)} -DestinationPath ${psQuote(dir)} -Force`,
+    ]);
+    assertExtracted(dir, "powershell");
+    return "powershell";
+  }
+}
+
+/**
+ * 解压后必须真的有东西。
+ *
+ * 抓到的坑：给 tar 喂一个坏包，bsdtar 在 Windows 上退出码仍是 0 —— 什么都不解、
+ * 一句话不说。要是只看退出码，就会以为装好了，然后卡在「找不到主程序」这种
+ * 离真正原因很远的报错上。
+ */
+function assertExtracted(dir, method) {
+  let n = 0;
+  try {
+    n = fs.readdirSync(dir).length;
+  } catch {
+    n = 0;
+  }
+  if (n === 0) throw new Error(`解压后目录为空（方式: ${method}），压缩包可能已损坏`);
+}
+
+/* ---------------- 安装 / 卸载 ---------------- */
+
+/**
+ * 下载并安装（已装同版本则跳过）。
+ * @param {{version?: string, force?: boolean, onProgress?: Function}} [opts]
+ */
+async function install(opts) {
+  const o = opts || {};
+  const version = o.version || PINNED_VERSION;
+  const report = (p) => {
+    const payload = { stage: "fingerprint", ...p };
+    logger.log("依赖", `[${payload.stage}] ${p.message || ""}`.trim());
+    if (o.onProgress) o.onProgress(payload);
+  };
+
+  if (!isSupported()) {
+    return { ok: false, error: `当前平台（${process.platform}）暂不支持指纹浏览器` };
+  }
+  if (!o.force && installedVersion() === version && isReady()) {
+    report({ message: `指纹浏览器已是 ${version}，跳过下载`, pct: 100 });
+    return { ok: true, skipped: true, version };
+  }
+
+  report({ message: `准备下载指纹浏览器 ${version}（约 181MB，走 gh-proxy 镜像链）`, pct: 0 });
+  let file;
+  try {
+    const dl = await downloadAsset(version, (p) => report(p));
+    file = dl.file;
+    report({ message: `下载完成（${fmtSize(dl.size)}，来源 ${dl.mirror}），开始解压…`, pct: 100 });
+  } catch (e) {
+    report({ message: `下载失败: ${e.message}` });
+    return { ok: false, error: e.message };
+  }
+
+  const dir = installDir();
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.mkdirSync(dir, { recursive: true });
+    const method = await extractArchive(file, dir);
+    fs.writeFileSync(versionFile(), version, "utf8");
+    // 解压成功才删包：留着没用（181MB），但失败时留着能省一次重下
+    try {
+      fs.rmSync(file, { force: true });
+    } catch {}
+    const exe = executablePath();
+    if (!exe) {
+      return { ok: false, error: `解压完成但没找到浏览器主程序（解压方式: ${method}）` };
+    }
+    report({ message: `安装完成: ${exe}`, pct: 100 });
+    return { ok: true, version, executable: exe, method };
+  } catch (e) {
+    report({ message: `解压失败: ${e.message}` });
+    return { ok: false, error: e.message };
+  }
+}
+
+/** 卸载（删除解压目录与下载缓存） */
+function uninstall() {
+  for (const d of [installDir(), downloadDir()]) {
+    try {
+      fs.rmSync(d, { recursive: true, force: true });
+    } catch (e) {
+      logger.warn(`删除 ${d} 失败: ${e.message}`);
+    }
+  }
+  return { ok: true };
+}
+
+/**
+ * 查询上游最新版本（用于「检查更新」）。
+ * 走同样的镜像链；查不到就返回 null，由调用方决定是否提示。
+ */
+async function latestVersion() {
+  const api = `https://api.github.com/repos/${REPO}/releases/latest`;
+  for (const prefix of MIRROR_PREFIXES) {
+    try {
+      const res = await fetch(prefix + api, { headers: { Accept: "application/vnd.github+json" } });
+      if (!res.ok) continue;
+      const j = await res.json();
+      if (j && j.tag_name) return j.tag_name;
+    } catch {}
+  }
+  return null;
+}
+
+/**
+ * 「检查更新」：只查询、不下载、不安装。
+ *
+ * 之前这个按钮直接调 install(force=true)，点一下就把 181MB 重新下一遍 ——
+ * 语义完全错了。现在拆成纯查询：上游 latest 与本项目钉死版本、已安装版本
+ * 三方对比，结论交给界面展示，装不装由用户点「重新安装」决定。
+ *
+ * @returns {Promise<{ok: boolean, latest: string|null, installed: string|null,
+ *   pinned: string, updateAvailable: boolean, reinstallAvailable: boolean, error?: string}>}
+ */
+async function checkUpdate() {
+  let latest = null;
+  try {
+    latest = await latestVersion();
+  } catch (e) {
+    return { ok: false, error: e.message, latest: null, installed: installedVersion(), pinned: PINNED_VERSION, updateAvailable: false, reinstallAvailable: false };
+  }
+  const installed = installedVersion();
+  return {
+    ok: true,
+    latest,
+    installed,
+    pinned: PINNED_VERSION,
+    // 上游发了比钉死版本更新的 tag（本项目不自动跟，仅提示）
+    updateAvailable: !!latest && latest !== PINNED_VERSION,
+    // 已安装版本与钉死版本不一致（含未安装）→ 点「重新安装」可对齐
+    reinstallAvailable: installed !== PINNED_VERSION,
+  };
+}
+
+/* ---------------- 启动参数 ---------------- */
+
+/**
+ * 指纹浏览器的启动参数。
+ *
+ * 注意**不要**在这里设 UA：UA 必须由 --fingerprint 的种子统一生成，
+ * 再叠加一层我们自己的 UA 就会退化成「应用层硬改」那条死路（CH 对不上）。
+ * GPU 指纹上游只支持 Linux，Windows 上仍由 stealth.js 的 WebGL 补丁兜底。
+ */
+function buildArgs(o) {
+  const opts = o || {};
+  const args = [
+    `--fingerprint=${opts.seed >>> 0}`,
+    `--fingerprint-platform=${opts.platform || platformName()}`,
+  ];
+  if (opts.brand) args.push(`--fingerprint-brand=${opts.brand}`);
+  if (opts.brandVersion) args.push(`--fingerprint-brand-version=${opts.brandVersion}`);
+  const cores = Number(opts.hardwareConcurrency) || 0;
+  if (cores > 0) args.push(`--fingerprint-hardware-concurrency=${cores}`);
+  // 与区域锁定（中国大陆）保持一致，避免 IP 在东八区而浏览器报 UTC
+  if (opts.timezone !== false) args.push(`--timezone=${opts.timezone || "Asia/Shanghai"}`);
+  if (opts.acceptLang !== false) args.push(`--accept-lang=${opts.acceptLang || "zh-CN,zh"}`);
+  if (opts.lang !== false) args.push(`--lang=${opts.lang || "zh-CN"}`);
+  return args;
+}
+
+module.exports = {
+  REPO,
+  PINNED_VERSION,
+  MIRROR_PREFIXES,
+  platformName,
+  assetName,
+  releaseUrl,
+  isSupported,
+  installDir,
+  installedVersion,
+  findExecutable,
+  executablePath,
+  isReady,
+  status,
+  seedFor,
+  install,
+  uninstall,
+  latestVersion,
+  checkUpdate,
+  buildArgs,
+  // 打桩/诊断用
+  downloadOnce,
+  probeTotal,
+  extractArchive,
+  fmtSize,
+};

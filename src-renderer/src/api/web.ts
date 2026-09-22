@@ -7,11 +7,14 @@ import type {
   AppConfig,
   AppearanceSetResult,
   BgSrcResult,
+  CheckFingerprintUpdateResult,
   ChromiumStatus,
   CloseAction,
   DeepPartial,
   DownloadResult,
+  FingerprintStatus,
   InstallBrowserResult,
+  InstallFingerprintResult,
   LaunchConfig,
   Overview,
   PushTestResult,
@@ -92,9 +95,11 @@ type EventType =
   | "accounts"
   | "appearance"
   | "chromium-status"
+  | "fingerprint-status"
   | "account-status"
   | "account-log"
-  | "bg-progress";
+  | "bg-progress"
+  | "install-progress";
 
 const listeners: Record<string, Set<(v: unknown) => void>> = {};
 
@@ -378,14 +383,20 @@ export function createWebApi(): ElectronApi {
     getAccountLogHistory: (id, day) => rpc<AccountLogEntry[]>("getAccountLogHistory", id, day),
     chromiumStatus: () => rpc<ChromiumStatus>("chromiumStatus"),
     installBrowser: () => rpc<InstallBrowserResult>("installBrowser"),
+    fingerprintStatus: () => rpc<FingerprintStatus>("fingerprintStatus"),
+    installFingerprint: (opts) => rpc<InstallFingerprintResult>("installFingerprint", opts),
+    uninstallFingerprint: () => rpc<{ ok: boolean }>("uninstallFingerprint"),
+    checkFingerprintUpdate: () => rpc<CheckFingerprintUpdateResult>("checkFingerprintUpdate"),
 
     /* ---------------- 事件订阅 ---------------- */
     onRunning: (cb) => { subscribe("running", cb as (v: never) => void); },
     onLog: (cb) => { subscribe("log", cb as (v: never) => void); },
     onAccounts: (cb) => { subscribe("accounts", cb as (v: never) => void); },
     onAppearance: (cb) => { subscribe("appearance", cb as (v: never) => void); },
-    onBgProgress: (cb) => subscribe("bg-progress", cb as (v: never) => void),
-    onChromiumStatus: (cb) => { subscribe("chromium-status", cb as (v: never) => void); },
+onBgProgress: (cb) => subscribe("bg-progress", cb as (v: never) => void),
+  onChromiumStatus: (cb) => { subscribe("chromium-status", cb as (v: never) => void); },
+  onFingerprintStatus: (cb) => { subscribe("fingerprint-status", cb as (v: never) => void); },
+  onInstallProgress: (cb) => subscribe("install-progress", cb as (v: never) => void),
     onAccountStatus: (cb) => subscribe("account-status", cb as (v: never) => void),
     onAccountLog: (cb) => subscribe("account-log", cb as (v: never) => void),
   };

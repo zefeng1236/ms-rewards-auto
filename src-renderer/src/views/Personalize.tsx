@@ -1,14 +1,7 @@
 import { useState } from "react";
-import {
-  Button,
-  Card,
-  Input,
-  Modal,
-  Segmented,
-  Slider,
-  Switch,
-  toast,
-} from "@ttqtt/liquid-glass-react";
+import { GlassButton, GlassSegmentedControl, GlassSwitch } from "@ttqtt/liquid-glass-react";
+import { AppCard, Input, Modal, toast } from "../components/liquidGlassCompat";
+import { CommitSlider } from "../components/CommitSlider";
 import { api } from "../api/ipc";
 import { useAppState } from "../hooks/useAppState";
 import { DisclaimerModal } from "../components/DisclaimerModal";
@@ -97,7 +90,7 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
   };
 
   const onPreset = async (key: AppearancePreset) => {
-    await api.setAppearance({ preset: key });
+    await patchAppearance({ preset: key });
   };
 
   const onTestUrl = async () => {
@@ -175,7 +168,7 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
             <div className="block-sub">强调色实时生效，可点色板快速选择</div>
           </div>
         </div>
-        <Card padding="md">
+        <AppCard padding={16}>
           <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
             <label className="range-field">
               <span>主题色</span>
@@ -199,7 +192,7 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
               ))}
             </div>
           </div>
-        </Card>
+        </AppCard>
       </div>
 
       {/* ---- 深浅模式 ---- */}
@@ -210,15 +203,12 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
             <div className="block-sub">跟随系统会随操作系统外观自动切换</div>
           </div>
         </div>
-        <Segmented
-          size="sm"
-          value={appearance.mode}
-          options={[
+        <GlassSegmentedControl
+          value={appearance.mode} items={[
             { label: "深色", value: "dark" },
             { label: "浅色", value: "light" },
             { label: "跟随系统", value: "system" },
-          ]}
-          onChange={(v) => void patchAppearance({ mode: v as ThemeMode })}
+          ]} onValueChange={(v) => void patchAppearance({ mode: v as ThemeMode })}
           aria-label="深浅模式"
         />
         <div className="field-row" style={{ marginTop: 12 }}>
@@ -228,7 +218,7 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
               按壁纸与两套主题色合成后的文字对比度自动选深/浅主题，花色壁纸也能保证文字清晰
             </div>
           </div>
-          <Switch
+          <GlassSwitch
             checked={appearance.autoTheme === true}
             onCheckedChange={(v) => void patchAppearance({ autoTheme: v })}
             aria-label="跟随壁纸自动反色"
@@ -247,16 +237,13 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
           </div>
         </div>
 
-        <Segmented
-          size="sm"
-          value={bgGroup}
-          options={[
+        <GlassSegmentedControl
+          value={bgGroup} items={[
             { label: "关闭", value: "none" },
             { label: "Bing 每日一图", value: "bing" },
             { label: "随机美图", value: "random" },
             { label: "自定义", value: "custom" },
-          ]}
-          onChange={onBgGroup}
+          ]} onValueChange={onBgGroup}
           aria-label="背景图来源"
         />
 
@@ -317,17 +304,15 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
                 onChange={(e) => void patchAppearance({ bgUrl: e.target.value, bgType: "url" })}
                 style={{ minWidth: 280, flex: 1 }}
               />
-              <Button
-                variant="ghost"
-                size="sm"
+              <GlassButton variant="plain" controlSize="small"
                 onClick={() => void onTestUrl()}
                 disabled={!appearance.bgUrl}
               >
                 测试链接
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => void onPickImage()}>
+              </GlassButton>
+              <GlassButton variant="plain" controlSize="small" onClick={() => void onPickImage()}>
                 选择本地图片…
-              </Button>
+              </GlassButton>
             </div>
             {appearance.bgFile && (
               <div className="hint" style={{ marginTop: 6 }}>
@@ -351,17 +336,15 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
               <div className="bg-preview-info">
                 <div className="bg-preview-title">当前壁纸</div>
                 <div className="bg-preview-btns">
-                  <Button variant="ghost" size="sm" onClick={() => onShuffle?.()} disabled={!isRandom}>
+                  <GlassButton variant="plain" controlSize="small" onClick={() => onShuffle?.()} disabled={!isRandom}>
                     🎲 换一张
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
+                  </GlassButton>
+                  <GlassButton variant="plain" controlSize="small"
                     onClick={() => void onDownload()}
                     disabled={!bgSrc}
                   >
                     ⬇ 下载到本地
-                  </Button>
+                  </GlassButton>
                 </div>
               </div>
             </div>
@@ -407,35 +390,33 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
         <div className="form-grid" style={{ marginTop: 14 }}>
           <div className="range-field">
             <span>高斯模糊</span>
-            <Slider
-              size="sm"
+            <CommitSlider
               min={0}
               max={40}
               step={1}
               value={blurDraft ?? appearance.bgBlur}
-              onChange={(v) => setBlurDraft(v)}
-              onChangeEnd={(v) => {
+              onValueChange={(v) => setBlurDraft(v)}
+              onCommit={(v) => {
                 setBlurDraft(null);
                 void patchAppearance({ bgBlur: v });
               }}
-              aria-label="背景高斯模糊"
+              ariaLabel="背景高斯模糊"
             />
             <span className="rng-val">{blurDraft ?? appearance.bgBlur}px</span>
           </div>
           <div className="range-field">
             <span>背景暗化</span>
-            <Slider
-              size="sm"
+            <CommitSlider
               min={0}
               max={85}
               step={5}
               value={dimDraft ?? Math.round(appearance.bgDim * 100)}
-              onChange={(v) => setDimDraft(v)}
-              onChangeEnd={(v) => {
+              onValueChange={(v) => setDimDraft(v)}
+              onCommit={(v) => {
                 setDimDraft(null);
                 void patchAppearance({ bgDim: v / 100 });
               }}
-              aria-label="背景暗化"
+              ariaLabel="背景暗化"
             />
             <span className="rng-val">{dimDraft ?? Math.round(appearance.bgDim * 100)}%</span>
           </div>
@@ -448,7 +429,7 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
               边缘折射与色散（配合背景图效果最佳，性能开销略高）
             </div>
           </div>
-          <Switch
+          <GlassSwitch
             checked={appearance.glass}
             onCheckedChange={(v) => void patchAppearance({ glass: v })}
             aria-label="液态玻璃表面"
@@ -462,7 +443,7 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
               光标划过面板时跟随的一大团柔光（独立于玻璃表面，随时可开关）
             </div>
           </div>
-          <Switch
+          <GlassSwitch
             checked={appearance.pointerHalo === true}
             onCheckedChange={(v) => void patchAppearance({ pointerHalo: v })}
             aria-label="鼠标指针光晕"
@@ -477,13 +458,13 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
             <div className="block-title">氛围与操作</div>
           </div>
         </div>
-        <Card padding="md">
+        <AppCard padding={16}>
           <div className="field-row">
             <div>
               <div>背景氛围光</div>
               <div className="hint">两团极淡的辉光，避免大面积纯色发闷</div>
             </div>
-            <Switch
+            <GlassSwitch
               checked={appearance.glow !== false}
               onCheckedChange={(v) => void patchAppearance({ glow: v })}
               aria-label="背景氛围光"
@@ -495,28 +476,27 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
               <div className="hint">仅在半透明类预设下有视觉差异</div>
             </div>
             <div className="range-field">
-              <Slider
-                size="sm"
-                min={30}
+              <CommitSlider
+                min={20}
                 max={100}
                 step={5}
                 value={opacityDraft ?? Math.round(appearance.opacity * 100)}
-                onChange={(v) => setOpacityDraft(v)}
-                onChangeEnd={(v) => {
+                onValueChange={(v) => setOpacityDraft(v)}
+                onCommit={(v) => {
                   setOpacityDraft(null);
                   void patchAppearance({ opacity: v / 100 });
                 }}
-                aria-label="面板不透明度"
+                ariaLabel="面板不透明度"
               />
               <span className="rng-val">{opacityDraft ?? Math.round(appearance.opacity * 100)}%</span>
             </div>
           </div>
           <div style={{ marginTop: 12 }}>
-            <Button variant="ghost" size="sm" onClick={() => void onReset()}>
+            <GlassButton variant="plain" controlSize="small" onClick={() => void onReset()}>
               恢复默认
-            </Button>
+            </GlassButton>
           </div>
-        </Card>
+        </AppCard>
       </div>
 
       <DisclaimerModal
@@ -535,9 +515,9 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
         size="lg"
         footer={
           <div style={{ display: "flex", justifyContent: "flex-end" }}>
-            <Button variant="ghost" size="sm" onClick={() => setPreviewOpen(false)}>
+            <GlassButton variant="plain" controlSize="small" onClick={() => setPreviewOpen(false)}>
               关闭
-            </Button>
+            </GlassButton>
           </div>
         }
       >

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useAmbientFromImage } from "@ttqtt/liquid-glass-react";
+import { useAmbientFromImage } from "../components/liquidGlassCompat";
 import { api } from "../api/ipc";
 import { useAppState } from "./useAppState";
 import type { BgType } from "../types";
@@ -50,7 +50,9 @@ export function useBackground() {
         // 追加时间戳强制浏览器重新加载图片（file:// 的 query 会被 Electron 忽略，
         // 但 CSS background-image 和 Image.src 会把它当作新地址去请求）。
         const finalSrc = r?.src
-          ? r.src + (r.src.includes("?") ? "&" : "?") + "_t=" + Date.now()
+          ? r.src.startsWith("data:")
+            ? r.src // data URI 内容本身就是载荷，追加查询串会破坏内联 SVG。
+            : r.src + (r.src.includes("?") ? "&" : "?") + "_t=" + Date.now()
           : "";
         setSrc(finalSrc);
         setLuma(typeof r?.luma === "number" ? r.luma : null);

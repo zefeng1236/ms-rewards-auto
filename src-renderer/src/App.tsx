@@ -1,13 +1,6 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
-import {
-  Button,
-  createTheme,
-  LiquidGlassConfig,
-  Toaster,
-  GlassSurface,
-  ProgressiveBlur,
-  toast,
-} from "@ttqtt/liquid-glass-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { GlassButton, GlassSurface } from "@ttqtt/liquid-glass-react";
+import { createTheme, LiquidGlassConfig, Toaster, toast } from "./components/liquidGlassCompat";
 import { api } from "./api/ipc";
 import { AppStateProvider, useAppState } from "./hooks/useAppState";
 import { useBackground } from "./hooks/useBackground";
@@ -18,8 +11,7 @@ import { LogConsole } from "./components/LogConsole";
 import { Dashboard } from "./views/Dashboard";
 import { AccountDetail } from "./views/AccountDetail";
 import { SettingsView } from "./views/SettingsView";
-import { Personalize } from "./views/Personalize";
-import { LaunchSettings } from "./views/LaunchSettings";
+import { SoftwareSettingsView } from "./views/SoftwareSettingsView";
 import { About } from "./views/About";
 import { SetupWizard } from "./views/SetupWizard";
 import { VaultLock } from "./views/VaultLock";
@@ -27,14 +19,13 @@ import { ClosePrompt } from "./components/ClosePrompt";
 import { BgProgressBubble } from "./components/BgProgressBubble";
 import type { SetupState, VaultStatus } from "./types";
 
-export type ViewKey = "dashboard" | "account" | "settings" | "personalize" | "launch" | "about";
+export type ViewKey = "dashboard" | "account" | "settings" | "software" | "about";
 
 const VIEW_META: Record<ViewKey, { title: string; desc: string }> = {
   dashboard: { title: "仪表盘", desc: "所有账户的运行概况与今日进度。" },
   account: { title: "账户详情", desc: "单个账户的任务进度与独立配置。" },
-  settings: { title: "全局设置", desc: "所有「遵循全局设置」的账号共用这份配置，改动立即生效。" },
-  personalize: { title: "个性化", desc: "主题、壁纸与液态玻璃效果。" },
-  launch: { title: "启动与托盘", desc: "开机自启动、驻留托盘与启动延迟等系统行为设置。" },
+  settings: { title: "任务全局设置", desc: "与任务执行有关的全局配置，所有「遵循全局设置」的账号共用，改动立即生效。" },
+  software: { title: "软件设置", desc: "外观个性化、启动与托盘、浏览器与安全等软件自身的行为设置。" },
   about: { title: "关于", desc: "版本信息、第三方开源组件与友情链接。" },
 };
 
@@ -55,8 +46,18 @@ function Shell() {
   // 解析深浅主题并写入 <html data-theme>；autoTheme 打开时由壁纸亮度 +
   // 两套主题色的合成对比度决定（亮壁纸→深色主题白字，暗壁纸→浅色主题黑字），
   // 花色壁纸按「哪套主题的文字真的看得清」来选，而不是简单看平均亮度。
-  useTheme(appearance?.mode, appearance?.autoTheme === true, luma, appearance?.bgDim);
+  const resolvedTheme = useTheme(
+    appearance?.mode,
+    appearance?.autoTheme === true,
+    luma,
+    appearance?.bgDim
+  );
   const [view, setView] = useState<ViewKey>("dashboard");
+  // 软件设置页的当前分类：侧栏选项卡高亮与右侧 scroll-spy 共用
+  const [swSec, setSwSec] = useState<string>("personalize");
+  // 点击选项卡后的平滑滚动加锁时间戳：滚动期间 scroll-spy 的上报一律忽略，
+  // 否则途经的分区会把胶囊来回拽（点击定位 → spy 抢高亮 → 视觉抖动）
+  const swScrollLockRef = useRef(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // 首次启动向导：setup.done 为 false 时挡在最前面，走完写入 done=true
   const [setup, setSetup] = useState<SetupState | null>(null);
@@ -103,10 +104,50 @@ function Shell() {
     else document.documentElement.removeAttribute("data-preset");
   }, [appearance?.preset]);
 
+  // 背景氛围光开关：这场开关此前没有任何消费方（拖动/切换都无反应）。
+  // 挂到 <html> 上，由 CSS 关掉 body::before 的两团辉光。
+  // 有壁纸时辉光被壁纸层盖住（本来就看不见），无壁纸时才真正影响画面。
+  useEffect(() => {
+    if (appearance?.glow === false) document.documentElement.setAttribute("data-glow", "off");
+    else document.documentElement.removeAttribute("data-glow");
+  }, [appearance?.glow]);
+
+  // 「鼠标指针光晕」开关只关掉了项目自绘的 halo（useLiquidGlassHalo），但库自带一层
+  // 跟手光斑 .lg-glow（pointerenter 时打 data-lit 点亮、跟随鼠标）完全不受这个开关控制，
+  // 深色下关掉开关后侧边栏等玻璃组件照样有光。这里把状态挂到 <html>，由 CSS 一并关掉库光斑。
+  useEffect(() => {
+    if (appearance?.pointerHalo === false)
+      document.documentElement.setAttribute("data-halo", "off");
+    else document.documentElement.removeAttribute("data-halo");
+  }, [appearance?.pointerHalo]);
+
+  // 把用户主题色写入 <html> 的 --accent，让全局 var(--accent) 消费方（开关 on 色、
+  // 焦点环、向导 dot、进度条等）真正跟随「个性化」页的选择。
+  // 此前 --accent 只在 :root 里写死成 #3b82f6，改主题色后除了喂给玻璃库的
+  // --lg-accent 之外全部没反应 —— 开关 on 色覆盖写的是 var(--accent, var(--lg-green))，
+  // 于是永远落在写死的蓝/绿上（用户反馈「主题色变更之后开关没变化」）。
+  useEffect(() => {
+    const el = document.documentElement;
+    if (appearance?.accent) el.style.setProperty("--accent", appearance.accent);
+    else el.style.removeProperty("--accent");
+  }, [appearance?.accent]);
+
   // 从仪表盘点「查看详情」时直接跳到账户页并选中该账户
   const openAccount = useCallback((id: string) => {
     setSelectedId(id);
     setView("account");
+  }, []);
+
+  // 软件设置：点侧栏分类选项卡 → 高亮 + 平滑滚动定位到对应分区
+  const handleSwSectionClick = useCallback((key: string) => {
+    setSwSec(key);
+    swScrollLockRef.current = Date.now() + 900;
+    document.getElementById(`swsec-${key}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
+
+  // 软件设置：右侧滚动 → scroll-spy 上报当前分类（加锁期间忽略）
+  const handleSwSpy = useCallback((key: string) => {
+    setSwSec((prev) => (Date.now() < swScrollLockRef.current || prev === key ? prev : key));
   }, []);
 
   // 把项目配色 + 壁纸环境色喂给玻璃库。
@@ -124,8 +165,11 @@ function Shell() {
     () =>
       ({
         "--bg-dim": String(appearance?.bgDim ?? 0.25),
+        // 面板不透明度：compat 层用它调制内容材质（.app-material-card）的填充 alpha。
+        // 之前这个滑块只存在于设置界面，没有任何消费方 → 拖动完全没反应。
+        "--panel-opacity": String(appearance?.opacity ?? 1),
       }) as CSSProperties,
-    [appearance?.bgDim]
+    [appearance?.bgDim, appearance?.opacity]
   );
 
   if (loading || !setup || !vault) {
@@ -145,7 +189,7 @@ function Shell() {
   // 首次启动：向导走完才进主界面
   if (!setup.done) {
     return (
-      <>
+      <LiquidGlassConfig appearance={resolvedTheme} forceFallback={!appearance?.glass} theme={glassTheme}>
         <SetupWizard onDone={() => setSetup({ ...setup, done: true })} />
         {/* 向导是独立 early-return 分支，不经过主界面的 <Toaster/>；
             保存数字密钥 / 下载 txt 等操作的 toast 必须在这里单独挂一个，
@@ -153,19 +197,19 @@ function Shell() {
         <Toaster position="bottom-right" max={3} />
         <BgProgressBubble />
         {closePrompt}
-      </>
+      </LiquidGlassConfig>
     );
   }
 
   // 已启用加密但本次没解开：挡在锁屏后，解不出登录态就不能跑任务
   if (vault.configured && !vault.unlocked) {
     return (
-      <>
+      <LiquidGlassConfig appearance={resolvedTheme} forceFallback={!appearance?.glass} theme={glassTheme}>
         <VaultLock onUnlocked={() => setVault({ ...vault, unlocked: true })} />
         <Toaster position="bottom-right" max={3} />
         <BgProgressBubble />
         {closePrompt}
-      </>
+      </LiquidGlassConfig>
     );
   }
 
@@ -174,7 +218,11 @@ function Shell() {
   return (
     // glass 开关关掉时走 forceFallback —— 复用库自带的毛玻璃降级通道，
     // 比自己维护两套样式干净得多。
-    <LiquidGlassConfig forceFallback={!appearance?.glass} theme={glassTheme}>
+    <LiquidGlassConfig
+      appearance={resolvedTheme}
+      forceFallback={!appearance?.glass}
+      theme={glassTheme}
+    >
       <div style={shellStyle}>
         {bgSrc && (
           <div className="bg-layer">
@@ -193,7 +241,12 @@ function Shell() {
         {bgSrc && <div className="shell-scrim" />}
 
         <div className="shell">
-          <Sidebar view={view} onViewChange={setView} />
+          <Sidebar
+            view={view}
+            onViewChange={setView}
+            swSection={view === "software" ? swSec : null}
+            onSwSectionClick={handleSwSectionClick}
+          />
 
           <div className="content">
             <header className="topbar">
@@ -204,19 +257,23 @@ function Shell() {
               <div className="topbar-actions" style={{ position: "relative", zIndex: 1 }}>
                 <TopbarActions view={view} />
               </div>
-              {/* 顶栏下缘的渐进模糊带，让内容与顶栏自然过渡 */}
-              <ProgressiveBlur direction="to-bottom" size={28} maxBlur={10} />
+              {/* 顶栏下缘不再放渐进模糊带：topbar 与内容区都是全透明，唯一被它"过渡"的
+                  只有壁纸本身，真机细节壁纸上会显形成一条横贯全页的模糊条（用户反馈）。 */}
             </header>
 
+            {/* key=当前视图：切页时重挂载，内容区播一次上浮淡入（.view-enter） */}
             <div className="scroll-area">
-              {view === "dashboard" && <Dashboard onOpenAccount={openAccount} />}
-              {view === "account" && (
-                <AccountDetail selectedId={selectedId} onSelect={setSelectedId} />
-              )}
-              {view === "settings" && <SettingsView />}
-              {view === "personalize" && <Personalize bgSrc={bgSrc} onShuffle={shuffleBg} />}
-              {view === "launch" && <LaunchSettings />}
-              {view === "about" && <About />}
+              <div className="view-enter" key={view}>
+                {view === "dashboard" && <Dashboard onOpenAccount={openAccount} />}
+                {view === "account" && (
+                  <AccountDetail selectedId={selectedId} onSelect={setSelectedId} />
+                )}
+                {view === "settings" && <SettingsView />}
+                {view === "software" && (
+                  <SoftwareSettingsView bgSrc={bgSrc} onShuffle={shuffleBg} onSpySec={handleSwSpy} />
+                )}
+                {view === "about" && <About />}
+              </div>
             </div>
           </div>
         </div>
@@ -253,19 +310,19 @@ function TopbarActions({ view }: { view: ViewKey }) {
   };
 
   return (
-    <GlassSurface as="div" radius={999} material="clear" style={{ display: "flex", gap: 6, padding: 6 }}>
-      <Button variant="glass" size="sm" onClick={onRefresh} loading={busy} title="重新读取账户数据">
+    <GlassSurface radius={999} material="clear" style={{ display: "flex", gap: 6, padding: 6 }}>
+      <GlassButton variant="glass" controlSize="small" onClick={onRefresh} loading={busy} title="重新读取账户数据">
         ⟳ 刷新
-      </Button>
+      </GlassButton>
       {view === "dashboard" && (
-        <Button variant="accent" size="sm" onClick={onRunAll} disabled={running} title="依次运行所有已启用账户">
+        <GlassButton variant="glassProminent" controlSize="small" onClick={onRunAll} disabled={running} title="依次运行所有已启用账户">
           ▶ 运行全部
-        </Button>
+        </GlassButton>
       )}
       {running && (
-        <Button variant="danger" size="sm" onClick={onStop} title="中断当前任务">
+        <GlassButton variant="destructive" controlSize="small" onClick={onStop} title="中断当前任务">
           ■ 停止
-        </Button>
+        </GlassButton>
       )}
     </GlassSurface>
   );

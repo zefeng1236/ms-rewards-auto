@@ -23,9 +23,10 @@ const PRESETS = {
 
 const DEFAULTS = {
   preset: "normal",
-  // 深浅模式：dark | light | system
-  mode: "system",
-  // 窗口/面板不透明度，0.30–1.00。仅在半透明类预设下有视觉差异
+  // 深浅模式：dark | light | system。
+  // 默认深色：液态玻璃的折射/高光/白字在深色下对比度与观感最好，也是本应用的视觉核心。
+  mode: "dark",
+  // 窗口/面板不透明度，0.20–1.00。仅在半透明类预设下有视觉差异
   opacity: 1,
   // 主题色（custom 预设下生效，其余预设也会用它作为强调色）
   accent: "#3b82f6",
@@ -33,9 +34,8 @@ const DEFAULTS = {
   glow: true,
   // 自定义背景：none | bing（必应每日一图）| url（图片直链/API）| file（本地图片）
   //           | uapi（UAPI 随机图，配 bgCategory）| qy98（98qy 随机壁纸）| unsplash
-  // 默认使用内置壁纸：打包后在 resources/default-wallpaper.jpg，
-  // 开发时回落项目 build/default-wallpaper.jpg
-  bgType: "file",
+  // 默认必应每日一图：首次启动即有壁纸氛围，且随日期自动更新，无需用户手动找图。
+  bgType: "bing",
   bgUrl: "",
   bgFile: "",
   // UAPI 随机图分类（仅 bgType=uapi 时生效）：acg/furry/landscape/pc_wallpaper/anime/ai_drawing
@@ -69,7 +69,7 @@ const BG_CATEGORIES = ["acg", "furry", "landscape", "pc_wallpaper", "anime", "ai
 function clampOpacity(v) {
   const n = Number(v);
   if (!Number.isFinite(n)) return 1;
-  return Math.min(1, Math.max(0.3, n));
+  return Math.min(1, Math.max(0.2, n));
 }
 
 function normalizeHex(v, fallback) {

@@ -100,6 +100,25 @@
   --lg-text-disabled: rgb(105 116 138 / 0.55);
 }
 
+/* 浅色主题下关闭玻璃「反射」高光层。
+   库在 hover / 按下时用两团白色径向高光（.lg-glow 跟手光斑、.lg-decoration::after 按压闪光）
+   模拟液态玻璃的反光；深色底上很出彩，但浅色玻璃本身就是白底，这层白光「压根看不见」，
+   反而会把蓝色主按钮（primary / glassProminent 白字蓝底）洗白 → 白字融进亮底，hover 时
+   文字消失（用户反馈「浅色下向导按钮字看不清，蓝按钮鼠标一上去就看不见」）。浅色直接关掉。 */
+:root[data-theme="light"] .lg-glow,
+:root[data-theme="light"] .lg-decoration::after {
+  opacity: 0 !important;
+}
+
+/* 「鼠标指针光晕」开关关掉时，连库自带的跟手光斑 .lg-glow 一并关掉。
+   项目自绘的 halo 由 useLiquidGlassHalo 的 enabled 直接不挂载，但库在 pointerenter 时
+   会打 data-lit 点亮 .lg-glow（不受开关控制）——深色下关掉开关后侧边栏仍有光，就是它。
+   App.tsx 在 pointerHalo===false 时挂 data-halo="off"，这里只灭跟手光斑，保留按压闪光
+   （.lg-decoration::after 是按下反馈，不属于「鼠标光晕」）。 */
+:root[data-halo="off"] .lg-glow {
+  opacity: 0 !important;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -119,21 +138,33 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* 背景氛围辉光：两团极淡的光，避免大面积纯色发闷 */
+/* 背景氛围辉光：两团极淡的光，避免大面积纯色发闷。
+   z-index 必须高于壁纸层（.bg-layer / .shell-scrim 均为 0）才能被看见 ——
+   此前用 z-index:0 且 body::before 在 DOM 上先于壁纸，壁纸整块盖住这两团光，
+   导致「背景氛围光」开关怎么切都看不出差别（用户反馈「根本没效果」）。
+   提到 1：仍在 .shell（z-index:1、DOM 后序）之下，只衬在壁纸上、不压界面。 */
 body::before {
   content: "";
   position: fixed;
   inset: 0;
   pointer-events: none;
-  z-index: 0;
+  z-index: 1;
   background:
-    radial-gradient(760px 420px at 12% -8%, rgb(59 130 246 / 0.07), transparent 70%),
-    radial-gradient(680px 380px at 100% 108%, rgb(167 139 250 / 0.055), transparent 72%);
+    radial-gradient(760px 420px at 12% -8%, rgb(59 130 246 / 0.13), transparent 70%),
+    radial-gradient(680px 380px at 100% 108%, rgb(167 139 250 / 0.10), transparent 72%);
 }
 :root[data-theme="light"] body::before {
   background:
-    radial-gradient(760px 420px at 12% -8%, rgb(59 130 246 / 0.12), transparent 70%),
-    radial-gradient(680px 380px at 100% 108%, rgb(167 139 250 / 0.1), transparent 72%);
+    radial-gradient(760px 420px at 12% -8%, rgb(59 130 246 / 0.20), transparent 70%),
+    radial-gradient(680px 380px at 100% 108%, rgb(167 139 250 / 0.16), transparent 72%);
+}
+
+/* 「背景氛围光」开关（外观设置）——此前这个开关没有任何消费方，
+   切换无反应；现在由 App 挂 data-glow 到 <html> 上真正关掉这两团辉光。
+   选择器必须带 :root[data-glow] 才能压过上面 :root[data-theme="light"] 那条
+   （后者在浅色主题下类选择器更多，权重更高，会把 background:none 吃掉）。 */
+:root[data-glow="off"] body::before {
+  background: none;
 }
 
 /* 数字等宽，避免刷新时宽度跳动 */
@@ -287,12 +318,156 @@ body::before {
   line-height: 1.3;
 }
 
+.nav-group + .nav-group {
+  margin-top: 6px;
+}
+
 .nav-group-label {
-  padding: 10px 10px 4px;
+  padding: 10px 10px 6px;
   font-size: 10.5px;
   letter-spacing: 0.06em;
   color: var(--lg-text-disabled);
   text-transform: uppercase;
+}
+
+/* ===== 导航列表（截图风）：滑动高亮胶囊 =====
+   指示器是绝对定位的一整块，靠 translateY 在条目间滑动（320ms 缓动）；
+   首帧（.is-ready 未挂）不播动画，避免从顶部飞入。条目本体透明，
+   激活态只变文字颜色——高亮完全由指示器呈现，两者不会打架。 */
+.nav-list {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.nav-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.nav-indicator {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 38px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 7%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.nav-indicator.is-ready {
+  opacity: 1;
+  transition: transform 320ms cubic-bezier(0.32, 0.72, 0.24, 1),
+              height 320ms cubic-bezier(0.32, 0.72, 0.24, 1),
+              opacity 180ms ease;
+}
+
+/* 侧栏整列切换（主导航 ⇄ 软件设置分类选项卡）时胶囊先淡出：
+   位置跳变必须发生在不可见时，否则胶囊会从「软件设置」那一行硬瞬移到分类首行。
+   这里覆盖掉 transition 里的 transform，让瞬移不带补间。 */
+.nav-indicator.is-hidden {
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+/* ---- 侧栏列表进出场（进软件设置 / 返回） ---- */
+.nav-switch {
+  position: relative; /* 胶囊的定位基准，随列表一起滑入 */
+  display: flex;
+  flex-direction: column;
+  animation: navSwitchIn 280ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+.nav-switch.is-out {
+  animation: navSwitchOut 150ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+@keyframes navSwitchIn {
+  from { opacity: 0; transform: translateX(16px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes navSwitchOut {
+  from { opacity: 1; transform: none; }
+  to { opacity: 0; transform: translateX(-12px); }
+}
+
+/* 条目依次错开一点进场（只在 .nav-switch 重新挂载时播，普通切页不会闪） */
+.nav-switch .nav-item {
+  animation: navItemIn 320ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+.nav-switch .nav-group button:nth-of-type(2) { animation-delay: 45ms; }
+.nav-switch .nav-group button:nth-of-type(3) { animation-delay: 90ms; }
+.nav-switch .nav-group button:nth-of-type(4) { animation-delay: 135ms; }
+@keyframes navItemIn {
+  from { opacity: 0; transform: translateX(10px); }
+  to { opacity: 1; transform: none; }
+}
+
+.nav-item {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 11px;
+  border: 0;
+  background: transparent;
+  border-radius: 12px;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: color 160ms ease, background 160ms ease;
+}
+
+/* 软件设置页：底部「返回」（退出分类模式，回仪表盘） */
+.nav-back {
+  color: var(--muted);
+  animation: navItemIn 320ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+.nav-back:hover {
+  color: var(--text, inherit);
+}
+
+/* 左下角版本号 */
+.nav-version {
+  padding: 0 11px;
+  user-select: text;
+  cursor: default;
+}
+
+.nav-item:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+
+.nav-item.is-active {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.nav-item:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--lg-accent) 60%, transparent);
+  outline-offset: -2px;
+}
+
+.nav-item-icon {
+  width: 17px;
+  height: 17px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+}
+
+.nav-item-icon svg {
+  width: 16px;
+  height: 16px;
+  display: block;
 }
 
 .nav-foot {
@@ -301,6 +476,69 @@ body::before {
   flex-direction: column;
   gap: 8px;
   padding-top: 12px;
+}
+
+/* ===== 安装 Chromium 按钮：颜色随进度变化 + 下方进度条 ===== */
+.nav-install-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.nav-install-btn {
+  transition: background var(--lg-duration-release, 200ms) var(--lg-ease, ease),
+              color var(--lg-duration-release, 200ms) var(--lg-ease, ease),
+              border-color var(--lg-duration-release, 200ms) var(--lg-ease, ease);
+}
+.nav-install-btn.is-progress {
+  --lg-fg: #ffffff;
+  --lg-accent: #1c7ed6;
+  background:
+    linear-gradient(
+      to right,
+      color-mix(in srgb, #1c7ed6 100%, transparent) 0%,
+      color-mix(in srgb, #1c7ed6 100%, transparent) var(--install-pct, 0%),
+      color-mix(in srgb, var(--accent) 60%, transparent) var(--install-pct, 0%),
+      color-mix(in srgb, var(--accent) 60%, transparent) 100%
+    ) !important;
+  color: #ffffff !important;
+  border-color: #1c7ed6 !important;
+}
+:root[data-theme="light"] .nav-install-btn.is-progress {
+  background:
+    linear-gradient(
+      to right,
+      color-mix(in srgb, #1c7ed6 100%, transparent) 0%,
+      color-mix(in srgb, #1c7ed6 100%, transparent) var(--install-pct, 0%),
+      color-mix(in srgb, #1c7ed6 35%, transparent) var(--install-pct, 0%),
+      color-mix(in srgb, #1c7ed6 35%, transparent) 100%
+    ) !important;
+}
+.nav-install-btn.is-done {
+  background: color-mix(in srgb, var(--lg-success, #16a34a) 60%, transparent) !important;
+  color: #ffffff !important;
+  border-color: var(--lg-success, #16a34a) !important;
+}
+.nav-install-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 4px;
+}
+.nav-install-track {
+  height: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  overflow: hidden;
+}
+.nav-install-fill {
+  height: 100%;
+  background: linear-gradient(to right, #1c7ed6, #60a5fa);
+  transition: width 600ms var(--lg-ease, ease);
+}
+.nav-install-speed {
+  font-size: 11px;
+  color: var(--lg-text-secondary, rgb(180 188 210));
+  font-variant-numeric: tabular-nums;
 }
 
 .content {
@@ -344,6 +582,15 @@ body::before {
   flex: 1;
   overflow-y: auto;
   padding: 4px 22px 28px;
+}
+
+/* 切换标签页时内容区轻微上浮淡入（key=当前视图，只有切页才重挂载重播） */
+.view-enter {
+  animation: viewIn 300ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+@keyframes viewIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
 }
 
 /* ---- 内容区块 ---- */
@@ -514,7 +761,38 @@ body::before {
 }
 
 .field-link:hover {
-  color: var(--lg-accent-glass);
+  color: var(--accent-hi);
+}
+
+/* ---- 指纹浏览器面板（设置页，可选增强） ---- */
+.fp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.fp-progress {
+  margin-top: 12px;
+}
+
+.fp-bar {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--lg-border);
+  overflow: hidden;
+}
+
+.fp-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--lg-accent);
+  transition: width 0.25s ease;
+}
+
+.fp-note {
+  margin-top: 12px;
+  line-height: 1.7;
 }
 
 /* 两列自适应表单网格 */
@@ -530,13 +808,19 @@ body::before {
   min-width: 0;
 }
 
-/* 网格里的开关（任务开关、自动运行等）：开关紧跟标签，不用 space-between
-   推到列右缘。推到右缘时，列宽随窗口伸缩 → 开关与标签的间距跟着变，
-   视觉上就是「界面一缩放，开关位置就变了」；贴住标签后相对位置恒定，
-   窗口再窄也只会让整项折到下一行。 */
+/* 网格里的开关（任务开关、自动运行等）：开关停在**列右缘**。
+   右缘位置由等分的 1fr 列宽决定，因此同一列上下两行、以及各列之间，
+   开关都落在同一竖直位置（用户实际反馈过「每日签到」的开关紧挨标签、
+   而下一行的开关更靠右，看着不齐）。实现上是让标签块吃掉剩余宽度，
+   而不是用 space-between —— 后者在列宽变化时同样会错位。 */
 .form-grid > .field-row {
   justify-content: flex-start;
   gap: 12px;
+}
+
+.form-grid > .field-row > div:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .hint {
@@ -558,6 +842,11 @@ body::before {
   font-size: 12px;
   font-weight: 600;
   margin-bottom: 10px;
+}
+
+/* 软件设置分区：侧栏选项卡点击定位时给滚动落点留出呼吸空间 */
+.sw-sec {
+  scroll-margin-top: 12px;
 }
 
 /* 原生时间控件：对齐玻璃输入框的观感 */
@@ -674,13 +963,72 @@ body::before {
   --lg-switch-thumb-interacting-color: rgb(72 111 143 / 0.98);
 }
 
+/* 开关轮廓：库用「1px 掩膜环」描边（.lg-rim 是 conic-gradient + mask-composite:exclude），
+   在 125% 缩放（Windows 常见缩放比）下掩膜会被栅格化成珠链状、且把渐变里的暗段
+   压在绿色填充上形成一整圈脏描边 —— 真机截图里那道「锯齿」就是它。
+   轨道本身是实心填充（开=绿 / 关=材质 tint），不依赖这层描边定位轮廓，
+   去掉后边缘由填充直接构成，任何缩放下都是干净平滑的形状。 */
+.lg-switch-track .lg-rim,
+.lg-switch-track .lg-glow {
+  display: none;
+}
+
+/* 账户操作列采用饱满的开关比例；保留上游拖动与弹簧动画。 */
+.account-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  white-space: nowrap;
+}
+.account-enabled-switch {
+  flex: 0 0 auto;
+}
+.account-enabled-switch .lg-switch-track {
+  width: 56px;
+  height: 32px;
+}
+.account-enabled-switch .lg-switch-thumb {
+  width: 26px;
+  height: 26px;
+  --lg-travel-max: 24px;
+}
+.account-enabled-switch .lg-switch-track[data-checked="true"] .lg-switch-thumb {
+  --lg-travel: 24px;
+}
+/* 上游 .lg-switch > input 与本规则同权重，靠加一级类选择器确保覆盖，
+   不受 CSS 导入顺序影响；热区随轨道一起变宽。 */
+.lg-switch.account-enabled-switch > input {
+  width: 56px;
+}
+
+/* 上游把玻璃材质档位（data-glass-size=small）的 --lg-control-height 内联成 44px，
+   会盖过库自己的 [data-control-size="small"]{--lg-control-height:32px}。
+   账户表行内要「去登录 / ▶ / ⋯ / 开关 / 头像」同为一档：仅在表格内按 32px 渲染
+   （自定义属性内联优先级最高，只能直接写死 min-height 压过 var 解析值）。
+   表格外的向导/弹窗按钮维持上游 44px 口径，不受影响。 */
+.compat-table .lg-button[data-control-size="small"] {
+  min-height: 32px;
+}
+
+/* 操作列图标按钮与「去登录」/开关轨道同档（32px 高）；横向拉长成圆角矩形
+   （padding 8px 时只有 27px 宽，近乎正方形，用户要求「拉长一点」→ 14px）。 */
+.account-actions .lg-button[data-control-size="small"] {
+  padding-inline: 14px;
+}
+
 /* ---- 外观预设（CSS 层） ----
    液态玻璃（normal）是默认样式，无需额外规则；
    opaque 强制所有面板实心。切换即时可见。 */
 
 /* 不透明预设：所有面板强制实心，关掉任何残留模糊 */
 html[data-preset="opaque"] .sidenav,
-html[data-preset="opaque"] .log-console {
+html[data-preset="opaque"] .log-console,
+html[data-preset="opaque"] .app-material-card,
+html[data-preset="opaque"] .compat-input-wrap,
+html[data-preset="opaque"] .compat-select,
+html[data-preset="opaque"] .compat-modal-panel,
+html[data-preset="opaque"] .compat-toast {
   background: var(--panel) !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
@@ -700,7 +1048,7 @@ html[data-preset="opaque"] .log-console {
   border: 2px solid transparent;
   cursor: pointer;
   padding: 0;
-  box-shadow: var(--shadow-1);
+  box-shadow: var(--shadow-2);
 }
 .swatch:hover {
   transform: scale(1.08);
@@ -1924,7 +2272,7 @@ html[data-preset="opaque"] .log-console {
   width: min(420px, calc(100% - 40px));
   padding: 20px;
   border-radius: 14px;
-  background: var(--bg-panel, #151b26);
+  background: var(--panel);
   border: 1px solid var(--border, #232b39);
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
 }
@@ -2230,6 +2578,19 @@ html[data-preset="opaque"] .log-console {
   background: var(--lg-clear-tint, rgb(255 255 255 / 0.06));
 }
 
+/* 可点整行打开主页的直接依赖：样式尺寸不变，只加可点击反馈 */
+.dep-item.dep-link {
+  cursor: pointer;
+  transition: background 160ms ease;
+}
+.dep-item.dep-link:hover {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+.dep-item.dep-link:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--lg-accent) 60%, transparent);
+  outline-offset: -2px;
+}
+
 .dep-main {
   display: flex;
   align-items: baseline;
@@ -2284,6 +2645,89 @@ html[data-preset="opaque"] .log-console {
   font-variant-numeric: tabular-nums;
 }
 
+/* ---- 灵感来源与致谢 ---- */
+.credit-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.credit-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 11px 13px;
+  border-radius: 11px;
+  background: var(--lg-clear-tint, rgb(255 255 255 / 0.06));
+}
+
+/* 头像用「首字方块」，避免额外引入外链头像（离线可用、也不会泄漏请求） */
+.credit-avatar {
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--lg-accent, rgb(96 165 250));
+  user-select: none;
+}
+
+.credit-sdsmalin {
+  background: rgb(168 85 247);
+}
+
+.credit-dusklight {
+  background: rgb(14 165 233);
+}
+
+.credit-withfeel {
+  background: rgb(45 212 191);
+  color: rgb(15 23 42);
+}
+
+.credit-main {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.credit-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.credit-name {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.credit-desc {
+  margin-top: 3px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--lg-text-secondary);
+}
+
+.credit-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+@media (max-width: 560px) {
+  .credit-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}
+
 /* ---- 友情链接 ---- */
 .friend-list {
   display: flex;
@@ -2307,12 +2751,40 @@ html[data-preset="opaque"] .log-console {
   flex-shrink: 0;
   display: grid;
   place-items: center;
+  /* 库给 .lg-surface 一律 18px 内边距：46px 盒子（border-box）内容区只剩 10×10，
+     svg 溢出该格子且 auto 行从内容盒顶部起排 → 图标整体下坠 8px（26px）/16px
+     （42px 徽章，直接探出容器）。这里用双类选择器提高特异性清零 padding，
+     不依赖项目/库 CSS 的加载顺序。实测修复前 mark 中心 dy=+8/+16，修复后 0/0。 */
+  padding: 0;
+  /* 取消库自带的 follow-light（避免 0.9.4.4 把光晕绑到 .lg-surface 后，
+     圆形 logo 边缘被 200px 渐变盖出"歪"感；同时 svg cube 边缘被光晕糊掉）。
+     见 src-renderer/src/hooks/useLiquidGlassHalo.ts 中 HALO_SELECTOR 排除。 */
+  position: relative;
+}
+
+/* ---- 开关 on 色跟随主题色（用户反馈"主题色为什么没有用"） ----
+   库默认 on 色是 var(--lg-green) 固定绿色。覆写为项目 accent（用户从个性化
+   页选的强调色），并把 thumb 高光色调暖一档以保证对比度。 */
+.lg-switch-track[data-checked="true"] {
+  background: var(--accent, var(--lg-green)) !important;
+}
+.lg-switch-track[data-checked="true"] > .lg-decoration .lg-tint {
+  background: var(--accent, var(--lg-green)) !important;
 }
 
 .friend-mark {
+  display: block; /* svg 是内联元素，基线间隙会让 .lg-content 多出 ~3px 底部空隙 */
   width: 26px;
   height: 26px;
   color: var(--accent-hi, #60a5fa);
+}
+
+/* 图片型友链标识（gh-proxy 的 GitHub Mark）：黑色剪影在深色主题下不可见 → 反色成白标 */
+.friend-mark-img {
+  object-fit: contain;
+}
+:root[data-theme="dark"] .friend-mark-img {
+  filter: invert(1);
 }
 
 .friend-main {
@@ -2367,6 +2839,16 @@ html[data-preset="opaque"] .log-console {
   }
 }
 
+
+/* 新库按钮的 .lg-content 默认 min-width:0 + normal 会在紧凑 flex / table 中
+   把中文逐字折行；文字按钮保持单行和固有宽度，让容器换行或滚动。 */
+.lg-button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.lg-button > .lg-content {
+  white-space: nowrap;
+}
 
 /* 按钮 loading 圈默认只有 .85em/2px，锁屏小按钮上几乎看不见，统一放大 */
 .lg-button__spinner {

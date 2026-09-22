@@ -191,6 +191,9 @@ function describe(id) {
   if (readDone) readArticlesDone = readArticlesTotal;
   const readProgress = readArticlesTotal > 0 ? `${readArticlesDone}/${readArticlesTotal} 篇` : "";
 
+  // 签入完成判定（display 层 signPoint 兜底也要用它）
+  const signDone = ranToday && st.tasksDone?.sign === dateNum;
+
   // 调度状态：当天是否已收工、已跑几轮、下次预计运行时间
   // 延迟 require 避免与 runner 形成循环依赖（runner 顶部已 require account）
   let sched = { dayDone: false, rounds: 0, pending: [], nextRunText: "", mode: "interval" };
@@ -225,14 +228,17 @@ function describe(id) {
       lastBalance: st.lastBalance || 0,
       lastResult: st.lastResult || "",
       lastRunDate: st.lastRunDate || 0,
-      signDone: ranToday && st.tasksDone?.sign === dateNum,
+      signDone,
       readDone,
       dailyEnabled: !!cfg.tasks?.daily,
       dailyDone: ranToday && st.tasksDone?.daily === dateNum,
       dailyPoint: st.dailyPoint || 0,
       promosDone: ranToday && st.tasksDone?.promos === dateNum,
       searchDone,
-      signPoint: st.signPoint,
+      // signPoint 的 -1 是「从未签入」的哨兵初值；今天已签入却残留负数
+      // （旧版会把接口返回的负数奖励原样落盘），展示层统一按 0 分处理，
+      // 避免仪表盘出现「已完成 · -1 分」。存量脏数据由此立即自愈。
+      signPoint: signDone && !(st.signPoint >= 0) ? 0 : st.signPoint,
       readPoint: st.readPoint,
       promosPoint: st.promosPoint,
       searchPoint: st.searchPoint,

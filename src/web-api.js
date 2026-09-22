@@ -29,6 +29,7 @@ const setup = require("./setup");
 const vault = require("./vault");
 const wipe = require("./wipe");
 const browser = require("./browser");
+const fpBrowser = require("./fingerprint-browser");
 const logger = require("./logger");
 const notify = require("./notify");
 const uapi = require("./uapi");
@@ -430,6 +431,23 @@ function createApi({ emit }) {
     installBrowser() {
       // 容器内 Chromium 由镜像 apt 安装，无需再下载
       return { ok: browser.isChromiumReady(), method: "preinstalled", executable: browser.chromiumExecutablePath() };
+    },
+    fingerprintStatus() {
+      return fpBrowser.status();
+    },
+    async installFingerprint(opts) {
+      const r = await fpBrowser.install({ force: !!(opts && opts.force) });
+      emit("fingerprint-status", fpBrowser.status());
+      return r;
+    },
+    uninstallFingerprint() {
+      const r = fpBrowser.uninstall();
+      emit("fingerprint-status", fpBrowser.status());
+      return r;
+    },
+    // 「检查更新」只查询不下载（0.9.4.18 修：此前按钮直连 install(force) 会重下 181MB）
+    checkFingerprintUpdate() {
+      return fpBrowser.checkUpdate();
     },
 
     /* --------------------------- Web 专属 --------------------------- */

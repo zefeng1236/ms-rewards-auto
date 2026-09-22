@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Button, toast } from "@ttqtt/liquid-glass-react";
+import { GlassButton } from "@ttqtt/liquid-glass-react";
+import { toast } from "../components/liquidGlassCompat";
 import { api, IS_WEB } from "../api/ipc";
 import { clearSavedRecoveryKey, getSavedRecoveryKey, saveRecoveryKeyToBrowser } from "../api/web";
 import { VaultRescue, extractRecoveryKey } from "../components/VaultRescue";
@@ -117,9 +118,9 @@ export function VaultLock({ onUnlocked }: { onUnlocked: () => void }) {
             {/* 本机保存了数字密钥 → 一键登录 */}
             {IS_WEB && savedKey && (
               <div className="wz-next" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <Button variant="accent" size="sm" loading={busy} onClick={oneClick}>
+                <GlassButton variant="glassProminent" controlSize="small" loading={busy} onClick={oneClick}>
                   🔑 使用本机保存的数字密钥登录
-                </Button>
+                </GlassButton>
                 <div className="hint">
                   密钥尾号 …{savedKey.slice(-6)} ·{" "}
                   <a
@@ -202,9 +203,9 @@ export function VaultLock({ onUnlocked }: { onUnlocked: () => void }) {
                       e.target.value = "";
                     }}
                   />
-                  <Button variant="glass" size="sm" onClick={() => keyFileRef.current?.click()}>
+                  <GlassButton variant="glass" controlSize="small" onClick={() => keyFileRef.current?.click()}>
                     📄 上传密钥文件
-                  </Button>
+                  </GlassButton>
                   <span className="hint">
                     {rkFromFile ? `已从「${rkFromFile}」读取密钥` : "选择建库时下载的 txt 文件"}
                   </span>
@@ -229,9 +230,9 @@ export function VaultLock({ onUnlocked }: { onUnlocked: () => void }) {
         <footer className="wizard-foot">
           <span className="wizard-note">自动任务已暂停</span>
           <span />
-          <Button variant="accent" size="sm" loading={busy} onClick={submit}>
+          <GlassButton variant="glassProminent" controlSize="small" loading={busy} onClick={submit}>
             解锁 →
-          </Button>
+          </GlassButton>
         </footer>
       </div>
     </div>

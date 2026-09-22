@@ -15,7 +15,7 @@ const DEFAULTS = {
   tasks: {
     sign: true,    // 每日签入
     read: true,    // 阅读文章
-    promos: true,  // 网页浏览（earn 页更多活动）
+    promos: true,  // 积分活动（earn 页更多活动）
     daily: true,   // 每日活动（dashboard dailySet，每日三格）
     claim: false,  // 定期收取积分（每周一次自动点「领取」），默认关闭
     search: true,  // 搜索积分
@@ -77,6 +77,19 @@ const DEFAULTS = {
   // 日志保留策略（仅全局设置生效；账户独立设置保持同一结构便于表单复用）
   logging: {
     retentionDays: 7,
+  },
+  // 浏览器（登录授权 / 领取奖品要走真实页面）
+  //
+  // fingerprint 一节只在设置里下载过指纹浏览器之后才有意义；
+  // 没下载 / 没启用时自动回落到 Playwright 自带 Chromium，行为与以前完全一致。
+  // ⚠️ 必须与 global-config.js 的 GLOBAL_DEFAULTS.browser 逐字段对齐。
+  browser: {
+    fingerprint: {
+      enable: true,    // 启用指纹浏览器（未安装则自动回落普通 Chromium；默认开启，首次运行自动下载）
+      seed: 0,         // 指纹种子（32 位整数）；0 = 按账户 ID 自动派生，保证同账号长期稳定
+      brand: "Chrome", // UA / Client Hints 声明的品牌：Chrome | Edge | Opera | Vivaldi
+      hardwareConcurrency: 0, // CPU 核数；0 = 由指纹种子生成
+    },
   },
   // 积分目标。可配多个，按账户总积分余额判断，可选设置奖品与详情页显示。
   // 达成判定：当前余额 >= target；奖品数量按 floor(余额 / target) 计算。

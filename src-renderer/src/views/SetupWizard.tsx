@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { Button, toast } from "@ttqtt/liquid-glass-react";
+import { GlassButton } from "@ttqtt/liquid-glass-react";
+import { toast } from "../components/liquidGlassCompat";
 import { api, IS_WEB } from "../api/ipc";
 import { saveRecoveryKeyToBrowser } from "../api/web";
 import { PasswordInput } from "../components/PasswordInput";
@@ -172,37 +173,33 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
         </div>
 
         <footer className="wizard-foot">
-          <Button
-            variant="glass"
-            size="sm"
+          <GlassButton variant="glass" controlSize="small"
             onClick={() => setPage((p) => Math.max(0, p - 1))}
             disabled={page === 0}
           >
             ← 上一步
-          </Button>
+          </GlassButton>
 
           <span className="wizard-progress">
             {page + 1} / {STEPS.length}
           </span>
 
           {page < 2 && (
-            <Button
-              variant="accent"
-              size="sm"
+            <GlassButton variant="glassProminent" controlSize="small"
               onClick={() => setPage((p) => p + 1)}
               disabled={page === 1 && !state.agreed}
             >
               下一步 →
-            </Button>
+            </GlassButton>
           )}
           {page === 2 && <CountdownNext onNext={() => setPage(3)} />}
           {/* 加密页自带操作按钮（要先把恢复密钥展示完才能进下一步），
               这里只放提示，避免页脚按钮与页内流程状态不同步 */}
           {page === 3 && <span className="wizard-note">请在上方完成加密设置</span>}
           {page === 4 && (
-            <Button variant="accent" size="sm" onClick={finish}>
+            <GlassButton variant="glassProminent" controlSize="small" onClick={finish}>
               开始使用 ✓
-            </Button>
+            </GlassButton>
           )}
         </footer>
       </div>
@@ -342,9 +339,9 @@ function CountdownNext({ onNext }: { onNext: () => void }) {
   }, [left]);
 
   return (
-    <Button variant="accent" size="sm" disabled={left > 0} onClick={onNext}>
+    <GlassButton variant="glassProminent" controlSize="small" disabled={left > 0} onClick={onNext}>
       {left > 0 ? `请仔细阅读（${left}s）` : "我已了解并确认 →"}
-    </Button>
+    </GlassButton>
   );
 }
 
@@ -474,9 +471,9 @@ function PageVault({ onNext }: { onNext: () => void }) {
         </button>
         {!saved && <div className="hint">请先确认已保存，再进入下一步</div>}
         <div className="wz-next">
-          <Button variant="accent" size="sm" disabled={!saved} onClick={onNext}>
+          <GlassButton variant="glassProminent" controlSize="small" disabled={!saved} onClick={onNext}>
             下一步 →
-          </Button>
+          </GlassButton>
         </div>
       </div>
     );
@@ -498,9 +495,9 @@ function PageVault({ onNext }: { onNext: () => void }) {
           <span>完成后可在「全局设置 → 安全」里查看密码提示，或用恢复密钥解锁。</span>
         </div>
         <div className="wz-next">
-          <Button variant="accent" size="sm" onClick={onNext}>
+          <GlassButton variant="glassProminent" controlSize="small" onClick={onNext}>
             下一步 →
-          </Button>
+          </GlassButton>
         </div>
       </div>
     );
@@ -714,9 +711,9 @@ function PageVault({ onNext }: { onNext: () => void }) {
       </div>
 
       <div className="wz-next">
-        <Button variant="accent" size="sm" loading={busy} onClick={submit}>
+        <GlassButton variant="glassProminent" controlSize="small" loading={busy} onClick={submit}>
           {enable ? "创建加密保险库 →" : "跳过，暂不加密 →"}
-        </Button>
+        </GlassButton>
       </div>
     </div>
   );

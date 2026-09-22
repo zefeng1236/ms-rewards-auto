@@ -66,6 +66,30 @@ const GLOBAL_DEFAULTS = {
   logging: {
     retentionDays: 7,
   },
+  // 浏览器（登录授权 / 领取奖品要走真实页面）
+  // ⚠️ 必须与 src/config.js 的 DEFAULTS.browser 逐字段对齐（含嵌套的 fingerprint），
+  // 否则跨版本升级后旧 global-config.json 缺字段会在渲染层抛 TypeError → 白屏。
+  browser: {
+    fingerprint: {
+      enable: true,    // 启用指纹浏览器（未安装则自动回落普通 Chromium；默认开启，首次运行自动下载）
+      seed: 0,         // 指纹种子（32 位整数）；0 = 按账户 ID 自动派生，保证同账号长期稳定
+      brand: "Chrome", // UA / Client Hints 声明的品牌：Chrome | Edge | Opera | Vivaldi
+      hardwareConcurrency: 0, // CPU 核数；0 = 由指纹种子生成
+    },
+  },
+  // 积分目标。可配多个，按账户总积分余额判断，可选设置奖品与详情页显示。
+  // 达成判定：当前余额 >= target；奖品数量按 floor(余额 / target) 计算。
+  // ⚠️ 必须与 src/config.js 的 DEFAULTS.goals 对齐（含 items: []）。
+  // 历史版本这里漏了 goals，跨版本升级后的旧 global-config.json 只有
+  // { enable: true } 而没有 items，全局设置页读 value.goals.items 抛 TypeError
+  // → React 卸载整棵树 → 白屏（0.9.4 生产事故）。deepMerge 只对「整体缺失」兜底，
+  // 必须把 items: [] 写进默认值才能对「有 enable 缺 items」的旧文件补回空数组。
+  goals: {
+    enable: true,
+    items: [
+      // { name: "积分目标", scope: "balance", target: 300, rewardName: "", showDashboard: true }
+    ],
+  },
 };
 
 /**

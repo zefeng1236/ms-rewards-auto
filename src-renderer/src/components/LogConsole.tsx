@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Button, Input } from "@ttqtt/liquid-glass-react";
+import { GlassButton } from "@ttqtt/liquid-glass-react";
+import { Input } from "./liquidGlassCompat";
 import { useAppState } from "../hooks/useAppState";
 
 const MIN_H = 120;
@@ -80,17 +81,16 @@ export function LogConsole() {
               style={{ width: 180 }}
               aria-label="筛选日志"
             />
-            <Button size="sm" variant="ghost" onClick={clearLogs}>
+            <GlassButton controlSize="small" variant="plain" onClick={clearLogs}>
               清空
-            </Button>
-            <Button
-              size="sm"
-              variant={autoScroll ? "accent" : "ghost"}
+            </GlassButton>
+            <GlassButton controlSize="small"
+              variant={autoScroll ? "glassProminent" : "plain"}
               onClick={() => setAutoScroll((v) => !v)}
               title="自动滚动到底部"
             >
               ⤓ 自动
-            </Button>
+            </GlassButton>
           </div>
         </div>
         <div className="log-body" ref={bodyRef}>

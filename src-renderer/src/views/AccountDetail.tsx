@@ -1,15 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  Button,
-  Card,
-  Empty,
-  GlassSurface,
-  Modal,
-  Select,
-  Switch,
-  Tag,
-  toast,
-} from "@ttqtt/liquid-glass-react";
+import { GlassButton, GlassSwitch, GlassSurface } from "@ttqtt/liquid-glass-react";
+import { AppCard, Empty, Modal, Select, Tag, toast } from "../components/liquidGlassCompat";
 import { api } from "../api/ipc";
 import { useAppState } from "../hooks/useAppState";
 import { SettingsForm } from "../components/SettingsForm";
@@ -97,7 +88,7 @@ function AccountLogPanel({ accountId, accountName }: { accountId: string; accoun
   };
 
   return (
-    <GlassSurface refraction="off" radius={14} material="clear" className="acc-log">
+    <GlassSurface refraction={0} radius={14} material="clear" className="acc-log">
       <div className="acc-log-head">
         <span className="acc-log-title">「{accountName}」运行日志</span>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -133,6 +124,9 @@ function AccountLogPanel({ accountId, accountName }: { accountId: string; accoun
   );
 }
 
+/** 千分位格式化（卡片大数字每三位加逗号；强制 en-US 分组，不随系统 locale 变化） */
+const fmtNum = (n: number | null | undefined) => (n ?? 0).toLocaleString("en-US");
+
 /** 今日任务卡片 */
 function GoalCard({ goal, balance }: { goal: GoalItem; balance: number }) {
   const target = Math.max(1, Number(goal.target) || 1);
@@ -141,9 +135,9 @@ function GoalCard({ goal, balance }: { goal: GoalItem; balance: number }) {
   const count = Math.floor(current / target);
   const remain = target - (current % target || target);
   const text = current < target
-    ? `已获得${current}还差${target - current}积分`
+    ? `已获得${fmtNum(current)}还差${fmtNum(target - current)}积分`
     : reward
-    ? `当前已可兑换${count}个${reward}，距离下一个还剩${remain}积分`
+    ? `当前已可兑换${fmtNum(count)}个${reward}，距离下一个还剩${fmtNum(remain)}积分`
     : `当前已达成${Math.round((current / target) * 10) / 10}倍目标`;
   return (
     <GlassSurface className="card-inner goal-dashboard-card" radius={14} title={`${goal.name}：${text}`}>
@@ -199,6 +193,22 @@ export function AccountDetail({
     () => accounts.find((a) => a.id === selectedId) || accounts[0] || null,
     [accounts, selectedId]
   );
+
+  // 窗口重新聚焦 / 页面切回可见时主动拉一次账户数据。
+  // 主进程空闲期每 9 秒推一次，但任务执行中「任务分中间值 → 最终值」之间
+  // 可能只隔几秒（如 promos 先写已完成分、执行完活动才累加到最终分），
+  // 推送偶发没跟上就会把瞬时值留在卡片上；聚焦兜底保证切回窗口必见最新值。
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refreshAccounts();
+    };
+    window.addEventListener("focus", onVisible);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus", onVisible);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [refreshAccounts]);
 
   const useGlobal = account?.useGlobal !== false;
 
@@ -274,8 +284,15 @@ export function AccountDetail({
     setBusy("login");
     try {
       const r = await api.login(account.id);
-      if (!r.ok) toast.error(r.error || "登录失败");
-      else toast.success("登录成功");
+      if (!r.ok) {
+        toast.error(r.error || r.message || "登录失败");
+        return;
+      }
+      // 首次登录成功后自动同步一次账户信息（Cookie→积分→阅读进度），免去手动点「刷新状态」
+      toast.success("登录成功，正在同步账户信息…");
+      const rs = await api.sync(account.id);
+      if (!rs.ok) toast.info(rs.error || "自动同步失败，可手动点「刷新状态」重试");
+      else toast.success(rs.message || "账户信息已同步");
       await refreshAccounts();
     } finally {
       setBusy(null);
@@ -364,13 +381,13 @@ export function AccountDetail({
 
   if (!account) {
     return (
-      <Card>
+      <AppCard>
         <Empty
           image="🛰️"
           title="还没有账户"
           description="先到仪表盘点「＋ 新增账号」创建一个"
         />
-      </Card>
+      </AppCard>
     );
   }
 
@@ -379,7 +396,7 @@ export function AccountDetail({
   return (
     <>
       {/* ---- 账户选择 + 操作 ---- */}
-      <Card padding="md" style={{ marginBottom: 16 }}>
+      <AppCard padding={16} style={{ marginBottom: 16 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <div style={{ minWidth: 220, flex: 1 }}>
             <Select
@@ -428,48 +445,42 @@ export function AccountDetail({
           </div>
 
           <div style={{ display: "flex", gap: 8 }}>
-            <Button
-              variant="accent"
-              size="sm"
+            <GlassButton variant="glassProminent" controlSize="small"
               onClick={onLogin}
               loading={busy === "login"}
               disabled={running}
             >
               授权登录
-            </Button>
-            <Button
-              variant="glass"
-              size="sm"
+            </GlassButton>
+            <GlassButton variant="glass" controlSize="small"
               onClick={onSync}
               disabled={running || busy === "sync"}
             >
               {busy === "sync" ? "正在工作…" : "⟳ 刷新状态"}
-            </Button>
+            </GlassButton>
             {/* 正在跑这个账号：立即运行换成停止此账号；排队中可直接移出队列 */}
             {thisRunning ? (
-              <Button variant="danger" size="sm" onClick={() => void onStopThis()} loading={stopping}>
+              <GlassButton variant="destructive" controlSize="small" onClick={() => void onStopThis()} loading={stopping}>
                 ■ 停止此账号
-              </Button>
+              </GlassButton>
             ) : (
-              <Button
-                variant="accent"
-                size="sm"
+              <GlassButton variant="glassProminent" controlSize="small"
                 onClick={onRun}
                 loading={busy === "run"}
                 disabled={running}
                 title={thisWaiting ? "该账号正在排队等待" : "仅运行当前账号"}
               >
                 {thisWaiting ? "排队中…" : "立即运行"}
-              </Button>
+              </GlassButton>
             )}
             {thisWaiting && (
-              <Button variant="danger" size="sm" onClick={() => void onStopThis()} loading={stopping}>
+              <GlassButton variant="destructive" controlSize="small" onClick={() => void onStopThis()} loading={stopping}>
                 取消排队
-              </Button>
+              </GlassButton>
             )}
           </div>
         </div>
-      </Card>
+      </AppCard>
 
       {/* ---- 今日任务进度 ---- */}
       <div className="block">
@@ -477,7 +488,7 @@ export function AccountDetail({
           <div>
             <div className="block-title">今日任务进度</div>
             <div className="block-sub">
-              数字来自服务器积分进度，✓ 表示今日已实际运行并同步完成
+              总积分 / 今日合计 / 搜索 / 阅读来自服务器实时进度；签入 / 每日活动 / 积分活动要等任务实际运行后才有数据
             </div>
           </div>
         </div>
@@ -487,21 +498,23 @@ export function AccountDetail({
             .map((g, i) => <GoalCard key={`goal-${i}`} goal={g} balance={s.lastBalance || 0} />)}
           <TaskCard
             label="总积分"
-            value={s.lastBalance ? String(s.lastBalance) : "--"}
+            value={s.lastBalance ? fmtNum(s.lastBalance) : "--"}
             empty={!s.lastBalance}
           />
           <TaskCard
             label="今日合计"
-            value={s.todayPoints ? String(s.todayPoints) : "--"}
+            value={s.todayPoints ? fmtNum(s.todayPoints) : "--"}
             empty={!s.todayPoints}
           />
           <TaskCard
             label="签入"
             small
-            value={s.signDone ? "完成" : s.signPoint ? String(s.signPoint) : "--"}
+            // signPoint 的 -1 是「从未签入」的哨兵初值（state.js 默认值），
+            // 未跑任务时 describe 会原样透出，这里按无数据处理，避免卡片显示「-1」
+            value={s.signDone ? "完成" : (s.signPoint || 0) > 0 ? String(s.signPoint) : "--"}
             sub={s.signDone ? `已完成 · ${s.signPoint || 0} 分` : undefined}
             done={!!s.signDone}
-            empty={!s.signDone && !s.signPoint}
+            empty={!s.signDone && (s.signPoint || 0) <= 0}
           />
           <TaskCard
             label="阅读"
@@ -533,19 +546,21 @@ export function AccountDetail({
             <TaskCard
               label="每日活动"
               small
-              value={s.dailyDone ? "完成" : s.dailyPoint ? String(s.dailyPoint) : "--"}
+              // 刷新只同步积分/搜索/阅读进度；每日活动要任务实际跑过才有数据，
+              // 空态显示「未运行」而不是「--」，避免看起来像「信息丢了」
+              value={s.dailyDone ? "完成" : (s.dailyPoint || 0) > 0 ? String(s.dailyPoint) : "未运行"}
               sub={s.dailyDone ? `已完成 · ${s.dailyPoint || 0} 分` : undefined}
               done={!!s.dailyDone}
-              empty={!s.dailyDone && !s.dailyPoint}
+              empty={!s.dailyDone && (s.dailyPoint || 0) <= 0}
             />
           )}
           <TaskCard
-            label="网页浏览"
+            label="积分活动"
             small
-            value={s.promosDone ? "完成" : s.promosPoint ? String(s.promosPoint) : "--"}
+            value={s.promosDone ? "完成" : (s.promosPoint || 0) > 0 ? String(s.promosPoint) : "未运行"}
             sub={s.promosDone ? `已完成 · ${s.promosPoint || 0} 分` : undefined}
             done={!!s.promosDone}
-            empty={!s.promosDone && !s.promosPoint}
+            empty={!s.promosDone && (s.promosPoint || 0) <= 0}
           />
           <TaskCard
             label="搜索"
@@ -558,8 +573,9 @@ export function AccountDetail({
           <TaskCard
             label="受限次数"
             small
-            value={s.restrictedTimes ? String(s.restrictedTimes) : "--"}
-            empty={!s.restrictedTimes}
+            // 0 是合法值（今日没被限流），恒显数字而不是「--」
+            value={String(s.restrictedTimes || 0)}
+            sub="今日搜索被限流的次数"
           />
         </div>
       </div>
@@ -586,8 +602,8 @@ export function AccountDetail({
           </div>
         </div>
 
-        <Card padding="md">
-          <Switch
+        <AppCard padding={16}>
+          <GlassSwitch
             checked={useGlobal}
             onCheckedChange={(v) => void onToggleUseGlobal(v)}
             aria-label="遵循全局设置"
@@ -612,7 +628,7 @@ export function AccountDetail({
               />
             </div>
           )}
-        </Card>
+        </AppCard>
       </div>
 
       {/* ---- 账号管理 ---- */}
@@ -623,24 +639,22 @@ export function AccountDetail({
             <div className="block-sub">可仅清除账号数据并保留账号，也可彻底删除账号；两种操作均不可恢复</div>
           </div>
         </div>
-        <Card padding="md">
+        <AppCard padding={16}>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <Button variant="glass" size="sm" onClick={() => setRenameOpen(true)}>
+            <GlassButton variant="glass" controlSize="small" onClick={() => setRenameOpen(true)}>
               ✎ 重命名
-            </Button>
-            <Button
-              variant="danger"
-              size="sm"
+            </GlassButton>
+            <GlassButton variant="destructive" controlSize="small"
               onClick={() => void onClearData()}
               disabled={running || busy === "clearData"}
             >
               {busy === "clearData" ? "正在清除…" : "清除数据"}
-            </Button>
-            <Button variant="danger" size="sm" onClick={() => void onDelete()}>
+            </GlassButton>
+            <GlassButton variant="destructive" controlSize="small" onClick={() => void onDelete()}>
               删除此账户
-            </Button>
+            </GlassButton>
           </div>
-        </Card>
+        </AppCard>
       </div>
 
       <AskTextModal

@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
-import { Button, toast } from "@ttqtt/liquid-glass-react";
+import { GlassButton } from "@ttqtt/liquid-glass-react";
+import { toast } from "./liquidGlassCompat";
 import { api, IS_WEB } from "../api/ipc";
 import { clearSavedRecoveryKey } from "../api/web";
 import { PasswordInput } from "./PasswordInput";
@@ -179,9 +180,9 @@ export function VaultRescue({ onWiped, onReset }: { onWiped?: () => void; onRese
                   e.target.value = "";
                 }}
               />
-              <Button variant="glass" size="sm" onClick={() => fileRef.current?.click()}>
+              <GlassButton variant="glass" controlSize="small" onClick={() => fileRef.current?.click()}>
                 📄 上传密钥文件
-              </Button>
+              </GlassButton>
               <span className="hint">
                 {rkFromFile ? `已从「${rkFromFile}」读取密钥` : "选择建库时下载的 txt 文件"}
               </span>
@@ -250,9 +251,9 @@ export function VaultRescue({ onWiped, onReset }: { onWiped?: () => void; onRese
             {err && <div className="wz-err">{err}</div>}
 
             <div className="vault-actions">
-              <Button variant="accent" size="sm" loading={busy} onClick={reset}>
+              <GlassButton variant="glassProminent" controlSize="small" loading={busy} onClick={reset}>
                 用恢复密钥重置密码
-              </Button>
+              </GlassButton>
             </div>
           </div>
 
@@ -269,9 +270,9 @@ export function VaultRescue({ onWiped, onReset }: { onWiped?: () => void; onRese
               清空后会重新进入首次启动向导，由你重新创建加密保险库。
             </p>
             <div className="vault-actions">
-              <Button variant="danger" size="sm" onClick={() => setConfirmWipe(true)}>
+              <GlassButton variant="destructive" controlSize="small" onClick={() => setConfirmWipe(true)}>
                 清空账号数据
-              </Button>
+              </GlassButton>
             </div>
           </div>
         </div>

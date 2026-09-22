@@ -266,7 +266,7 @@ function createState(dir) {
     const t = (cfg && cfg.tasks) || {};
     // 注意：claim（定期收取积分）内部 7 天节流一次，不纳入「今日完成」判定，
     // 否则一周里有 6 天会永远显示「未完成」，自动循环无法收工。
-    const names = { sign: "签入", read: "阅读", daily: "每日活动", promos: "网页浏览", search: "搜索" };
+    const names = { sign: "签入", read: "阅读", daily: "每日活动", promos: "积分活动", search: "搜索" };
     const enabled = [];
     const pending = [];
     for (const key of ["sign", "read", "daily", "promos", "search"]) {

@@ -1,19 +1,13 @@
 import { useMemo, useState } from "react";
-import {
-  Button,
-  Empty,
-  GlassSurface,
-  Input,
-  Switch,
-  Table,
-  Tag,
-  toast,
-  type TableColumn,
-} from "@ttqtt/liquid-glass-react";
-import { api } from "../api/ipc";
+import { GlassButton, GlassSwitch } from "@ttqtt/liquid-glass-react";
+import { AppCard, Empty, Input, Modal, Table, Tag, toast, type TableColumn } from "../components/liquidGlassCompat";
+import { api, IS_WEB } from "../api/ipc";
 import { useAppState } from "../hooks/useAppState";
 import { AskTextModal } from "../components/AskTextModal";
 import type { Account, AccountRunStatus } from "../types";
+
+/** 千分位格式化（仪表盘大数字每三位加逗号；强制 en-US 分组，不随系统 locale 变化） */
+const fmtNum = (n: number | null | undefined) => (n ?? 0).toLocaleString("en-US");
 
 /** 最近执行：20260831 → 08-31 */
 function fmtLastRun(a: Account): string {
@@ -136,24 +130,48 @@ export function Dashboard({ onOpenAccount }: { onOpenAccount?: (id: string) => v
     await refreshAccounts();
   };
 
-  // 状态列「去登录」：直接发起授权登录（弹出独立浏览器），完成后刷新列表
+  // 状态列「去登录」
   const [loggingInId, setLoggingInId] = useState<string | null>(null);
-  const onLogin = async (a: Account) => {
-    // 登录在服务器容器内的 Chromium 执行，自动打开 noVNC 让用户看到授权页面
-    const novncUrl = `${location.protocol}//${location.hostname}:6080/vnc.html`;
-    window.open(novncUrl, "_blank");
+  // Web 模式下先弹窗确认 noVNC 操作步骤，再真正发起登录
+  const [loginConfirm, setLoginConfirm] = useState<Account | null>(null);
+
+  const doLogin = async (a: Account) => {
     setLoggingInId(a.id);
     try {
       const r = await api.login(a.id);
-      if (!r.ok) toast.error(r.error || "登录失败");
-      else toast.success("登录成功");
+      if (!r.ok) {
+        toast.error(r.error || r.message || "登录失败");
+        await refreshAccounts();
+        return;
+      }
+      // 首次登录成功后自动同步一次账户信息（Cookie→积分→阅读进度），免去手动点「刷新状态」
+      toast.success("登录成功，正在同步账户信息…");
+      const rs = await api.sync(a.id);
+      if (!rs.ok) toast.info(rs.error || "自动同步失败，可手动点「刷新状态」重试");
+      else toast.success(rs.message || "账户信息已同步");
       await refreshAccounts();
     } catch (e) {
-      // rpc 层会把服务端 {ok:false,error} 抛成异常，这里必须接住，否则用户看不到任何反馈
       toast.error((e as Error)?.message || "登录失败");
     } finally {
       setLoggingInId(null);
     }
+  };
+
+  const onLogin = (a: Account) => {
+    if (IS_WEB) {
+      setLoginConfirm(a);
+    } else {
+      void doLogin(a);
+    }
+  };
+
+  const onLoginConfirm = () => {
+    const a = loginConfirm;
+    setLoginConfirm(null);
+    if (!a) return;
+    const novncUrl = `${location.protocol}//${location.hostname}:6080/vnc.html`;
+    window.open(novncUrl, "_blank");
+    void doLogin(a);
   };
 
   const onAdd = async (name: string) => {
@@ -205,10 +223,9 @@ export function Dashboard({ onOpenAccount }: { onOpenAccount?: (id: string) => v
               title="打开账号详情"
               role="button"
             >
-              <span
-                className="nav-logo"
-                style={{ width: 26, height: 26, fontSize: 12, borderRadius: 7, marginTop: 2, flex: "0 0 auto" }}
-              >
+              {/* 头像与行内其它控件同用 32px 一档（去登录/操作按钮/开关轨道都是 32 高），
+                  不再单独压小 + marginTop 错位 */}
+              <span className="nav-logo" style={{ flex: "0 0 auto" }}>
                 {a.name.slice(0, 1).toUpperCase()}
               </span>
               <div style={{ minWidth: 0 }}>
@@ -241,15 +258,13 @@ export function Dashboard({ onOpenAccount }: { onOpenAccount?: (id: string) => v
           // 首次创建、从未登录过：状态位直接给「去登录」按钮
           if (!s.hasRefreshToken) {
             return (
-              <Button
-                variant="accent"
-                size="sm"
+              <GlassButton variant="glassProminent" controlSize="small"
                 onClick={() => void onLogin(a)}
                 disabled={running || loggingInId === a.id}
                 title="弹出浏览器完成微软授权登录"
               >
                 {loggingInId === a.id ? "登录中…" : "去登录"}
-              </Button>
+              </GlassButton>
             );
           }
           // 授权过但 Cookie 待同步：保持原来的「未登录」提示（详情页可点 ⟳ 刷新状态）
@@ -267,7 +282,7 @@ export function Dashboard({ onOpenAccount }: { onOpenAccount?: (id: string) => v
         align: "right",
         sortable: true,
         sorter: (x, y) => (x.state?.todayPoints || 0) - (y.state?.todayPoints || 0),
-        render: (a) => <span className="num">{a.state?.todayPoints || 0}</span>,
+        render: (a) => <span className="num">{fmtNum(a.state?.todayPoints)}</span>,
       },
       {
         key: "balance",
@@ -276,7 +291,7 @@ export function Dashboard({ onOpenAccount }: { onOpenAccount?: (id: string) => v
         align: "right",
         sortable: true,
         sorter: (x, y) => (x.state?.lastBalance || 0) - (y.state?.lastBalance || 0),
-        render: (a) => <span className="num">{(a.state?.lastBalance || 0).toLocaleString()}</span>,
+        render: (a) => <span className="num">{fmtNum(a.state?.lastBalance)}</span>,
       },
       {
         key: "pending",
@@ -319,31 +334,27 @@ export function Dashboard({ onOpenAccount }: { onOpenAccount?: (id: string) => v
       {
         key: "act",
         title: "操作",
-        width: 132,
+        width: 180,
         align: "right",
         render: (a) => (
-          <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end" }}>
-            <Button
-              variant="accent"
-              size="sm"
+          <div className="account-actions">
+            <GlassButton variant="glassProminent" controlSize="small" radius={9}
               onClick={() => void onRun(a.id)}
               disabled={running}
               title="运行此账号"
             >
               ▶
-            </Button>
-            <Button
-              variant="glass"
-              size="sm"
+            </GlassButton>
+            <GlassButton variant="glass" controlSize="small" radius={9}
               onClick={() => onOpenAccount?.(a.id)}
               title="查看详情"
             >
               ⋯
-            </Button>
-            <Switch
+            </GlassButton>
+            <GlassSwitch
+              className="account-enabled-switch"
               checked={a.enabled}
               onCheckedChange={(v) => void onToggle(a, v)}
-              size="sm"
               aria-label="启用或停用此账户"
             />
           </div>
@@ -354,28 +365,28 @@ export function Dashboard({ onOpenAccount }: { onOpenAccount?: (id: string) => v
   return (
     <>
       <div className="stat-row">
-        <GlassSurface className="stat-inner" radius={16}>
+        <AppCard className="stat-inner" padding={14} radius={16}>
           <div className="stat-label">账号数量</div>
           <div className="stat-value">{stats?.total ?? 0}</div>
           <div className="stat-hint">已启用 {stats?.enabled ?? 0} 个</div>
-        </GlassSurface>
-        <GlassSurface className="stat-inner" radius={16}>
+        </AppCard>
+        <AppCard className="stat-inner" padding={14} radius={16}>
           <div className="stat-label">已登录</div>
           <div className="stat-value">{stats?.loggedIn ?? 0}</div>
           <div className="stat-hint">Cookie 有效的账号</div>
-        </GlassSurface>
-        <GlassSurface className="stat-inner" radius={16}>
+        </AppCard>
+        <AppCard className="stat-inner" padding={14} radius={16}>
           <div className="stat-label">今日积分</div>
-          <div className="stat-value">{stats?.todayPoints ?? 0}</div>
+          <div className="stat-value">{fmtNum(stats?.todayPoints)}</div>
           <div className="stat-hint">所有账号今日合计</div>
-        </GlassSurface>
-        <GlassSurface className="stat-inner" radius={16}>
+        </AppCard>
+        <AppCard className="stat-inner" padding={14} radius={16}>
           <div className="stat-label">今日进度</div>
           <div className="stat-value">
             {stats?.dayDone ?? 0}/{stats?.enabled ?? 0}
           </div>
           <div className="stat-hint">已收工 / 已启用账号</div>
-        </GlassSurface>
+        </AppCard>
       </div>
 
       <div className="block">
@@ -393,23 +404,21 @@ export function Dashboard({ onOpenAccount }: { onOpenAccount?: (id: string) => v
               style={{ width: 160 }}
               aria-label="搜索账号"
             />
-            <Button
-              variant="accent"
-              size="sm"
+            <GlassButton variant="glassProminent" controlSize="small"
               onClick={() => void onRunSelected()}
               disabled={running || selected.size === 0}
               title={selected.size === 0 ? "先勾选要运行的账号" : "串行运行勾选账号"}
             >
               ▶ 运行选中{selected.size > 0 ? ` (${selected.size})` : ""}
-            </Button>
-            <Button variant="glass" size="sm" onClick={() => setAddOpen(true)}>
+            </GlassButton>
+            <GlassButton variant="glass" controlSize="small" onClick={() => setAddOpen(true)}>
               ＋ 新增账号
-            </Button>
+            </GlassButton>
           </div>
         </div>
 
-        {/* 长列表：关闭折射，避免背景扭曲在表格上过度干扰文字 */}
-        <GlassSurface refraction="off" radius={16} material="clear">
+        {/* 账户列表与统计卡共用内容材质，文字不受控制层折射干扰。 */}
+        <AppCard className="account-list-card" padding={16} radius={16}>
           <Table
             columns={columns}
             data={rows}
@@ -427,7 +436,7 @@ export function Dashboard({ onOpenAccount }: { onOpenAccount?: (id: string) => v
               )
             }
           />
-        </GlassSurface>
+        </AppCard>
       </div>
 
       <AskTextModal
@@ -439,6 +448,33 @@ export function Dashboard({ onOpenAccount }: { onOpenAccount?: (id: string) => v
         onOk={onAdd}
         onClose={() => setAddOpen(false)}
       />
+
+      <Modal
+        open={!!loginConfirm}
+        onOpenChange={(o) => { if (!o) setLoginConfirm(null); }}
+        title="登录说明"
+        size="md"
+        footer={
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <GlassButton variant="plain" controlSize="small" onClick={() => setLoginConfirm(null)}>
+              取消登录
+            </GlassButton>
+            <GlassButton variant="glassProminent" controlSize="small" onClick={onLoginConfirm}>
+              打开远程桌面
+            </GlassButton>
+          </div>
+        }
+      >
+        <div style={{ lineHeight: 1.8 }}>
+          <p>登录将在 <b>服务器浏览器</b> 中完成，请按以下步骤操作：</p>
+          <ol style={{ paddingLeft: 20, margin: "8px 0" }}>
+            <li>点击下方「打开远程桌面」按钮，会在新标签页打开 noVNC</li>
+            <li>在 noVNC 页面中点击 <b>「连接」</b> 按钮进入远程桌面</li>
+            <li>在远程桌面的浏览器中完成微软账号授权登录</li>
+            <li>登录成功后远程桌面会显示「登录已完成」，返回本页面即可</li>
+          </ol>
+        </div>
+      </Modal>
     </>
   );
 }

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Button, Input, Modal } from "@ttqtt/liquid-glass-react";
+import { GlassButton } from "@ttqtt/liquid-glass-react";
+import { Input, Modal } from "./liquidGlassCompat";
 
 /**
  * 文本输入弹窗。Electron 环境没有原生 prompt，
@@ -54,12 +55,12 @@ export function AskTextModal({
       size="sm"
       footer={
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-          <Button variant="ghost" size="sm" onClick={onClose}>
+          <GlassButton variant="plain" controlSize="small" onClick={onClose}>
             取消
-          </Button>
-          <Button variant="accent" size="sm" onClick={submit} loading={busy} disabled={!value.trim()}>
+          </GlassButton>
+          <GlassButton variant="glassProminent" controlSize="small" onClick={submit} loading={busy} disabled={!value.trim()}>
             {okText}
-          </Button>
+          </GlassButton>
         </div>
       }
     >

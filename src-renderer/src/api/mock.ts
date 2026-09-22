@@ -52,6 +52,9 @@ const DEFAULT_CONFIG: AppConfig = {
     enable: true,
     items: [{ name: "积分目标", scope: "balance", target: 300, rewardName: "", showDashboard: true }],
   },
+  browser: {
+    fingerprint: { enable: false, seed: 0, brand: "Chrome", hardwareConcurrency: 0 },
+  },
 };
 
 const DEFAULT_APPEARANCE: Appearance = {
@@ -250,7 +253,7 @@ const mockLogs = [
   "[2026-08-31 09:12:04] [INFO] 已加载 3 个账户",
   "[2026-08-31 09:12:10] [OK] 示例账户 A：签入完成 +15",
   "[2026-08-31 09:12:31] [OK] 示例账户 A：阅读 10/10 篇 +30",
-  "[2026-08-31 09:13:02] [WARN] 示例账户 A：网页浏览活动超时，下轮重试",
+  "[2026-08-31 09:13:02] [WARN] 示例账户 A：积分活动超时，下轮重试",
   "[2026-08-31 09:14:44] [OK] 示例账户 B：今日任务全部完成",
 ];
 
@@ -455,7 +458,7 @@ export function createMockApi(): ElectronApi {
         mk("2026-08-31 09:12:10", "INFO", `===== 开始运行账户「${name}」 =====`),
         mk("2026-08-31 09:12:12", "OK", "签入完成 +15 分"),
         mk("2026-08-31 09:12:40", "OK", "阅读 10/10 篇 +30 分"),
-        mk("2026-08-31 09:13:02", "WARN", "网页浏览活动超时，下轮重试"),
+        mk("2026-08-31 09:13:02", "WARN", "积分活动超时，下轮重试"),
       ];
     },
     getAccountLogDays: async () => ["2026-08-31", "2026-08-30"],
@@ -469,6 +472,26 @@ export function createMockApi(): ElectronApi {
     },
     chromiumStatus: async () => ({ ready: true, executable: null }),
     installBrowser: async () => ({ ok: true, method: "mock" }),
+    fingerprintStatus: async () => ({
+      supported: true,
+      platform: "win32",
+      ready: false,
+      executable: null,
+      version: null,
+      pinned: "148.0.7778.215",
+      installDir: "<storage>/fingerprint-chromium",
+      downloadUrl: null,
+    }),
+    installFingerprint: async () => ({ ok: true, version: "148.0.7778.215", method: "mock" }),
+    uninstallFingerprint: async () => ({ ok: true }),
+    checkFingerprintUpdate: async () => ({
+      ok: true,
+      latest: "148.0.7778.215",
+      installed: null,
+      pinned: "148.0.7778.215",
+      updateAvailable: false,
+      reinstallAvailable: true,
+    }),
 
     onRunning: noop,
     onLog: noop,
@@ -476,6 +499,9 @@ export function createMockApi(): ElectronApi {
     onAppearance: noop,
     onBgProgress: () => () => {},
     onChromiumStatus: noop,
+    onFingerprintStatus: noop,
+    // 模拟端没有真实下载，但保留接口以避免 Sidebar 在 mock 下崩溃。
+    onInstallProgress: () => () => {},
     onAccountStatus: (cb) => {
       statusCbs.add(cb);
       return () => statusCbs.delete(cb);

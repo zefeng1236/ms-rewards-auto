@@ -1,10 +1,5 @@
-import {
-  Input,
-  InputNumber,
-  Select,
-  Switch,
-  type SelectOption,
-} from "@ttqtt/liquid-glass-react";
+import { GlassSwitch } from "@ttqtt/liquid-glass-react";
+import { Input, InputNumber, Select, SelectOption } from "./liquidGlassCompat";
 
 /** 带说明文字的开关行 */
 export function SwitchField({
@@ -26,7 +21,7 @@ export function SwitchField({
         <div>{label}</div>
         {hint && <div className="hint">{hint}</div>}
       </div>
-      <Switch checked={checked} onCheckedChange={onChange} disabled={disabled} />
+      <GlassSwitch aria-label="开关" checked={checked} onCheckedChange={onChange} disabled={disabled} />
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Button, Modal } from "@ttqtt/liquid-glass-react";
+import { GlassButton } from "@ttqtt/liquid-glass-react";
+import { Modal } from "./liquidGlassCompat";
 
 /**
  * 第三方随机图片免责声明。
@@ -41,12 +42,12 @@ export function DisclaimerModal({
       size="md"
       footer={
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-          <Button variant="ghost" size="sm" onClick={onCancel}>
+          <GlassButton variant="plain" controlSize="small" onClick={onCancel}>
             不启用
-          </Button>
-          <Button variant="accent" size="sm" onClick={onAgree} disabled={left > 0}>
+          </GlassButton>
+          <GlassButton variant="glassProminent" controlSize="small" onClick={onAgree} disabled={left > 0}>
             {left > 0 ? `确定启用（${left}s）` : "确定启用"}
-          </Button>
+          </GlassButton>
         </div>
       }
     >

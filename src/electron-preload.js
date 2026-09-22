@@ -94,12 +94,25 @@ contextBridge.exposeInMainWorld("api", {
   getAccountLogHistory: (id, day) => ipcRenderer.invoke("app:getAccountLogHistory", id, day),
   chromiumStatus: () => ipcRenderer.invoke("app:chromiumStatus"),
   installBrowser: () => ipcRenderer.invoke("app:installBrowser"),
+  fingerprintStatus: () => ipcRenderer.invoke("app:fingerprintStatus"),
+  installFingerprint: (opts) => ipcRenderer.invoke("app:installFingerprint", opts),
+  uninstallFingerprint: () => ipcRenderer.invoke("app:uninstallFingerprint"),
+  checkFingerprintUpdate: () => ipcRenderer.invoke("app:checkFingerprintUpdate"),
 
   // 实时运行状态（主进程在任务开始/结束时推送）
   onRunning: (cb) => ipcRenderer.on("running", (_e, v) => cb(v)),
   onLog: (cb) => ipcRenderer.on("log", (_e, line) => cb(line)),
   // Chromium 就绪状态变化时推送（后台自动安装 / 手动安装完成后刷新徽标）
   onChromiumStatus: (cb) => ipcRenderer.on("chromium-status", (_e, v) => cb(v)),
+  // 指纹浏览器状态变化推送（安装 / 卸载后刷新面板）
+  onFingerprintStatus: (cb) => ipcRenderer.on("fingerprint-status", (_e, v) => cb(v)),
+  // Chromium 安装进度推送：{ stage, message?, pct?, speed?, eta?, loaded?, total? }
+  // 返回退订函数，组件卸载时调用避免重复订阅
+  onInstallProgress: (cb) => {
+    const handler = (_e, v) => cb(v);
+    ipcRenderer.on("install-progress", handler);
+    return () => ipcRenderer.removeListener("install-progress", handler);
+  },
   // 每账号运行态变更推送：{ id, status, reason }
   // 返回退订函数，组件卸载时调用避免重复订阅
   onAccountStatus: (cb) => {

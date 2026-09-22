@@ -233,7 +233,7 @@ async function runOnce(ctx, opts = {}) {
     lines.push(`📆 每日活动: ${dailyDone ? "已完成" + (dailyPoint > 0 ? ` +${dailyPoint} 分` : "") : rDaily && rDaily.status === "error" ? `失败(${rDaily.error || "未知错误"})` : "未运行"}`);
   }
 
-  lines.push(`🧩 网页浏览: ${promosPoint > 0 ? promosPoint + " 分(累计)" : "未运行"}`);
+  lines.push(`🧩 积分活动: ${promosPoint > 0 ? promosPoint + " 分(累计)" : "未运行"}`);
 
   // 搜索：显示「已完成多少、还剩多少」，而不是只说「已完成」
   const sp2 = (rSearch && rSearch.progress) || tasks.searchProgressSnapshot(state);

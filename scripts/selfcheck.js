@@ -161,6 +161,9 @@ checkTrue("向导加密页对已配置保险库渲染「已就绪」分支而非
 /* ============ 8. 忘记密码自救：重置密码 + 清空账号数据 ============ */
 console.log("\n【8】忘记密码自救（重置密码 / 清空账号数据）");
 const wipeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ms-rewards-wipe-selfcheck-"));
+// 本段会把存储目录整体改到临时根上（避免清空真实数据）。改之前先备份原值，
+// 结束后必须还原 —— 详见段末的说明。
+const prevStorageDir = process.env.MS_REWARDS_STORAGE_DIR;
 process.env.MS_REWARDS_STORAGE_DIR = path.join(wipeRoot, "storage");
 
 const appearance = require(path.join(ROOT, "src", "appearance.js"));
@@ -207,6 +210,12 @@ check("清空后启动设置保留", launch.get().autoLaunch, true);
 // 账号与保险库都被删除 → 向导状态必须重置，下次启动重新引导（含重新建库）
 checkTrue("清空返回标记向导已重置", wr.wizardReset === true);
 check("清空后向导状态被重置（重新引导）", setupMod.get().done, false);
+// 先还原存储目录，再删临时根。
+// 踩过的坑：本段把 MS_REWARDS_STORAGE_DIR 改到了 wipeRoot，而 appearance/launch/
+// setup 等模块在 require 时就把文件路径绑死在它上面（storage-path 每次读 env，
+// 但这些模块自己缓存了拼接结果）。若不还原就删目录，后续任何一次存储写入都会
+// 指向一个已删除的路径 —— 曾让【15】写 appearance.json 时直接 ENOENT 崩掉整个自检。
+process.env.MS_REWARDS_STORAGE_DIR = prevStorageDir;
 fs.rmSync(wipeRoot, { recursive: true, force: true });
 
 /* ============ 9. 自救面板静态守卫 ============ */
@@ -438,6 +447,10 @@ const mockSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "api", "m
 check("config.DEFAULTS 含 limits", cfgDefaults.limits, { random: false, read: 0, promos: 0 });
 check("global-config 默认值同步含 limits", globalDefaults.limits, { random: false, read: 0, promos: 0 });
 checkTrue("渲染层 mock 默认值同步含 limits", /limits: \{ random: false, read: 0, promos: 0 \}/.test(mockSrc));
+// 0.9.4 白屏根因：global-config 的 GLOBAL_DEFAULTS 缺 goals，旧配置文件只有
+// { enable: true } 无 items，全局设置页 value.goals.items 抛 TypeError。必须与
+// config.DEFAULTS.goals 对齐，带 items: [] 兜底。
+check("global-config 默认值含 goals.items 兜底", globalDefaults.goals, { enable: true, items: [] });
 for (const [name, d] of [["config", cfgDefaults], ["global-config", globalDefaults]]) {
   check(`${name} 随机延迟默认 开启/20/300`, [d.schedule.randomDelay, d.schedule.randomDelayMin, d.schedule.randomDelayMax], [true, 20, 300]);
 }
@@ -445,9 +458,12 @@ checkTrue("渲染层 mock 随机延迟默认同步", /randomDelay: true,\s*\n\s*
 
 // —— 静态守卫：设置页 ——
 const formSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "components", "SettingsForm.tsx"), "utf8");
-checkTrue("设置页有阅读/网页浏览单次数量输入", /阅读文章每次篇数/.test(formSrc) && /网页浏览每次个数/.test(formSrc));
+checkTrue("设置页有阅读/积分活动单次数量输入", /阅读文章每次篇数/.test(formSrc) && /积分活动每次个数/.test(formSrc));
 checkTrue("设置页有随机波动开关", /limits: \{ random: v \}/.test(formSrc));
 checkTrue("设置页有随机延迟开关与区间", /randomDelay: v/.test(formSrc) && /randomDelayMin/.test(formSrc) && /randomDelayMax/.test(formSrc));
+// 0.9.4 白屏根因（渲染层防御）：goals 只用 ?? 兜底，遇到 { enable: true } 缺 items 时
+// goals.items.length 抛错。必须逐字段兜底，用 Array.isArray 判 items。
+checkTrue("设置页 goals.items 用 Array.isArray 兜底", /Array\.isArray\(value\.goals\?\.items\)/.test(formSrc));
 
 console.log("\n【14】每日活动 / 定期收取积分开关 与 IP 多服务商");
 const ipLookup = require(path.join(ROOT, "src", "ip-lookup.js"));
@@ -516,7 +532,13 @@ const ev2 = st.evaluateDayDone({ tasks: { sign: true, read: true, daily: false, 
 check("关闭每日活动后不参与今日完成判定", ev2.done, true);
 
 // —— 静态守卫：主进程接线 ——
-checkTrue("tasks.js 导出 taskDaily", /taskSign, taskRead, taskDaily, taskPromos/.test(tasksSource));
+// ⚠️ tasks.js 的 module.exports 是多行格式（0.9.4.16 起导出 reportActivityFallback 等，
+// 单行正则会误判），这里按「同一行还是有 next-line export」两种写法兼容。
+checkTrue(
+  "tasks.js 导出 taskDaily",
+  /taskSign, taskRead, taskDaily, taskPromos/.test(tasksSource) ||
+    (/^\s*taskDaily,$/m.test(tasksSource) && /module\.exports = \{[\s\S]*?taskDaily/.test(tasksSource))
+);
 checkTrue("taskDaily 受 tasks.daily 开关守卫", /if \(!cfg\.tasks\.daily/.test(tasksSource));
 checkTrue("taskDaily 用独立 daily 完成标记", /setTaskDone\("daily"/.test(tasksSource));
 checkTrue("taskPromos 只处理 earn 页（不再抓 dashboard dailySet）",
@@ -535,7 +557,7 @@ checkTrue("state 每日累计含 dailyPoint 且跨天清零", /dailyPoint: 0,/.t
 // —— 静态守卫：渲染层 ——
 checkTrue("设置页有「每日活动」开关", /key: "daily", label: "每日活动"/.test(formSrc));
 checkTrue("设置页有「定期收取积分」开关", /key: "claim", label: "定期收取积分"/.test(formSrc));
-checkTrue("设置页 promos 文案改为「网页浏览」", /key: "promos", label: "网页浏览"/.test(formSrc));
+checkTrue("设置页 promos 文案改为「积分活动」", /key: "promos", label: "积分活动"/.test(formSrc));
 checkTrue("设置页有 IP 服务下拉", /IP_PROVIDER_OPTIONS/.test(formSrc) && /IP 归属地查询服务/.test(formSrc));
 checkTrue("设置页可选 ip.sb / 太平洋 / ipinfo / ip-api / Bing",
   /value: "ipsb"/.test(formSrc) && /value: "pconline"/.test(formSrc) && /value: "ipinfo"/.test(formSrc) &&
@@ -543,6 +565,800 @@ checkTrue("设置页可选 ip.sb / 太平洋 / ipinfo / ip-api / Bing",
 checkTrue("类型定义含 IpProvider 联合类型", /type IpProvider = "auto" \| "ipsb" \| "pconline" \| "ipinfo" \| "ipapi" \| "bing"/.test(typesSrc));
 const detailSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "views", "AccountDetail.tsx"), "utf8");
 checkTrue("账户详情页有条件渲染的「每日活动」卡片", /dailyEnabled/.test(detailSrc) && /label="每日活动"/.test(detailSrc));
+
+/* ============ 15. 版本号口径 与 面板不透明度下限 ============ */
+console.log("\n【15】版本号（三段 semver + 小版本号）与面板不透明度下限");
+// 版本号分两层：version 必须是三段合法 semver —— npm / CI / Docker 都不认四段；
+// 「小版本号」放 build.buildNumber，由 electron-builder 自动派生成 0.9.4.1，
+// 用于安装包文件名（artifactName 的 ${buildVersion} 宏）与 exe 的 Windows 版本资源。
+// 守卫目的：防止有人直接把四段写进 version，那会连带打断 npm ci / 打包。
+const pkgRaw = require(path.join(ROOT, "package.json"));
+checkTrue(
+  "package.json version 保持三段合法 semver（四段会打断 npm/CI）",
+  /^\d+\.\d+\.\d+$/.test(pkgRaw.version),
+  `实际 ${pkgRaw.version}`
+);
+checkTrue(
+  "顶层 buildNumber 为纯数字（小版本号来源）",
+  /^\d+$/.test(String(pkgRaw.buildNumber || "")),
+  `实际 ${JSON.stringify(pkgRaw.buildNumber)}`
+);
+// ⚠️ 防回退：小版本号绝不能写在 build 段里。electron-builder 会把 build 段从打进
+// asar 的那份 package.json 里剔除（fileTransformer 黑名单），运行时读不到 ——
+// 曾因此让安装包名是 0.9.4.1、窗口标题却退回 0.9.4。
+checkTrue(
+  "小版本号不在 build 段（build 段会被剔除，运行时读不到）",
+  pkgRaw.build.buildNumber === undefined,
+  `build.buildNumber = ${JSON.stringify(pkgRaw.build.buildNumber)}`
+);
+checkTrue(
+  "打包时通过 beforePack 钩子把顶层 buildNumber 同步给 electron-builder",
+  pkgRaw.build.beforePack === "scripts/beforePack.js"
+);
+checkTrue(
+  "artifactName 用 ${buildVersion} 宏（否则安装包名丢第四段）",
+  pkgRaw.build.win.artifactName.includes("${buildVersion}"),
+  pkgRaw.build.win.artifactName
+);
+const versionMod = require(path.join(ROOT, "src", "version.js"));
+// buildNumber 为 "0" 表示正式版：展示/文件名都用干净三段（0.10.0），
+// 递增到 1、2… 才回到四位（0.10.0.1）。version.js / beforePack / version.ts 三处同规则。
+const expectDisplay =
+  String(pkgRaw.buildNumber) === "0"
+    ? String(pkgRaw.version)
+    : `${pkgRaw.version}.${pkgRaw.buildNumber}`;
+check("展示版本（正式版三段 / 热修四位）", versionMod.displayVersion(), expectDisplay);
+checkTrue(
+  "beforePack 对 buildNumber=0 输出三段 buildVersion（正式版文件名不带 .0）",
+  /buildNumber === "0" \? appInfo\.version :/.test(
+    fs.readFileSync(path.join(ROOT, "scripts", "beforePack.js"), "utf8")
+  )
+);
+checkTrue(
+  "正式版安装包名不带 -test 后缀",
+  !/-test/.test(pkgRaw.build.win.artifactName),
+  pkgRaw.build.win.artifactName
+);
+const mainSrcVer = fs.readFileSync(path.join(ROOT, "src", "electron-main.js"), "utf8");
+checkTrue(
+  "窗口标题走 displayVersion()（标题栏能看出小版本号）",
+  /title: `Microsoft Rewards 自动任务 v\$\{displayVersion\(\)\}`/.test(mainSrcVer)
+);
+const serverSrcVer = fs.readFileSync(path.join(ROOT, "src", "server.js"), "utf8");
+checkTrue(
+  "健康检查两个端点都走 displayVersion()",
+  (serverSrcVer.match(/require\("\.\/version"\)\.displayVersion\(\)/g) || []).length === 2
+);
+// 侧边栏左下角的版本号来自 src-renderer/src/version.ts（纯前端模块读不到 package.json），
+// 漂移了就等于给用户看错版本 —— 这里锁死同步。
+const rVerSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "version.ts"), "utf8");
+const rVerM = rVerSrc.match(/APP_VERSION\s*=\s*"([^"]+)"/) || [];
+const rBuildM = rVerSrc.match(/BUILD_NUMBER\s*=\s*(\d+)/) || [];
+checkTrue(
+  "渲染层 version.ts 与 package.json 版本同步（APP_VERSION + BUILD_NUMBER）",
+  rVerM[1] === pkgRaw.version && Number(rBuildM[1]) === Number(pkgRaw.buildNumber),
+  `version.ts=${rVerM[1]}.${rBuildM[1]} vs package.json=${pkgRaw.version}.${pkgRaw.buildNumber}`
+);
+
+// 不透明度：滑块 min 与主进程 clamp 必须同口径 —— 否则要么拖不到 20%，
+// 要么拖到了又被主进程悄悄夹回去（表现为「滑块动了、值却弹回」）。
+// 用一份独立的模块实例 + 自建临时存储根来跑下限断言。
+// 不复用前面那份：模块在 require 时就绑定了文件路径，而【8】已把它的目录删了。
+const opRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ms-rewards-opacity-selfcheck-"));
+const opEnvBackup = process.env.MS_REWARDS_STORAGE_DIR;
+process.env.MS_REWARDS_STORAGE_DIR = path.join(opRoot, "storage");
+const appearancePath = require.resolve(path.join(ROOT, "src", "appearance.js"));
+delete require.cache[appearancePath];
+const appearanceIso = require(appearancePath);
+appearanceIso.set({ opacity: 0.2 });
+check("0.20 可保存（滑块下限能落到）", appearanceIso.get().opacity, 0.2);
+appearanceIso.set({ opacity: 0.01 });
+check("低于 0.20 被夹到 0.20（面板不会全透明）", appearanceIso.get().opacity, 0.2);
+appearanceIso.set({ opacity: 0.19 });
+check("0.19 同样夹到 0.20", appearanceIso.get().opacity, 0.2);
+appearanceIso.set({ opacity: 1 });
+check("上限仍为 1.00", appearanceIso.get().opacity, 1);
+delete require.cache[appearancePath];
+process.env.MS_REWARDS_STORAGE_DIR = opEnvBackup;
+fs.rmSync(opRoot, { recursive: true, force: true });
+const personalizeSrc = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "views", "Personalize.tsx"),
+  "utf8"
+);
+checkTrue("个性化页滑块下限为 min={20}", /min=\{20\}/.test(personalizeSrc));
+checkTrue("类型注释已同步 0.20 – 1.00", /0\.20 – 1\.00/.test(typesSrc));
+
+// 第三方声明 / 开源许可文件：安装包必须随包分发 LICENSE 与 THIRD_PARTY_NOTICES.md。
+// 背景：上游 @ttqtt/liquid-glass-react 自带 THIRD_PARTY_NOTICES（声明它参考了
+// shuding/liquid-glass、Apple 等），本项目此前既无 LICENSE 也无第三方声明 ——
+// package.json 只有 license:"MIT" 字段、build.files 白名单不含任何许可文件。
+const licensePath = path.join(ROOT, "LICENSE");
+const noticesPath = path.join(ROOT, "THIRD_PARTY_NOTICES.md");
+checkTrue("根目录存在 LICENSE 文件", fs.existsSync(licensePath));
+checkTrue("根目录存在 THIRD_PARTY_NOTICES.md（第三方声明）", fs.existsSync(noticesPath));
+checkTrue(
+  "LICENSE 为 MIT 许可正文",
+  fs.existsSync(licensePath) &&
+    /MIT License/.test(fs.readFileSync(licensePath, "utf8")) &&
+    /Permission is hereby granted/.test(fs.readFileSync(licensePath, "utf8"))
+);
+checkTrue(
+  "build.files 白名单包含 LICENSE 与 THIRD_PARTY_NOTICES.md（否则打不进包）",
+  Array.isArray(pkgRaw.build.files) &&
+    pkgRaw.build.files.includes("LICENSE") &&
+    pkgRaw.build.files.includes("THIRD_PARTY_NOTICES.md"),
+  JSON.stringify(pkgRaw.build.files)
+);
+
+// EULA：安装器必须带「禁止商用」的最终用户许可协议页。
+// 私有仓库 + 只发 exe 的现状下，「禁止他人商用」靠两层：源码层靠闭源（已天然实现）、
+// 二进制层靠 EULA。electron-builder 的 nsis.license 指向 build/license.txt，
+// 安装时 MUI2 弹协议页、需勾选「同意」才能继续。
+const eulaPath = path.join(ROOT, "build", "license.txt");
+checkTrue("安装器 EULA 文件 build/license.txt 存在", fs.existsSync(eulaPath));
+checkTrue(
+  "EULA 含非商业使用限制（非商业 / 商业目的 / 转售）",
+  fs.existsSync(eulaPath) &&
+    /非商业/.test(fs.readFileSync(eulaPath, "utf8")) &&
+    /商业目的/.test(fs.readFileSync(eulaPath, "utf8")) &&
+    /转售/.test(fs.readFileSync(eulaPath, "utf8"))
+);
+checkTrue(
+  "nsis.license 指向 EULA（否则安装器不弹协议页）",
+  pkgRaw.build.nsis && pkgRaw.build.nsis.license === "license.txt",
+  JSON.stringify(pkgRaw.build.nsis && pkgRaw.build.nsis.license)
+);
+
+/* ============ 16. 账户表控件同档 + 关于页 WorkBuddy 徽章 ============ */
+console.log("\n【16】账户表行内控件同档（32px）与 WorkBuddy 官方徽章");
+// 背景：上游把玻璃档 --lg-control-height 内联成 44px，会盖过库自己的 small=32px；
+// 曾靠把操作列压到 26px「凑」视觉，结果一行里 26/32/44 三种高度混排（用户截图）。
+// 现在统一：表格内 small 按钮 min-height:32px，头像回到 .nav-logo 默认 32px。
+const globalCss = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "styles", "global.css"),
+  "utf8"
+);
+checkTrue(
+  "表格内 small 按钮统一 32px（压过上游内联 44px）",
+  /\.compat-table \.lg-button\[data-control-size="small"\]\s*\{\s*min-height:\s*32px/.test(globalCss)
+);
+checkTrue(
+  "旧的 26px 压扁方案已废弃（不得回流）",
+  !/--lg-control-height:\s*26px/.test(globalCss)
+);
+const dashSrc = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "views", "Dashboard.tsx"),
+  "utf8"
+);
+checkTrue(
+  "账户头像走 .nav-logo 默认 32px（无内联 26px 覆写）",
+  !/nav-logo[^>]*width:\s*26/.test(dashSrc) && /className="nav-logo"/.test(dashSrc)
+);
+// WorkBuddy 友链标识：保持官方 title SVG「圆角方块」底（rx=120.842/560≈22%）。
+// 0.9.4.10 曾误换成 favicon 版（viewBox 0 0 40 40 / rx=20 = 正圆底），用户反馈
+// 「我最开始的版本是方的啊，你怎么给我改圆了」→ 0.9.4.11 回退，由下方
+// 【18】末尾的「官方圆角方块」守卫把关（此处不再断言 40 viewBox）。
+
+/* ============ 17. 光晕覆盖卡片/开关 + 默认深色必应 + 浅色关反射 + 氛围光可见 ============ */
+console.log("\n【17】指针光晕覆盖卡片与开关、默认外观、浅色反射与氛围光层级");
+// 默认外观：深色 + 必应每日一图（安装即体验，而非跟随系统/内置壁纸）
+checkTrue("默认深浅模式为 dark", appearance.DEFAULTS.mode === "dark");
+checkTrue("默认背景为必应每日一图 bing", appearance.DEFAULTS.bgType === "bing");
+
+// 光晕此前只绑 .lg-surface，内容卡片是 .lg-material-view、开关是 .lg-switch，
+// 导致「大部分卡片」「开关」都没有跟随光斑（用户反馈）。现在统一三类。
+// 断言必须核对 HALO_SELECTOR 常量的完整值（而非零散字符串——否则命中注释里
+// 的同名 class，selector 回退到 .lg-surface 也照样假绿）。
+const haloSrc = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "hooks", "useLiquidGlassHalo.ts"),
+  "utf8"
+);
+checkTrue(
+  "光晕选择器 HALO_SELECTOR 同时覆盖 .lg-material-view 与 .lg-switch-track",
+  /HALO_SELECTOR\s*=\s*"[\s\S]*?\.lg-material-view[\s\S]*?\.lg-switch-track[\s\S]*?"/.test(haloSrc)
+);
+
+// 浅色下关闭玻璃反射高光（.lg-glow / .lg-decoration::after）：
+// 否则白底上的白光会把蓝主按钮洗白，hover 时白字消失。
+checkTrue(
+  "浅色主题关闭反射高光层",
+  /:root\[data-theme="light"\]\s*\.lg-glow/.test(globalCss) &&
+    /:root\[data-theme="light"\]\s*\.lg-decoration::after/.test(globalCss)
+);
+
+// 氛围光 body::before 必须高于壁纸层（.bg-layer z-index:0），否则被壁纸盖住看不见。
+checkTrue("氛围光层提到壁纸之上（z-index 1）", /body::before\s*\{[^}]*z-index:\s*1/m.test(globalCss));
+
+/* ============ 18. 0.9.4.5：Chromium 安装走 npmmirror + 进度条 + 开关主题色 + 友链 logo 不被光晕糊 ============ */
+console.log("\n【18】Chromium 镜像下载 / 进度条 / 开关主题色 / 友链 logo");
+
+// ensure-deps.js 必须暴露 npmmirror host + probe 函数
+const ensureDepsSrc = fs.readFileSync(path.join(ROOT, "src", "ensure-deps.js"), "utf8");
+checkTrue(
+  "Chromium 默认走 npmmirror 镜像（PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST）",
+  /PLAYWRIGHT_CHROMIUM_DOWNLOAD_HOST[\s\S]*NPMMIRROR_HOST/.test(ensureDepsSrc)
+);
+checkTrue(
+  "镜像失败回落官方源",
+  /OFFICIAL_HOST_DEFAULT/.test(ensureDepsSrc) && /tryInstallWithMirror\(OFFICIAL_HOST_DEFAULT/.test(ensureDepsSrc)
+);
+checkTrue(
+  "进度条节流输出（≥2s 或 ≥5%）",
+  /lastEmitMs[\s\S]{0,100}>= 2000[\s\S]{0,100}Math\.abs\(pct - lastEmitPct\) >= 5/.test(ensureDepsSrc)
+);
+checkTrue(
+  "进度 poll 直接读 os.tmpdir/playwright-download-*.zip",
+  /playwright-download-\\*[\s\S]*?\.zip\$/.test(ensureDepsSrc.replace(/\n/g,""))
+);
+
+// Sidebar 必须订阅 install-progress + 按钮样式类
+const sidebarSrc = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "components", "Sidebar.tsx"),
+  "utf8"
+);
+checkTrue("Sidebar 订阅 install-progress 事件", /onInstallProgress/.test(sidebarSrc));
+checkTrue("Sidebar 按钮有 is-progress / is-done 状态类", /is-progress/.test(sidebarSrc) && /is-done/.test(sidebarSrc));
+checkTrue("Sidebar 渲染 nav-install-fill 进度条", /nav-install-fill/.test(sidebarSrc));
+
+// global.css 开关 on 色映射到 accent
+checkTrue(
+  "开关 on 色跟随 accent（lg-switch-track[data-checked=true]）",
+  /\.lg-switch-track\[data-checked="?true"?\][^{]*\{[^}]*background:\s*var\(--accent/.test(globalCss)
+);
+
+// 0.9.4.6：--accent 此前只在 :root 写死，用户改主题色后开关等 var(--accent) 消费方不跟随。
+// App.tsx 必须把 appearance.accent 实时写到 <html> 的 --accent（用户反馈「主题色变更后开关没变化」）。
+// 反例验证：这是真正生效的运行时接线，不是纯 CSS 覆盖。
+checkTrue(
+  "App.tsx 把主题色写入 --accent（setProperty）",
+  /setProperty\(\s*"--accent"\s*,\s*appearance\.accent\s*\)/.test(
+    fs.readFileSync(path.join(ROOT, "src-renderer", "src", "App.tsx"), "utf8")
+  )
+);
+// 0.9.4.7：「鼠标指针光晕」开关此前只关项目自绘 halo，库自带 .lg-glow 跟手光斑不受控，
+// 深色下关掉开关后侧边栏等玻璃组件仍有光（用户反馈「关了光晕侧边栏还能触发」）。
+// App.tsx 必须在 pointerHalo===false 时挂 data-halo="off"，global.css 用它灭 .lg-glow。
+checkTrue(
+  "App.tsx pointerHalo=false 时挂 data-halo=off",
+  /pointerHalo === false[\s\S]{0,120}setAttribute\(\s*"data-halo"\s*,\s*"off"\)/.test(
+    fs.readFileSync(path.join(ROOT, "src-renderer", "src", "App.tsx"), "utf8")
+  )
+);
+checkTrue(
+  "global.css 用 data-halo=off 关掉库 .lg-glow",
+  /:root\[data-halo="off"\]\s*\.lg-glow\s*\{\s*opacity:\s*0\s*!important/.test(globalCss)
+);
+
+// .lg-switch 不再绑光晕（避免方框）
+const haloSrc2 = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "hooks", "useLiquidGlassHalo.ts"),
+  "utf8"
+);
+checkTrue(
+  "光晕 HALO_SELECTOR 不再绑 .lg-switch（只绑 .lg-switch-track）",
+  /\.lg-switch-track/.test(haloSrc2) && !/HALO_SELECTOR[\s\S]*?\.lg-switch\s*[,"]/.test(haloSrc2)
+);
+checkTrue(
+  "光晕 HALO_SELECTOR 排除 .friend-logo",
+  /\.friend-logo/.test(haloSrc2)
+);
+
+// 0.9.4.10：库给 .lg-surface 一律 18px 内边距，46px 的友链 logo 盒（border-box）
+// 内容区只剩 10×10，svg 溢出 auto 行从内容盒顶部起排 → 图标下坠 8/16px（用户反馈
+// 「友情链接里面的两个图标还是歪的」）。.friend-logo 必须清零 padding（双类选择器
+// .friend-logo.lg-surface 不必——这里只要求 padding: 0 出现在该规则内）。
+checkTrue(
+  "友链 logo 容器清零库 padding（防 46px 盒内容被 18px 压到 10×10 → 图标下坠）",
+  /\.friend-logo\s*\{[^}]*padding:\s*0/.test(globalCss)
+);
+
+// 0.9.4.11：WorkBuddy 友链标识必须保持官方「圆角方块」底（rx=120.842/560≈22%）。
+// 曾被误换成 favicon 版（viewBox 0 0 40 40 / rx=20 = 正圆底），用户反馈
+// 「我最开始的版本是方的啊，你怎么给我改圆了」→ 回退。此守卫防再次改成圆形。
+const aboutSrcWb = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "views", "About.tsx"), "utf8");
+checkTrue(
+  "WorkBuddy 友链标识保持官方圆角方块（rx=120.842，非 favicon 正圆）",
+  /rx="120\.842"/.test(aboutSrcWb) && !aboutSrcWb.includes("friend-mark-badge")
+);
+
+// 0.9.4.12：登录完成页跳转 /login-done 仅在 Web/Docker server 起来时才执行。
+// 桌面版不 require ./server，25560 没人接，会 ECONNREFUSED 噪声 warn。
+// 修法：src/server.js listen 成功后写 process.env.MS_REWARDS_HTTP_LISTENING；
+// browser.js 用此 sentinel 判别后跳过 goto。两个文件必须同时满足条件。
+const serverSrc = fs.readFileSync(path.join(ROOT, "src", "server.js"), "utf8");
+const browserSrc = fs.readFileSync(path.join(ROOT, "src", "browser.js"), "utf8");
+// 后面的「活动上报兜底」「浏览器去自动化补丁」两节复用这两个源文本（同一文件不重复读）
+const tasksSrc = fs.readFileSync(path.join(ROOT, "src", "tasks.js"), "utf8");
+const stealthSrc = fs.readFileSync(path.join(ROOT, "src", "stealth.js"), "utf8");
+checkTrue(
+  "登录完成页跳转仅在 Web/Docker 模式生效（MS_REWARDS_HTTP_LISTENING sentinel）",
+  /process\.env\.MS_REWARDS_HTTP_LISTENING\s*=\s*String\(PORT\)/.test(serverSrc) &&
+    /MS_REWARDS_HTTP_LISTENING/.test(browserSrc) &&
+    /if\s*\(\s*loggedIn\s*&&\s*process\.env\.MS_REWARDS_HTTP_LISTENING/.test(browserSrc)
+);
+
+// 0.9.4.7：补位组件（Input/Select/Modal/Toast）此前只有半透明实色背景、无 backdrop-filter，
+// 浅色下是白板不是玻璃（用户反馈「浅色下不是全局所有组件都是液态玻璃」）。
+// 现在补 blur 磨砂；opaque 预设必须关掉这些 blur（实心预设不残留模糊）。
+const compatCss = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "components", "liquidGlassCompat.css"),
+  "utf8"
+);
+checkTrue(
+  "补位 Input/Select 有磨砂 blur",
+  /\.compat-input-wrap,[\s\S]*?backdrop-filter:\s*blur\(12px\)/.test(compatCss)
+);
+checkTrue(
+  "补位 Modal 面板有磨砂 blur",
+  /\.compat-modal-panel\s*\{[\s\S]*?backdrop-filter:\s*blur\(26px\)/.test(compatCss)
+);
+checkTrue(
+  "补位 Toast 有磨砂 blur",
+  /\.compat-toast\s*\{[\s\S]*?backdrop-filter:\s*blur\(20px\)/.test(compatCss)
+);
+checkTrue(
+  "opaque 预设关掉补位组件的 blur",
+  /html\[data-preset="opaque"\]\s*\.compat-modal-panel/.test(globalCss) &&
+    /html\[data-preset="opaque"\]\s*\.compat-toast/.test(globalCss)
+);
+
+/* ============ 19. 0.9.4.13：签入负分哨兵泄漏 + 卡片瞬时值兜底 ============ */
+console.log("\n【19】签入负分兜底 / 展示层自愈 / 聚焦刷新");
+
+// 0.9.4.13：签入接口对「已签过/无效」返回 p=-1 这类负数标记，旧代码
+// `point || 0` 拦不住真值 -1，哨兵值直接落盘 → 仪表盘「已完成 · -1 分」。
+const tasksSrcSign = fs.readFileSync(path.join(ROOT, "src", "tasks.js"), "utf8");
+checkTrue(
+  "signPoint 写入必须 Math.max(0,...) 兜负数",
+  /signPoint\s*=\s*Math\.max\(0,\s*point \|\| 0\)/.test(tasksSrcSign)
+);
+
+// describe() 展示层兜底：今天已签入却残留负数（存量脏数据）统一按 0 分显示
+const accountSrcSign = fs.readFileSync(path.join(ROOT, "src", "account.js"), "utf8");
+checkTrue(
+  "describe 的 signPoint 负数按 0 显示（存量自愈）",
+  /signDone && !\(st\.signPoint >= 0\)\s*\?\s*0\s*:\s*st\.signPoint/.test(accountSrcSign)
+);
+checkTrue(
+  "signDone 常量已定义（防展示层引用悬空）",
+  /const signDone = ranToday && st\.tasksDone\?\.sign === dateNum/.test(accountSrcSign) &&
+    (accountSrcSign.match(/signDone,/g) || []).length >= 1
+);
+
+// 渲染层：窗口聚焦 / 页面可见时主动 refreshAccounts，兜住任务执行中
+// 「中间值 → 最终值」窗口推送没跟上的瞬时残留
+const detailSrcSign = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "views", "AccountDetail.tsx"),
+  "utf8"
+);
+checkTrue(
+  "AccountDetail 聚焦/可见时主动刷新账户数据",
+  /addEventListener\("focus", onVisible\)/.test(detailSrcSign) &&
+    /addEventListener\("visibilitychange", onVisible\)/.test(detailSrcSign) &&
+    /visibilityState === "visible"/.test(detailSrcSign)
+);
+
+// 【20】0.9.4.14：搜索进度以服务器为准（用户可能在浏览器 Bing / 手机 App 手动赚分），
+// taskSearch 必须每轮开始先 getRewardsInfo 同步进度，而不是只在当日首轮（lastSearchProgress === -1）拉一次
+const tasksSrcSearch = fs.readFileSync(path.join(ROOT, "src", "tasks.js"), "utf8");
+checkTrue(
+  "taskSearch 每轮先拉服务器进度（无条件 getRewardsInfo）",
+  /const dashboard = await rewards\.getRewardsInfo\(ctx\);\s*\n\s*if \(!dashboard \|\| !dashboard\.ok\) \{\s*\n\s*if \(search\.lastSearchProgress === -1 \|\| !search\.pc\) \{/.test(
+    tasksSrcSearch
+  )
+);
+checkTrue(
+  "taskSearch 拉取失败时续轮沿用本地计数（不许冲 0）",
+  /搜索进度拉取失败，本轮沿用本地计数继续/.test(tasksSrcSearch)
+);
+checkTrue(
+  "taskSearch 本轮计划次数以服务器剩余额度封顶",
+  /const limit = Math\.max\(1, Math\.min\(randInt\(4, 7\), remaining\)\)/.test(tasksSrcSearch)
+);
+checkTrue(
+  "taskSearch 旧「仅首轮拉取」分支已移除",
+  !/\/\/ 获取初始进度\s*\n\s*if \(search\.lastSearchProgress === -1\) \{/.test(tasksSrcSearch)
+);
+
+// 侧边栏：截图风滑动高亮胶囊（指示器 translateY 动画，首帧不播）
+const sidebarSrcNav = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "components", "Sidebar.tsx"),
+  "utf8"
+);
+checkTrue(
+  "Sidebar 使用滑动指示器（nav-indicator + translateY）",
+  /"nav-indicator" \+ \(ind\.ready \? " is-ready"/.test(sidebarSrcNav) &&
+    /transform: `translateY\(\$\{ind\.y\}px\)`, height: ind\.h/.test(sidebarSrcNav) &&
+    /indHidden \? " is-hidden"/.test(sidebarSrcNav)
+);
+// 侧栏整列切换（主导航 ⇄ 软件设置分类）必须有进出场动画，不能瞬间替换。
+// CSS 部分在下面 globalCssNav 定义之后再查（这里还读不到）。
+checkTrue(
+  "Sidebar 列表切换分两阶段（is-out 离场 → 挂载新列表）",
+  /className=\{"nav-switch" \+ \(switching \? " is-out" : ""\)\} key=\{navMode\}/.test(sidebarSrcNav) &&
+    /setNavMode\(targetMode\)/.test(sidebarSrcNav) &&
+    /indHidden \? " is-hidden"/.test(sidebarSrcNav)
+);
+checkTrue(
+  "Sidebar 指示器按当前项实际 DOM 位置量取（offsetTop；软件设置页跟随分类选项卡 activeKey）",
+  /itemRefs\.current\.get\(activeKey\)/.test(sidebarSrcNav) && /btn\.offsetTop/.test(sidebarSrcNav)
+);
+const globalCssNav = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "styles", "global.css"), "utf8");
+checkTrue(
+  "nav-indicator 滑动动画（is-ready 才启用 transition）",
+  /\.nav-indicator\.is-ready \{[\s\S]*?transition: transform 320ms cubic-bezier/.test(globalCssNav)
+);
+// 侧栏列表切换动画的样式侧：整列滑入 / 离场关键帧 + 胶囊切换期淡出
+checkTrue(
+  "nav-switch 进出场关键帧与胶囊 is-hidden 淡出",
+  /\.nav-switch \{[\s\S]*?animation: navSwitchIn/.test(globalCssNav) &&
+    /\.nav-switch\.is-out \{[\s\S]*?animation: navSwitchOut/.test(globalCssNav) &&
+    /\.nav-indicator\.is-hidden \{[\s\S]*?opacity: 0;/.test(globalCssNav)
+);
+const appSrcViewEnter = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "App.tsx"), "utf8");
+// 切页内容区淡入（key=当前视图重挂载才播）
+checkTrue(
+  "内容区切换有入场动画（.view-enter 关键帧）",
+  /\.view-enter \{[\s\S]*?animation: viewIn/.test(globalCssNav) &&
+    /@keyframes viewIn/.test(globalCssNav) &&
+    /className="view-enter" key=\{view\}/.test(appSrcViewEnter)
+);
+checkTrue(
+  "旧 compat SideNav 已从 Sidebar 移除",
+  !/SideNav/.test(sidebarSrcNav)
+);
+
+/* ============ 活动上报兜底（quiz / BingTrivia） ============ */
+checkTrue(
+  "tasks.js 提供 quiz 专报（msrewards/api/v1/ReportActivity）",
+  /\/msrewards\/api\/v1\/ReportActivity\?ajaxreq=1/.test(tasksSrc) &&
+    /PartnerId:\s*"BingTrivia"/.test(tasksSrc) &&
+    /ActivitySubType:\s*"quiz"/.test(tasksSrc)
+);
+checkTrue(
+  "quiz 上报带 Channel/OfferId/Timezone 完整字段",
+  /OfferId:\s*item\.id/.test(tasksSrc) && /Channel:\s*"Bing\.Com"/.test(tasksSrc) && /Timezone:\s*-480/.test(tasksSrc)
+);
+checkTrue(
+  "旧版 api/reportactivity 上报（含 __RequestVerificationToken）",
+  /api\/reportactivity\?X-Requested-With=XMLHttpRequest/.test(tasksSrc) &&
+    /__RequestVerificationToken:\s*token/.test(tasksSrc)
+);
+checkTrue(
+  "RequestVerificationToken 从 rewards 首页提取",
+  /RequestVerificationToken\(\.\*\?\)value="\(\.\*\?\)"/.test(tasksSrc)
+);
+
+// 反例守卫：上报方法名 / URL 被改坏时必须变红（防止改成监控 /reportActivity 主路径以外的地方）
+checkTrue(
+  "反例守卫 ①：quiz 兜底函数必须叫 reportActivityFallback",
+  /async function reportActivityFallback\(ctx, item\)/.test(tasksSrc)
+);
+checkTrue(
+  "反例守卫 ②：taskDaily 与 taskPromos 都调用了兜底上报",
+  (tasksSrc.match(/await reportActivityFallback\(ctx, \{/g) || []).length === 2
+);
+checkTrue(
+  "反例守卫 ③：上报失败只 warn，不影响任务判定（包在 try/catch 里）",
+  /catch \(e\) \{\s*\n\s*if \(e && e\.isAbort\) throw e;\s*\n\s*logger\.warn\(`活动上报兜底失败/.test(tasksSrc)
+);
+checkTrue(
+  "反例守卫 ④：reportactivity 用表单编码（不是 JSON）",
+  /application\/x-www-form-urlencoded; charset=UTF-8/.test(tasksSrc) &&
+    /new URLSearchParams\(\{[\s\S]*?\}\)\.toString\(\)/.test(tasksSrc)
+);
+
+/* ============ 浏览器去自动化补丁 ============ */
+checkTrue(
+  "stealth 抹掉 navigator.webdriver",
+  /defineProperty\(Navigator\.prototype, "webdriver", \{ get: \(\) => false/.test(stealthSrc)
+);
+checkTrue(
+  "stealth 补全 window.chrome 对象",
+  /window\.chrome = \{[\s\S]*?runtime: \{/.test(stealthSrc)
+);
+checkTrue(
+  "stealth 补全 languages / plugins / mimeTypes / platform",
+  /"languages", \{ get: \(\) => langs/.test(stealthSrc) &&
+    /"plugins", \{ get: \(\) => plugins/.test(stealthSrc) &&
+    /"mimeTypes", \{ get: \(\) => mimeTypes/.test(stealthSrc) &&
+    /"platform", \{ get: \(\) => "Win32"/.test(stealthSrc)
+);
+checkTrue(
+  "stealth 处理 WebGL 软件渲染特征（SwiftShader/Mesa 替换为常见值）",
+  /SwiftShader\|Mesa\|llvmpipe/.test(stealthSrc) && /patchCtx\(window\.WebGL2RenderingContext\)/.test(stealthSrc)
+);
+checkTrue(
+  "stealth 导出 EXTRA_ARGS 且含 --exclude-switches=enable-automation",
+  /"--exclude-switches=enable-automation"/.test(stealthSrc)
+);
+checkTrue(
+  "注入脚本整体自包含且容错（IIFE + safe 包裹，无 Node 变量泄漏）",
+  /= `\(\(\) => \{$/m.test(stealthSrc) && /const safe = \(fn\) => \{ try \{ fn\(\); \} catch \(e\) \{\} \};/.test(stealthSrc)
+);
+
+// 反例守卫：browser.js 必须真正装配上补丁
+// ⚠️ 必须用 ^\s*... 锚定行首：只写 `/addInitScript.../` 的话，
+// 把整行注释掉后注释文本里仍然含该串，守卫会假绿（反例验证抓到的）。
+checkTrue(
+  // 注意：UA 改成条件装配后不再是 launchOpts 的字段，而是非指纹分支里的一行赋值。
+  // 行首锚定仍然保留 —— 只认「单独一行干这件事」，避免注释里出现同名串导致假绿。
+  "browser 启动时覆盖 headless UA（不再出现 HeadlessChrome；指纹模式下刻意不设）",
+  /^\s*launchOpts\.userAgent = stealth\.STEALTH_USER_AGENT;/m.test(browserSrc) && /require\("\.\/stealth"\)/.test(browserSrc)
+);
+checkTrue(
+  "browser 在每个页面注入 initScript（指纹模式下注入的是带 __MSR_FP 置位的版本）",
+  /^\s*await context\.addInitScript\(\{ content: initSrc \}\);/m.test(browserSrc) &&
+    /const initSrc = isFp \? "window\.__MSR_FP = true;\\n" \+ stealth\.STEALTH_INIT : stealth\.STEALTH_INIT;/.test(browserSrc)
+);
+checkTrue(
+  "browser 追加 stealth 启动参数（EXTRA_ARGS 并入 args）",
+  /^\s*\.\.\.stealth\.EXTRA_ARGS,/m.test(browserSrc)
+);
+checkTrue(
+  // 指纹模式下不盖 accept-language（--accept-lang 由上游统一处理），否则两套控制打架
+  "browser 补充 accept-language（EXTRA_HTTP_HEADERS；指纹模式让位）",
+  /^\s*if \(!isFp\) await context\.setExtraHTTPHeaders\(stealth\.EXTRA_HTTP_HEADERS\);/m.test(browserSrc)
+);
+checkTrue(
+  "反例守卫 ⑤：注入失败只 warn 不抛出（不阻断登录/领取）",
+  /catch \(e\) \{[\s\S]{0,120}注入去自动化补丁失败/.test(browserSrc)
+);
+
+// 反例守卫 ⑦：导出被摘掉时，打桩测试与后续守卫将失效，必须变红
+checkTrue(
+  "反例守卫 ⑦：reportActivityFallback 已导出（供打桩测试驱动）",
+  /^\s*reportActivityFallback,$/m.test(tasksSrc) && /^\s*fetchRequestToken,$/m.test(tasksSrc)
+);
+
+/* ============ 灵感来源与致谢（参考脚本作者） ============ */
+const aboutSrcCredit = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "views", "About.tsx"), "utf8");
+const cssCredit = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "styles", "global.css"), "utf8");
+
+// 四位作者（第一位为原始作者）：网名 + 主页链接，一个都不能少
+const CREDIT_ROWS = [
+  ["潘钜森", "https://github.com/geosam/FuckScripts", "https://scriptcat.org/zh-CN/users/27974"],
+  ["SDSmalin", "https://scriptcat.org/zh-CN/users/211564"],
+  ["DuskLight", "https://scriptcat.org/zh-CN/users/187483"],
+  ["withfeel", "https://scriptcat.org/zh-CN/users/207134"],
+];
+for (const [name, ...links] of CREDIT_ROWS) {
+  const nameOk = aboutSrcCredit.includes(`name: "${name}"`);
+  const linksOk = links.every((h) => aboutSrcCredit.includes(h));
+  checkTrue(
+    `致谢包含作者「${name}」及其主页链接（${links.length} 条）`,
+    nameOk && linksOk,
+    nameOk ? "链接缺失" : "网名缺失（可能不是真实网名）"
+  );
+}
+checkTrue(
+  "原始作者（潘钜森）标注 role=原始作者 且排在首位",
+  /role:\s*"原始作者"/.test(aboutSrcCredit) &&
+    aboutSrcCredit.indexOf('key: "geosam"') < aboutSrcCredit.indexOf('key: "sdsmalin"')
+);
+checkTrue(
+  "致谢区块渲染列表 + 外链按钮（CREDITS.map + window.open）",
+  /CREDITS\.map\(\(c\) =>/.test(aboutSrcCredit) &&
+    /c\.links\.map\(\(l\) =>/.test(aboutSrcCredit) &&
+    /window\.open\(l\.href/.test(aboutSrcCredit)
+);
+checkTrue(
+  "致谢卡片有新样式（credit-list / credit-item / credit-avatar）",
+  /\.credit-list \{/.test(cssCredit) && /\.credit-item \{/.test(cssCredit) && /\.credit-avatar \{/.test(cssCredit)
+);
+
+// 反例守卫 ⑥：作者被删 / 链接写错时必须变红
+checkTrue(
+  "反例守卫 ⑥：旧的占位网名不得出现（防止留假名）",
+  !/从来没Shop名|占位|TODO:作者|author1/i.test(aboutSrcCredit)
+);
+
+/* ============ 指纹浏览器可选链路（0.9.4.17） ============ */
+const fpSrc = fs.readFileSync(path.join(ROOT, "src", "fingerprint-browser.js"), "utf8");
+const cfgSrcFp = fs.readFileSync(path.join(ROOT, "src", "config.js"), "utf8");
+const gcfgSrcFp = fs.readFileSync(path.join(ROOT, "src", "global-config.js"), "utf8");
+const preloadSrcFp = fs.readFileSync(path.join(ROOT, "src", "electron-preload.js"), "utf8");
+const mainSrcFp = fs.readFileSync(path.join(ROOT, "src", "electron-main.js"), "utf8");
+const webApiSrcFp = fs.readFileSync(path.join(ROOT, "src", "web-api.js"), "utf8");
+const webTsSrcFp = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "api", "web.ts"), "utf8");
+const mockSrcFp = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "api", "mock.ts"), "utf8");
+const settingsViewSrcFp = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "views", "SettingsView.tsx"), "utf8");
+const softwareViewSrcFp = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "views", "SoftwareSettingsView.tsx"), "utf8");
+const panelSrcFp = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "components", "FingerprintBrowserPanel.tsx"), "utf8");
+const typesSrcFp = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "types", "index.ts"), "utf8");
+const stealthSrcFp = fs.readFileSync(path.join(ROOT, "src", "stealth.js"), "utf8");
+const browserSrcFp = fs.readFileSync(path.join(ROOT, "src", "browser.js"), "utf8");
+
+// —— 下载链路 ——
+checkTrue(
+  "指纹浏览器走 gh-proxy 多节点镜像链（文档里的 6 个入口都要在），且保留直连兜底",
+  ["gh-proxy.com/", "v4.gh-proxy.org/", "v6.gh-proxy.org/", "cdn.gh-proxy.org/", "axisnow.gh-proxy.org/", "gh-proxy.org/"]
+    .every((n) => fpSrc.includes(`"https://${n}"`)) &&
+    /MIRROR_PREFIXES\s*=\s*\[[^\]]*""\s*,?\s*\]/.test(fpSrc)
+);
+checkTrue(
+  "版本钉死（避免上游节奏与本项目不同步）",
+  /PINNED_VERSION\s*=\s*"\d+\.\d+\.\d+\.\d+"/.test(fpSrc)
+);
+checkTrue(
+  "资产名按平台区分（Windows zip / Linux tar.xz），macOS 明确不支持",
+  fpSrc.includes("_windows_x64.zip") && fpSrc.includes("_linux.tar.xz") && /return null;/.test(fpSrc)
+);
+checkTrue(
+  "下载做完整性校验（中断/长度不符要报错，不能静默产出坏文件）",
+  /err\.integrity = true/.test(fpSrc) && /传输中断/.test(fpSrc)
+);
+checkTrue(
+  "Range 语义不可信时放弃续传（Content-Range 自报总长与权威总长不符）",
+  fpSrc.includes("Range 语义不可信") && /content-range/.test(fpSrc)
+);
+checkTrue(
+  "总长取不到时由 Releases API 的资产 size 兜底（HEAD 经代理拿不到长度）",
+  /releases\/tags/.test(fpSrc) && /hit\.size > 0/.test(fpSrc)
+);
+checkTrue(
+  "下载有空闲超时（代理实测会掉速到僵住，没有超时会永远卡住）",
+  /IDLE_TIMEOUT_MS/.test(fpSrc) && /Promise\.race\(\[reader\.read\(\), idle\]\)/.test(fpSrc)
+);
+checkTrue(
+  "低速熔断：连续窗口均速低于阈值即换源（抓「涓流但不断」的卡死，空闲超时管不到）",
+  /STALL_WINDOW_MS\s*=\s*\d+/.test(fpSrc) &&
+    /STALL_MIN_BPS\s*=\s*32 \* 1024/.test(fpSrc) &&
+    /^\s*err\.stall = true;/m.test(fpSrc) &&
+    /自动换源续传/.test(fpSrc)
+);
+checkTrue(
+  "连接阶段超时：首字节等不到就换源（AbortController 计时，拿到响应头即撤表）",
+  /HEADER_TIMEOUT_MS\s*=\s*\d+/.test(fpSrc) &&
+    /new AbortController\(\)/.test(fpSrc) &&
+    /clearTimeout\(headerTimer\)/.test(fpSrc) &&
+    !/AbortSignal\.timeout\(HEADER_TIMEOUT_MS\)/.test(fpSrc)
+);
+checkTrue(
+  "反例守卫 ⑬：熔断不得删本地分片（换源后续传，不浪费已下部分）",
+  !/e\.stall[\s\S]{0,80}rmSync/.test(fpSrc)
+);
+checkTrue(
+  "全部源失败后还会清掉分片从头再来一轮（排除续传路径上的问题）",
+  /for \(const allowResume of \[true, false\]\)/.test(fpSrc)
+);
+checkTrue(
+  "「检查更新」是纯查询（checkUpdate 只调 latestVersion，不碰 install/下载）",
+  /async function checkUpdate\(\)/.test(fpSrc) &&
+    /latest = await latestVersion\(\)/.test(fpSrc) &&
+    !/install\(/.test(fpSrc.slice(fpSrc.indexOf("async function checkUpdate"), fpSrc.indexOf("/* ---------------- 启动参数")))
+);
+checkTrue(
+  "反例守卫 ⑭：检查更新按钮不得直连 install(force)（0.9.4.17 的缺陷：点一下重下 181MB）",
+  !/onClick=\{\(\) => void onInstall\(true\)\}/.test(panelSrcFp) &&
+    /onClick=\{\(\) => void onCheck\(\)\}/.test(panelSrcFp)
+);
+
+// —— 解压：必须用操作系统自带工具 ——
+checkTrue(
+  "解压走系统自带 tar（不用 JS 解压库）",
+  /runCmd\("tar", \["-xf"/.test(fpSrc)
+);
+checkTrue(
+  "Windows zip 有 PowerShell Expand-Archive 兜底",
+  fpSrc.includes("Expand-Archive -LiteralPath")
+);
+checkTrue(
+  "解压后校验目录非空（坏包不能算成功）",
+  /assertExtracted\(dir/.test(fpSrc) && /解压后目录为空/.test(fpSrc)
+);
+checkTrue(
+  "反例守卫 ⑩：不得依赖 extract-zip / yauzl（lockfile 里是 dev，打包会被剪掉）",
+  !/require\("extract-zip"\)/.test(fpSrc) && !/require\("yauzl"\)/.test(fpSrc)
+);
+
+// —— 种子与启动参数 ——
+checkTrue(
+  "指纹按账户派生种子（FNV-1a，32 位无符号）",
+  /0x811c9dc5/.test(fpSrc) && />>> 0/.test(fpSrc) && /function seedFor/.test(fpSrc)
+);
+checkTrue(
+  "启动参数带种子与平台/品牌",
+  /--fingerprint=\$\{opts\.seed >>> 0\}/.test(fpSrc) &&
+    /--fingerprint-platform=/.test(fpSrc) &&
+    /--fingerprint-brand=/.test(fpSrc)
+);
+checkTrue(
+  "反例守卫 ⑪：buildArgs 不得下发 user-agent（UA 必须与 CH 同源）",
+  !/user-agent/i.test(fpSrc.slice(fpSrc.indexOf("function buildArgs")))
+);
+checkTrue(
+  "反例守卫 ⑫：不下发已随 Chrome 144 移除的 GPU 参数",
+  !/--fingerprint-gpu-vendor/.test(fpSrc) && !/--fingerprint-gpu-renderer/.test(fpSrc)
+);
+
+// —— 与 stealth 的互斥 ——
+checkTrue(
+  "stealth 有 __MSR_FP 守卫，指纹模式下让出语言/插件与硬件信息",
+  /const FP = !!window\.__MSR_FP/.test(stealthSrcFp) &&
+    (stealthSrcFp.match(/if \(FP\) return;/g) || []).length >= 2
+);
+checkTrue(
+  "WebGL 补丁把 vendor / renderer 成对替换（不再各判各的）",
+  /p !== 37445 && p !== 37446/.test(stealthSrcFp) && /p === 37445 \? VENDOR : RENDERER/.test(stealthSrcFp)
+);
+
+// —— browser.js 来源优先级 ——
+checkTrue(
+  "browser.js 有来源优先级解析并导出",
+  /function resolveBrowserSource/.test(browserSrcFp) && /^\s*resolveBrowserSource,$/m.test(browserSrcFp)
+);
+checkTrue(
+  "优先级顺序：显式 env > 指纹浏览器 > 自带 Chromium",
+  /kind: "override"/.test(browserSrcFp) &&
+    /kind: "fingerprint"/.test(browserSrcFp) &&
+    /kind: "chromium"/.test(browserSrcFp)
+);
+checkTrue(
+  "指纹浏览器未安装时静默回落（不打断登录流程）",
+  /已启用指纹浏览器但尚未安装/.test(browserSrcFp)
+);
+checkTrue(
+  "指纹模式下不覆盖 UA（否则回到 UA 与 CH 自相矛盾的死路）",
+  /指纹浏览器/.test(browserSrcFp) && /launchOpts\.userAgent = stealth\.STEALTH_USER_AGENT/.test(browserSrcFp) &&
+    /if \(isFp\) \{/.test(browserSrcFp)
+);
+checkTrue(
+  "指纹模式下给 stealth 置位 __MSR_FP",
+  browserSrcFp.includes('"window.__MSR_FP = true;\\n" + stealth.STEALTH_INIT')
+);
+
+// —— 配置层对齐（防白屏：两处默认值必须同字段） ——
+function browserFpBlock(src) {
+  const i = src.indexOf("browser: {");
+  return i < 0 ? "" : src.slice(i, i + 700);
+}
+const cfgFpBlock = browserFpBlock(cfgSrcFp);
+const gcfgFpBlock = browserFpBlock(gcfgSrcFp);
+for (const [label, block] of [["config.js", cfgFpBlock], ["global-config.js", gcfgFpBlock]]) {
+  checkTrue(
+    `${label} 的 browser.fingerprint 四个字段齐全（enable/seed/brand/hardwareConcurrency）`,
+    block.includes("fingerprint: {") &&
+      /enable:/.test(block) &&
+      /seed:/.test(block) &&
+      /brand:/.test(block) &&
+      /hardwareConcurrency:/.test(block)
+  );
+}
+
+// —— IPC / 适配层 ——
+for (const [label, src, keys] of [
+  ["electron-main", mainSrcFp, ["app:fingerprintStatus", "app:installFingerprint", "app:uninstallFingerprint", "app:checkFingerprintUpdate", "function pushFingerprintStatus"]],
+  ["electron-preload", preloadSrcFp, ["fingerprintStatus:", "installFingerprint:", "uninstallFingerprint:", "checkFingerprintUpdate:", "onFingerprintStatus:"]],
+  ["web-api", webApiSrcFp, ["fingerprintStatus()", "installFingerprint(", "uninstallFingerprint()", "checkFingerprintUpdate()"]],
+  ["web.ts", webTsSrcFp, ['"fingerprintStatus"', '"fingerprint-status"', "onFingerprintStatus:", '"checkFingerprintUpdate"']],
+  ["mock.ts", mockSrcFp, ["checkFingerprintUpdate:"]],
+]) {
+  const missing = keys.filter((k) => !src.includes(k));
+  checkTrue(`${label} 接线完整（${keys.length} 处）`, missing.length === 0, missing.join(", "));
+}
+checkTrue(
+  "软件设置页挂载指纹浏览器面板",
+  /FingerprintBrowserPanel/.test(softwareViewSrcFp) && /<FingerprintBrowserPanel/.test(softwareViewSrcFp)
+);
+// 0.9.4.19 增补：软件设置左侧分类选项卡（点击定位 + scroll-spy + 返回）
+const sidebarSrcSw = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "components", "Sidebar.tsx"), "utf8");
+const appSrcSw = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "App.tsx"), "utf8");
+checkTrue(
+  "软件设置分类选项卡接线：Sidebar 有选项卡分支与返回，App 有点击定位 + 加锁 scroll-spy，分区 id 规约一致",
+  /SW_TABS/.test(sidebarSrcSw) && /onSwSectionClick/.test(sidebarSrcSw) && /nav-back/.test(sidebarSrcSw) &&
+    /handleSwSectionClick/.test(appSrcSw) && /handleSwSpy/.test(appSrcSw) &&
+    /scrollIntoView/.test(appSrcSw) && /swScrollLockRef/.test(appSrcSw) &&
+    /swsec-/.test(softwareViewSrcFp) && /onSpySec/.test(softwareViewSrcFp)
+);
+checkTrue(
+  "侧边栏左下角版本号走 version.ts 的 DISPLAY_VERSION",
+  /DISPLAY_VERSION/.test(sidebarSrcSw)
+);
+checkTrue(
+  "前端类型补齐 FingerprintStatus / InstallFingerprintResult",
+  /interface FingerprintStatus/.test(typesSrcFp) && /interface InstallFingerprintResult/.test(typesSrcFp)
+);
 
 /* ============ 汇总 ============ */
 console.log(`\n${"=".repeat(46)}`);

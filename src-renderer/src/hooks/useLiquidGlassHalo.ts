@@ -21,6 +21,26 @@ import { useEffect } from "react";
  */
 const HALO_ALPHA = "--lg-halo-alpha";
 const HALO_RADIUS_PX = 200;
+/**
+ * 光晕挂载目标。此前只绑 `.lg-surface`（库的 GlassSurface），而项目里真正的
+ * 内容卡片走的是 AppCard → MaterialView（`.lg-material-view`），开关是
+ * `.lg-switch`，两者都不是 `.lg-surface` → 光晕对「大部分卡片」和「开关」
+ * 完全无效（用户反馈「鼠标光晕为啥开关没有用 / 划过效果对大部分卡片无效」）。
+ *
+ * 注意：`.lg-switch` 是包含 label 文字的 inline-flex 容器（width = pill + gap +
+ * label 宽度），如果直接绑整个 .lg-switch，200px 光晕渐变会溢出矩形容器 → 视觉
+ * 上像"开关后面有框"。所以开关只绑内层 pill `.lg-switch-track`（库自带的
+ * 48×28 椭圆元素，库未占用 background-image，可安全叠加）。
+ *
+ * 排除项：
+ *   - .friend-logo（关于页友链徽标容器，46×46 的 GlassSurface。光晕 200px
+ *     渐变盖上去会把 svg cube 边缘糊成"歪"。）
+ *   - :disabled / aria-disabled="true"（不响应交互的按钮不应有光晕）
+ */
+const HALO_SELECTOR =
+  ".lg-surface:not(.friend-logo):not(:disabled):not([aria-disabled=\"true\"])," +
+  " .lg-material-view," +
+  " .lg-switch-track";
 const HALO_BG =
   "radial-gradient(" + HALO_RADIUS_PX + "px circle at var(--lg-pointer-x) var(--lg-pointer-y)," +
   " rgb(255 255 255 / var(" + HALO_ALPHA + ", 0))," +
@@ -86,7 +106,7 @@ export function useLiquidGlassHalo(enabled: boolean): void {
     };
 
     const scan = () => {
-      document.querySelectorAll<HTMLElement>(".lg-surface").forEach(bind);
+      document.querySelectorAll<HTMLElement>(HALO_SELECTOR).forEach(bind);
     };
 
     // 首扫 + 监听后续动态挂载的玻璃元素（向导 / 弹窗 / 卡片等）
@@ -96,7 +116,7 @@ export function useLiquidGlassHalo(enabled: boolean): void {
 
     // 主题切换时（autoTheme 依壁纸亮度）重新应用对应强度的高光
     const themeObserver = new MutationObserver(() => {
-      document.querySelectorAll<HTMLElement>(".lg-surface").forEach(paintHighlight);
+      document.querySelectorAll<HTMLElement>(HALO_SELECTOR).forEach(paintHighlight);
     });
     themeObserver.observe(document.documentElement, {
       attributes: true,
@@ -106,7 +126,7 @@ export function useLiquidGlassHalo(enabled: boolean): void {
     return () => {
       observer.disconnect();
       themeObserver.disconnect();
-      document.querySelectorAll<HTMLElement>(".lg-surface").forEach((el) => {
+      document.querySelectorAll<HTMLElement>(HALO_SELECTOR).forEach((el) => {
         el.removeAttribute("data-interactive");
         el.style.removeProperty("--lg-surface-pointer-highlight");
         el.style.removeProperty(HALO_ALPHA);

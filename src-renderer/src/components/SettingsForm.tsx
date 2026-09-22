@@ -1,11 +1,6 @@
 import { useState } from "react";
-import {
-  Button,
-  Input,
-  InputNumber,
-  Select,
-  type SelectOption,
-} from "@ttqtt/liquid-glass-react";
+import { GlassButton } from "@ttqtt/liquid-glass-react";
+import { Input, InputNumber, Select, SelectOption } from "./liquidGlassCompat";
 import { NumberField, Section, SelectField, SwitchField, TextField, TimeField } from "./fields";
 import type { AppConfig, DeepPartial, GoalItem, ScheduleWindow } from "../types";
 
@@ -28,7 +23,7 @@ const TASK_LABELS: { key: keyof AppConfig["tasks"]; label: string; hint?: string
   { key: "sign", label: "每日签入", hint: "每日打卡签到，获得固定积分奖励" },
   { key: "read", label: "阅读文章", hint: "自动阅读 MSN 文章，每篇 3 分，满额 30 分" },
   { key: "daily", label: "每日活动", hint: "首页每日三格活动，访问活动链接即可完成" },
-  { key: "promos", label: "网页浏览", hint: "earn 页更多活动，浏览指定网页获取积分" },
+  { key: "promos", label: "积分活动", hint: "earn 页更多活动，浏览指定网页获取积分" },
   { key: "claim", label: "定期收取积分", hint: "每周自动点击「领取」按钮，收取待领取的积分" },
   { key: "search", label: "搜索积分", hint: "自动使用 Bing 搜索，每次 3 分，满额为止" },
 ];
@@ -74,7 +69,14 @@ export function SettingsForm({
   const addWindow = () => patchSchedule({ windows: [...windows, { start: "09:00", end: "23:00" }] });
   const delWindow = (i: number) => patchSchedule({ windows: windows.filter((_, idx) => idx !== i) });
 
-  const goals = value.goals ?? { enable: true, items: [] };
+  // 旧配置可能只有 goals.enable 而无 items（跨版本升级后的历史文件）。`??` 只在 goals
+  // 整体缺失时兜底，遇到 { enable: true } 会得到 items === undefined，随后
+  // goals.items.length 抛 TypeError → React 卸载整棵树 → 白屏（0.9.4 生产事故）。
+  // 这里逐字段兜底，不信任外部数据形状：enable 缺省 true，items 缺省 []。
+  const goals = {
+    enable: value.goals?.enable !== false,
+    items: Array.isArray(value.goals?.items) ? value.goals.items : [],
+  };
   const setGoal = (i: number, p: Partial<GoalItem>) =>
     onChange({
       goals: { items: goals.items.map((g, idx) => (idx === i ? { ...g, ...p } : g)) },
@@ -138,7 +140,7 @@ export function SettingsForm({
             onChange={(v) => onChange({ limits: { read: Math.max(0, v) } } as DeepPartial<AppConfig>)}
           />
           <NumberField
-            label="网页浏览每次个数"
+            label="积分活动每次个数"
             hint="0 = 不限制（一次做完）"
             value={value.limits?.promos ?? 0}
             min={0}
@@ -235,9 +237,9 @@ export function SettingsForm({
               <div className="win-row" key={i}>
                 <TimeField value={w.start} onChange={(v) => setWindow(i, { start: v })} />
                 <TimeField value={w.end} onChange={(v) => setWindow(i, { end: v })} />
-                <Button variant="danger" size="sm" onClick={() => delWindow(i)}>
+                <GlassButton variant="destructive" controlSize="small" onClick={() => delWindow(i)}>
                   删除
-                </Button>
+                </GlassButton>
               </div>
             ))}
             <div className="form-grid" style={{ marginTop: 8 }}>
@@ -258,9 +260,9 @@ export function SettingsForm({
               />
             </div>
             <div style={{ marginTop: 8 }}>
-              <Button variant="ghost" size="sm" onClick={addWindow}>
+              <GlassButton variant="plain" controlSize="small" onClick={addWindow}>
                 ＋ 添加时间段
-              </Button>
+              </GlassButton>
             </div>
           </div>
         )}
@@ -361,9 +363,9 @@ export function SettingsForm({
         </div>
         {onTestPush && (
           <div style={{ marginTop: 12 }}>
-            <Button variant="accent" size="sm" onClick={onTest} loading={testing}>
+            <GlassButton variant="glassProminent" controlSize="small" onClick={onTest} loading={testing}>
               🔔 测试推送
-            </Button>
+            </GlassButton>
           </div>
         )}
       </Section>
@@ -409,14 +411,14 @@ export function SettingsForm({
                   checked={g.showDashboard !== false}
                   onChange={(v) => setGoal(i, { showDashboard: v })}
                 />
-                <Button variant="danger" size="sm" onClick={() => delGoal(i)} title="删除此目标">
+                <GlassButton variant="destructive" controlSize="small" onClick={() => delGoal(i)} title="删除此目标">
                   ×
-                </Button>
+                </GlassButton>
               </div>
             ))}
-            <Button variant="ghost" size="sm" onClick={addGoal}>
+            <GlassButton variant="plain" controlSize="small" onClick={addGoal}>
               ＋ 添加目标
-            </Button>
+            </GlassButton>
           </div>
         )}
       </Section>

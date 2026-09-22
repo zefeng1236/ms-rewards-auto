@@ -1,5 +1,6 @@
 import { useState, type CSSProperties } from "react";
-import { Button, Modal } from "@ttqtt/liquid-glass-react";
+import { GlassButton } from "@ttqtt/liquid-glass-react";
+import { Modal } from "./liquidGlassCompat";
 import { api } from "../api/ipc";
 
 /**
@@ -53,12 +54,12 @@ export function ClosePrompt({ onClose }: { onClose: () => void }) {
             记住我的选择
           </button>
           <div style={{ flex: 1 }} />
-          <Button variant="ghost" size="sm" onClick={() => void choose("exit")}>
+          <GlassButton variant="plain" controlSize="small" onClick={() => void choose("exit")}>
             完全退出
-          </Button>
-          <Button variant="accent" size="sm" onClick={() => void choose("tray")}>
+          </GlassButton>
+          <GlassButton variant="glassProminent" controlSize="small" onClick={() => void choose("tray")}>
             退出到托盘
-          </Button>
+          </GlassButton>
         </div>
       }
     >

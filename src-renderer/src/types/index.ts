@@ -51,7 +51,7 @@ export interface AppConfig {
     read: boolean;
     /** 每日活动（dashboard dailySet），默认关闭 */
     daily: boolean;
-    /** 网页浏览（earn 页更多活动） */
+    /** 积分活动（earn 页更多活动） */
     promos: boolean;
     /** 定期收取积分（每周自动点「领取」），默认关闭 */
     claim: boolean;
@@ -77,7 +77,7 @@ export interface AppConfig {
     random: boolean;
     /** 阅读文章每次最多几篇，0 = 不限制 */
     read: number;
-    /** 网页浏览每次最多几个，0 = 不限制 */
+    /** 积分活动每次最多几个，0 = 不限制 */
     promos: number;
   };
   schedule: {
@@ -110,6 +110,22 @@ export interface AppConfig {
   goals: {
     enable: boolean;
     items: GoalItem[];
+  };
+  /** 浏览器（登录授权 / 领取奖品要走真实页面） */
+  browser: {
+    /**
+     * 指纹浏览器（可选增强，需在设置页单独下载约 181MB）。
+     * 未启用或未安装时自动回落普通 Chromium。
+     */
+    fingerprint: {
+      enable: boolean;
+      /** 指纹种子（32 位整数）；0 = 按账户 ID 自动派生，保证同账号长期稳定 */
+      seed: number;
+      /** UA / Client Hints 声明的品牌 */
+      brand: string;
+      /** CPU 核数；0 = 由指纹种子生成 */
+      hardwareConcurrency: number;
+    };
   };
 }
 
@@ -220,7 +236,7 @@ export type BgCategory =
 export interface Appearance {
   preset: AppearancePreset;
   mode: ThemeMode;
-  /** 0.30 – 1.00 */
+  /** 0.20 – 1.00 */
   opacity: number;
   accent: string;
   glow: boolean;
@@ -250,6 +266,49 @@ export interface Appearance {
 export interface ChromiumStatus {
   ready: boolean;
   executable: string | null;
+}
+
+/** 指纹浏览器状态（可选增强，见 src/fingerprint-browser.js） */
+export interface FingerprintStatus {
+  /** 当前平台是否提供指纹浏览器（macOS 暂不支持） */
+  supported: boolean;
+  platform: string;
+  /** 是否已安装且可执行文件可定位 */
+  ready: boolean;
+  executable: string | null;
+  /** 已安装版本，未安装为 null */
+  version: string | null;
+  /** 本项目钉死的版本 */
+  pinned: string;
+  installDir: string;
+  downloadUrl: string | null;
+}
+
+/** 「检查更新」的查询结果（只查不下载，0.9.4.18 起与安装动作分离） */
+export interface CheckFingerprintUpdateResult {
+  ok: boolean;
+  /** 上游最新 tag；查询失败为 null */
+  latest: string | null;
+  /** 已安装版本；未安装为 null */
+  installed: string | null;
+  /** 本项目钉死的版本 */
+  pinned: string;
+  /** 上游有比钉死版本更新的 tag（仅提示，不自动跟） */
+  updateAvailable: boolean;
+  /** 已安装版本与钉死版本不一致（含未安装），点「重新安装」可对齐 */
+  reinstallAvailable: boolean;
+  error?: string;
+}
+
+export interface InstallFingerprintResult {
+  ok: boolean;
+  error?: string;
+  version?: string;
+  executable?: string;
+  /** 解压方式：tar / powershell */
+  method?: string;
+  /** 已是目标版本、跳过下载 */
+  skipped?: boolean;
 }
 
 export interface BgSrcResult {
@@ -382,12 +441,34 @@ export interface RunResult {
   result?: RunTaskResult;
   results?: RunTaskResult[];
   loggedIn?: boolean;
+  /** login/sync 的结果说明文案（主进程 account:login / account:sync 返回） */
+  message?: string;
 }
 
 export interface InstallBrowserResult {
   ok: boolean;
   method?: string;
   error?: string;
+}
+
+/** Chromium 自动安装进度（主进程 ensureDeps.onProgress 通过 ipc "install-progress" 推送） */
+export interface InstallProgress {
+  /** 进度阶段：playwright/镜像、playwright/官方、choco 等 */
+  stage?: string;
+  /** 阶段说明文本（与日志同步） */
+  message?: string;
+  /** 0-100，已 clamp；没有 total 时只是计数 */
+  pct?: number;
+  /** 字节/秒 */
+  speed?: number;
+  /** 剩余秒数 */
+  eta?: number;
+  /** 已写入字节 */
+  loaded?: number;
+  /** 总字节（HEAD 探测到时才有） */
+  total?: number;
+  /** 当前下载文件路径（调试用） */
+  url?: string;
 }
 
 /** 推送测试返回（notify.testPush，字段不固定） */

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Button, Card, InputNumber, toast } from "@ttqtt/liquid-glass-react";
+import { GlassButton } from "@ttqtt/liquid-glass-react";
+import { AppCard, InputNumber, toast } from "../components/liquidGlassCompat";
 import { api } from "../api/ipc";
 import { SwitchField } from "../components/fields";
 import type { CloseAction, LaunchConfig } from "../types";
@@ -43,7 +44,7 @@ export function LaunchSettings() {
         </div>
       </div>
 
-      <Card padding="md">
+      <AppCard padding={16}>
         <SwitchField
           label="开机自动启动"
           hint="把本软件注册到系统登录项，开机后自动运行"
@@ -92,18 +93,17 @@ export function LaunchSettings() {
           </div>
           <div className="close-action-group">
             {CLOSE_OPTIONS.map((o) => (
-              <Button
-                key={o.key}
-                size="sm"
-                variant={cfg.closeAction === o.key ? "accent" : "glass"}
+              <GlassButton
+                key={o.key} controlSize="small"
+                variant={cfg.closeAction === o.key ? "glassProminent" : "glass"}
                 onClick={() => void onChange({ closeAction: o.key })}
               >
                 {o.label}
-              </Button>
+              </GlassButton>
             ))}
           </div>
         </div>
-      </Card>
+      </AppCard>
     </div>
   );
 }

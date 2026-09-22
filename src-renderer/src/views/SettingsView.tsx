@@ -1,9 +1,8 @@
 import { useEffect, useState } from "react";
-import { Card, Tag, toast } from "@ttqtt/liquid-glass-react";
+import { AppCard, Tag, toast } from "../components/liquidGlassCompat";
 import { api } from "../api/ipc";
 import { useAppState } from "../hooks/useAppState";
 import { SettingsForm } from "../components/SettingsForm";
-import { VaultPanel } from "../components/VaultPanel";
 import { mergeDeep } from "../utils";
 import type { AppConfig, DeepPartial } from "../types";
 
@@ -32,15 +31,15 @@ export function SettingsView() {
       <div className="block">
         <div className="block-head">
           <div>
-            <div className="block-title">全局设置</div>
-            <div className="block-sub">所有「遵循全局设置」的账号共用这份配置，改动立即生效</div>
+            <div className="block-title">任务全局设置</div>
+            <div className="block-sub">只包含与积分任务执行有关的配置项，所有「遵循全局设置」的账号共用，改动立即生效</div>
           </div>
           <Tag color="accent" size="sm">
             {applyCount} 个账号遵循
           </Tag>
         </div>
 
-        <Card padding="md">
+        <AppCard padding={16}>
           {cfg ? (
             <SettingsForm
               value={cfg}
@@ -59,11 +58,8 @@ export function SettingsView() {
           ) : (
             <div className="hint">加载中…</div>
           )}
-        </Card>
+        </AppCard>
       </div>
-
-      {/* 安全：登录态加密存储（启用/改密/恢复密钥/锁定） */}
-      <VaultPanel />
     </>
   );
 }

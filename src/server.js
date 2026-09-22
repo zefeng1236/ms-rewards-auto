@@ -216,6 +216,41 @@ function serveBgLocal(res, url) {
   sendFile(res, file, { "Cache-Control": "public, max-age=3600" });
 }
 
+/** 登录完成页：Chromium 登录成功后导航到这里，noVNC 里显示大字提示 */
+const LOGIN_DONE_HTML = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>登录已完成</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: #0f1923; color: #e0f0e8;
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    text-align: center;
+  }
+  .card { padding: 48px 64px; }
+  .icon { font-size: 96px; margin-bottom: 24px; }
+  h1 { font-size: 48px; font-weight: 700; margin-bottom: 16px; color: #5eeaad; }
+  p { font-size: 24px; color: #8fa8a0; line-height: 1.6; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="icon">✅</div>
+  <h1>登录已完成</h1>
+  <p>请返回控制台继续操作</p>
+</div>
+</body>
+</html>`;
+
+function serveLoginDone(res) {
+  res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-cache" });
+  res.end(LOGIN_DONE_HTML);
+}
+
 /* ================================ 路由 ================================ */
 
 async function handle(req, res) {
@@ -227,6 +262,7 @@ async function handle(req, res) {
     /* ---------- 静态与图片代理（无需登录） ---------- */
     if (method === "GET" && p === "/api/bg/cache") return serveBgCache(res, url);
     if (method === "GET" && p === "/api/bg/local") return serveBgLocal(res, url);
+    if (method === "GET" && p === "/login-done") return serveLoginDone(res);
 
     if (method === "GET" && !p.startsWith("/api")) {
       if (serveStatic(res, p)) return;
@@ -240,7 +276,7 @@ async function handle(req, res) {
     if (p === "/api/health") {
       return json(res, 200, {
         ok: true,
-        version: require("../package.json").version,
+        version: require("./version").displayVersion(),
         chromium: browser.isChromiumReady(),
         vaultConfigured: vault.isConfigured(),
         vaultUnlocked: vault.isUnlocked(),
@@ -261,7 +297,7 @@ async function handle(req, res) {
         tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
         storage: process.env.MS_REWARDS_STORAGE_DIR,
         chromium: browser.isChromiumReady(),
-        version: require("../package.json").version,
+        version: require("./version").displayVersion(),
       });
     }
 
@@ -355,6 +391,7 @@ async function handle(req, res) {
       const PRE_AUTH = new Set([
         "getSetup", "setSetup", "getVaultStatus",
         "getAppearance", "getBgSrc", "chromiumStatus", "testBgUrl",
+        "fingerprintStatus",
       ]);
       if (!PRE_AUTH.has(m) && needLogin(req)) {
         return json(res, 401, { ok: false, error: "未登录或会话已过期", needLogin: true });
@@ -423,6 +460,10 @@ function main() {
 
   const server = http.createServer(handle);
   server.listen(PORT, "0.0.0.0", () => {
+    // 监听成功后打 sentinel，供 browser.js 判别「这个进程是不是 Web/Docker server」——
+    // 桌面版（electron-main）不 require ./server，25560 不会起，goto /login-done 必 ECONNREFUSED，
+    // 跳过即可。
+    process.env.MS_REWARDS_HTTP_LISTENING = String(PORT);
     logger.ok(`服务已启动: http://0.0.0.0:${PORT}`);
   });
 

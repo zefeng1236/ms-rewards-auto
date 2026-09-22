@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Button, Card, Tag, toast } from "@ttqtt/liquid-glass-react";
+import { GlassButton } from "@ttqtt/liquid-glass-react";
+import { AppCard, Tag, toast } from "./liquidGlassCompat";
 import { api, IS_WEB } from "../api/ipc";
 import { VaultRescue } from "./VaultRescue";
 import { evaluatePassword, STRENGTH_COLORS } from "../utils/passwordStrength";
@@ -156,7 +157,7 @@ export function VaultPanel() {
         )}
       </div>
 
-      <Card padding="md">
+      <AppCard padding={16}>
         {recovery && (
           <div className="vault-recovery">
             <div className="vault-recovery-title">恢复密钥（忘记密码时唯一的解锁方式）</div>
@@ -194,9 +195,9 @@ export function VaultPanel() {
             <div className="hint">
               请立刻保存到密码管理器或离线介质。关闭后无法再次查看（只能重新生成一把新的）。
             </div>
-            <Button variant="glass" size="sm" onClick={() => setRecovery(null)}>
+            <GlassButton variant="glass" controlSize="small" onClick={() => setRecovery(null)}>
               我已保存，收起
-            </Button>
+            </GlassButton>
           </div>
         )}
 
@@ -283,9 +284,9 @@ export function VaultPanel() {
               </label>
             </div>
             <div className="vault-actions">
-              <Button variant="accent" size="sm" loading={busy} onClick={enable}>
+              <GlassButton variant="glassProminent" controlSize="small" loading={busy} onClick={enable}>
                 启用加密
-              </Button>
+              </GlassButton>
             </div>
           </>
         )}
@@ -371,15 +372,15 @@ export function VaultPanel() {
             </div>
 
             <div className="vault-actions">
-              <Button variant="accent" size="sm" loading={busy} onClick={changePw}>
+              <GlassButton variant="glassProminent" controlSize="small" loading={busy} onClick={changePw}>
                 修改密码
-              </Button>
-              <Button variant="glass" size="sm" loading={busy} onClick={showRecovery}>
+              </GlassButton>
+              <GlassButton variant="glass" controlSize="small" loading={busy} onClick={showRecovery}>
                 查看恢复密钥
-              </Button>
-              <Button variant="danger" size="sm" loading={busy} onClick={doLock}>
+              </GlassButton>
+              <GlassButton variant="destructive" controlSize="small" loading={busy} onClick={doLock}>
                 立即锁定
-              </Button>
+              </GlassButton>
             </div>
           </>
         )}
@@ -395,7 +396,7 @@ export function VaultPanel() {
         {status.configured && <VaultRescue onWiped={() => window.location.reload()} />}
 
         {err && <div className="wz-err">{err}</div>}
-      </Card>
+      </AppCard>
     </div>
   );
 }

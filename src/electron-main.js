@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, Menu, Tray, dialog, nativeImage } = require("electron");
+const { app, BrowserWindow, ipcMain, shell, Menu, Tray, dialog, nativeImage, screen } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
@@ -22,12 +22,14 @@ const logger = require("./logger");
 const notify = require("./notify");
 const cancel = require("./cancel");
 const ensureDeps = require("./ensure-deps");
+const fpBrowser = require("./fingerprint-browser");
 const appearance = require("./appearance");
 const uapi = require("./uapi");
 const launch = require("./launch");
 const setup = require("./setup");
 const sp = require("./storage-path");
 const vault = require("./vault");
+const { displayVersion } = require("./version");
 const vaultMigrate = require("./vault/migrate");
 const wipe = require("./wipe");
 
@@ -430,6 +432,16 @@ function pushChromiumStatus() {
   }
 }
 
+/** 推送指纹浏览器状态（可选组件，未安装时 ready=false） */
+function pushFingerprintStatus() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  try {
+    mainWindow.webContents.send("fingerprint-status", fpBrowser.status());
+  } catch (e) {
+    logger.warn(`推送指纹浏览器状态失败: ${e.message}`);
+  }
+}
+
 /** 启动周期性推送：任务运行中 3 秒一次，空闲时 10 秒一次 */
 let pushTimer = null;
 let pushTick = 0;
@@ -449,12 +461,14 @@ function stopAutoPush() {
 }
 
 function createWindow(show = true) {
+  // 尽量一次展示完整账户表和更多内容；小屏不超出工作区，仍可手动缩小。
+  const { width: workWidth, height: workHeight } = screen.getPrimaryDisplay().workAreaSize;
   const opts = {
-    width: 1180,
-    height: 780,
-    minWidth: 940,
-    minHeight: 600,
-    title: `Microsoft Rewards 自动任务 v${app.getVersion()}`,
+    width: Math.min(1440, workWidth),
+    height: Math.min(900, workHeight),
+    minWidth: Math.min(940, workWidth),
+    minHeight: Math.min(600, workHeight),
+    title: `Microsoft Rewards 自动任务 v${displayVersion()}`,
     backgroundColor: "#11141a",
     show,
     webPreferences: {
@@ -728,6 +742,21 @@ function startBackgroundWork() {
         pushAccounts();
       })
       .catch((e) => logger.error(`后台 Chromium 安装失败: ${e.message}`));
+  }
+
+  // 首次运行自动下载指纹浏览器（默认已启用；未安装时后台下载约 181MB，不阻塞 UI）
+  if (!IS_SMOKE && globalConfig.get()?.browser?.fingerprint?.enable && !fpBrowser.isReady()) {
+    logger.info("检测到指纹浏览器未安装且已默认启用，后台开始自动下载…");
+    fpBrowser.install({
+      onProgress: (p) => {
+        try { mainWindow?.webContents?.send("install-progress", p); } catch {}
+      },
+    })
+      .then((r) => {
+        logger.info(`后台指纹浏览器安装结果: ok=${r.ok}, skipped=${r.skipped || false}`);
+        pushFingerprintStatus();
+      })
+      .catch((e) => logger.error(`后台指纹浏览器安装失败: ${e && e.message ? e.message : e}`));
   }
 }
 
@@ -1107,6 +1136,41 @@ function registerIpc() {
     ready: browser.isChromiumReady(),
     executable: browser.chromiumExecutablePath(),
   }));
+
+  // ---- 指纹浏览器（可选增强，见 src/fingerprint-browser.js）----
+  ipcMain.handle("app:fingerprintStatus", () => fpBrowser.status());
+
+  ipcMain.handle("app:installFingerprint", async (_e, opts) => {
+    if (running) return { ok: false, error: "已有任务正在运行，请稍候" };
+    setRunning(true);
+    try {
+      const result = await fpBrowser.install({
+        force: !!(opts && opts.force),
+        onProgress: (p) => {
+          try {
+            mainWindow?.webContents?.send("install-progress", p);
+          } catch {}
+        },
+      });
+      pushFingerprintStatus();
+      return result;
+    } catch (e) {
+      logger.error(`指纹浏览器安装失败: ${e.message}`);
+      pushFingerprintStatus();
+      return { ok: false, error: e.message };
+    } finally {
+      setRunning(false);
+    }
+  });
+
+  ipcMain.handle("app:uninstallFingerprint", () => {
+    const r = fpBrowser.uninstall();
+    pushFingerprintStatus();
+    return r;
+  });
+
+  // 「检查更新」只查询不下载（0.9.4.18 修：此前按钮直连 install(force) 会重下 181MB）
+  ipcMain.handle("app:checkFingerprintUpdate", () => fpBrowser.checkUpdate());
 
   // ---- 外观个性化 ----
   ipcMain.handle("appearance:get", () => appearance.get());

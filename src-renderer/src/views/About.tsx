@@ -1,4 +1,5 @@
-import { Button, Card, GlassSurface, Tag, toast } from "@ttqtt/liquid-glass-react";
+import { GlassButton, GlassSurface } from "@ttqtt/liquid-glass-react";
+import { AppCard, Tag, toast } from "../components/liquidGlassCompat";
 
 /**
  * 关于页面：版本信息 + 第三方依赖清单 + 友情链接。
@@ -33,39 +34,51 @@ async function copyText(text: string): Promise<boolean> {
   }
 }
 
-const APP_VERSION = "0.9.4";
+const APP_VERSION = "0.10.0";
 
 /** 直接依赖（package.json 中声明的运行时依赖） */
-const DIRECT_DEPS: { name: string; version: string; license: string; desc: string }[] = [
+const DIRECT_DEPS: { name: string; version: string; license: string; desc: string; url: string }[] = [
   {
     name: "Electron",
     version: "31.7.7",
     license: "MIT",
     desc: "跨平台桌面应用外壳，提供主进程 / 渲染进程与系统集成能力",
+    url: "https://github.com/electron/electron",
   },
   {
     name: "Playwright Core",
     version: "1.62.1",
     license: "Apache-2.0",
     desc: "驱动独立 Chromium 完成登录授权与页面自动化",
+    url: "https://github.com/microsoft/playwright",
   },
   {
     name: "React",
-    version: "18.3.1",
+    version: "19.3.0",
     license: "MIT",
     desc: "渲染层界面框架",
+    url: "https://github.com/facebook/react",
   },
   {
     name: "React DOM",
-    version: "18.3.1",
+    version: "19.3.0",
     license: "MIT",
     desc: "React 的浏览器渲染实现",
+    url: "https://github.com/facebook/react",
   },
   {
     name: "@ttqtt/liquid-glass-react",
-    version: "0.2.0",
+    version: "0.0.1",
     license: "MIT",
     desc: "液态玻璃 UI 组件库（玻璃面板、按钮、卡片、开关、滑动条等全部界面控件）",
+    url: "https://github.com/Tsdsj/liquid-glass-react",
+  },
+  {
+    name: "fingerprint-chromium",
+    version: "148.0.7778.215",
+    license: "BSD-3-Clause",
+    desc: "可选指纹增强浏览器（adryfish，基于 Ungoogled Chromium），运行时按需下载",
+    url: "https://github.com/adryfish/fingerprint-chromium",
   },
 ];
 
@@ -91,8 +104,68 @@ const DEV_DEPS: { name: string; version: string; license: string }[] = [
   { name: "rcedit", version: "5.0.2", license: "MIT" },
 ];
 
-/** 友情链接：作者邀请 / 赞助通道 */
-const LINKS = [
+/**
+ * 灵感来源 / 致谢：本项目的签到、活动、阅读等接口用法参考了以下作者的脚本。
+ * 第一位为原始作者，其后各位在原始版本的基础上继续改进与二次发布。
+ */
+type CreditLink = { label: string; href: string };
+type Credit = {
+  key: string;
+  name: string;
+  initial: string;
+  role: string;
+  desc: string;
+  links: CreditLink[];
+};
+
+const CREDITS: Credit[] = [
+  {
+    key: "geosam",
+    name: "潘钜森",
+    initial: "潘",
+    role: "原始作者",
+    desc: "《微软积分商城签到》脚本原作者，本项目的接口调用方式源自他的实现",
+    links: [
+      { label: "GitHub", href: "https://github.com/geosam/FuckScripts" },
+      { label: "ScriptCat", href: "https://scriptcat.org/zh-CN/users/27974" },
+    ],
+  },
+  {
+    key: "sdsmalin",
+    name: "SDSmalin",
+    initial: "S",
+    role: "改进版",
+    desc: "维护《微软积分商城签到（改进版）》，本项目参考其中的改进实现",
+    links: [{ label: "ScriptCat", href: "https://scriptcat.org/zh-CN/users/211564" }],
+  },
+  {
+    key: "dusklight",
+    name: "DuskLight",
+    initial: "D",
+    role: "改进版",
+    desc: "发布《微软积分商城签到（改进版）》，本项目参考其活动处理逻辑",
+    links: [{ label: "ScriptCat", href: "https://scriptcat.org/zh-CN/users/187483" }],
+  },
+  {
+    key: "withfeel",
+    name: "withfeel",
+    initial: "W",
+    role: "分离获取授权版",
+    desc: "发布《微软积分商城签到（改进版）-分离获取授权》，「授权与任务分离」的思路被本项目采用",
+    links: [{ label: "ScriptCat", href: "https://scriptcat.org/zh-CN/users/207134" }],
+  },
+];
+
+/** 友情链接：作者邀请 / 赞助通道（logo 字段为图片型标识，如 gh-proxy 的官方 GitHub Mark） */
+const LINKS: {
+  key: string;
+  href: string;
+  name: string;
+  title: string;
+  desc: string;
+  tint: string;
+  logo?: string;
+}[] = [
   {
     key: "akile",
     href: "https://akile.ai/register?aff_code=1d7e06e0-2922-457e-bada-f814833f7c40",
@@ -108,6 +181,15 @@ const LINKS = [
     title: "AI 助手 / 工作搭子",
     desc: "本项目的开发助手，从写码到跑测试、打包发版全程参与",
     tint: "#8b5cf6",
+  },
+  {
+    key: "ghproxy",
+    href: "https://gh-proxy.com/",
+    name: "GitHub加速下载代理",
+    title: "GitHub 代理加速",
+    desc: "支持API、Git Clone、Releases、Archive、Gist、Raw 文件代理加速下载服务",
+    tint: "#24292f",
+    logo: "https://r2.gh-proxy.com/GitHub-Mark-ea2971cee799.png",
   },
 ];
 
@@ -132,7 +214,7 @@ export function About() {
           </Tag>
         </div>
 
-        <Card padding="md">
+        <AppCard padding={16}>
           <div className="about-hero">
             <img className="about-logo" src="./icon.png" alt="" draggable={false} />
             <div style={{ minWidth: 0 }}>
@@ -144,7 +226,7 @@ export function About() {
               </div>
             </div>
           </div>
-        </Card>
+        </AppCard>
       </div>
 
       {/* ---- 运行时依赖 ---- */}
@@ -159,11 +241,24 @@ export function About() {
           <Tag size="sm">{DIRECT_DEPS.length + TRANSITIVE_DEPS.length + DEV_DEPS.length} 个</Tag>
         </div>
 
-        <Card padding="md">
+        <AppCard padding={16}>
           <div className="dep-group-title">直接依赖（随安装包分发）</div>
           <div className="dep-list">
             {DIRECT_DEPS.map((d) => (
-              <div className="dep-item" key={d.name}>
+              <div
+                className="dep-item dep-link"
+                key={d.name}
+                role="link"
+                tabIndex={0}
+                title={`打开 ${d.name} 项目主页（${d.url}）`}
+                onClick={() => window.open(d.url, "_blank", "noopener")}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    window.open(d.url, "_blank", "noopener");
+                  }
+                }}
+              >
                 <div className="dep-main">
                   <span className="dep-name">{d.name}</span>
                   <span className="dep-ver">{d.version}</span>
@@ -202,7 +297,58 @@ export function About() {
             完整依赖树与许可证文本可在安装目录的 `node_modules` 中查看；各项目均按其各自的
             开源许可证授权，版权归原作者所有。
           </div>
-        </Card>
+        </AppCard>
+      </div>
+
+      {/* ---- 灵感来源与致谢 ---- */}
+      <div className="block">
+        <div className="block-head">
+          <div>
+            <div className="block-title">灵感来源与致谢</div>
+            <div className="block-sub">
+              本项目的接口用法参考了以下作者的油猴脚本，在此诚挚致谢
+            </div>
+          </div>
+          <Tag size="sm">{CREDITS.length} 位作者</Tag>
+        </div>
+
+        <AppCard padding={16}>
+          <div className="credit-list">
+            {CREDITS.map((c) => (
+              <div className="credit-item" key={c.key}>
+                <div className={`credit-avatar credit-${c.key}`} aria-hidden="true">
+                  {c.initial}
+                </div>
+                <div className="credit-main">
+                  <div className="credit-head">
+                    <span className="credit-name">{c.name}</span>
+                    <Tag color={c.key === "geosam" ? "accent" : "success"} size="sm">
+                      {c.role}
+                    </Tag>
+                  </div>
+                  <div className="credit-desc">{c.desc}</div>
+                </div>
+                <div className="credit-actions">
+                  {c.links.map((l) => (
+                    <GlassButton
+                      key={l.href}
+                      variant="plain"
+                      controlSize="small"
+                      onClick={() => window.open(l.href, "_blank", "noopener")}
+                    >
+                      ↗ {l.label}
+                    </GlassButton>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="hint" style={{ marginTop: 14 }}>
+            以上脚本均服务于 Microsoft Rewards 场景，版权归各自作者所有。本项目仅在接口调用方式上
+            参考其实现，未包含其源代码。
+          </div>
+        </AppCard>
       </div>
 
       {/* ---- 友情链接 ---- */}
@@ -210,16 +356,25 @@ export function About() {
         <div className="block-head">
           <div>
             <div className="block-title">友情链接</div>
-            <div className="block-sub">通过以下邀请链接注册，可支持本项目的持续开发</div>
+            <div className="block-sub">实用工具站 + 作者邀请链接；通过邀请链接注册可支持本项目的持续开发</div>
           </div>
         </div>
 
-        <Card padding="md">
+        <AppCard padding={16}>
           <div className="friend-list">
             {LINKS.map((l) => (
               <div className="friend-item" key={l.key}>
-                <GlassSurface as="div" className="friend-logo" radius={14}>
-                  {l.key === "akile" ? (
+                <GlassSurface className="friend-logo" radius={14}>
+                  {l.key === "ghproxy" ? (
+                    /* gh-proxy 官方 GitHub Mark（图片型标识）：深色主题下黑标不可见，反色成白标 */
+                    <img
+                      className="friend-mark friend-mark-img"
+                      src={l.logo}
+                      alt=""
+                      draggable={false}
+                      loading="lazy"
+                    />
+                  ) : l.key === "akile" ? (
                     <svg className="friend-mark" viewBox="0 0 48 48" fill="currentColor" aria-hidden="true">
                       <path
                         fillRule="evenodd"
@@ -229,7 +384,11 @@ export function About() {
                       />
                     </svg>
                   ) : (
-                    /* WorkBuddy 官方标识（取自官方 title SVG 的图形部分，矢量内联） */
+                    /* WorkBuddy 官方标识（取自官方站点 title SVG 的图形部分，矢量内联）：
+                       青绿渐变「圆角方块」底（rx=120.842/560≈22%）+ 白色互锁图形 + 右下暖光。
+                       ⚠️ 勿改成 favicon 那版（viewBox 0 0 40 40 / rx=20）——那是正圆底，
+                       用户明确要求保持最初的「方的」（0.9.4.11 回退）。图形超出画布属官方
+                       原样出血设计，配合 .friend-logo 的 padding:0 居中正常。 */
                     <svg
                       className="friend-mark"
                       viewBox="0 0 560 560"
@@ -314,7 +473,7 @@ export function About() {
                 <div className="friend-main">
                   <div className="friend-head">
                     <span className="friend-name">{l.name}</span>
-                    <Tag color={l.key === "akile" ? "accent" : "success"} size="sm">
+                    <Tag color={l.key === "akile" ? "accent" : l.key === "ghproxy" ? "default" : "success"} size="sm">
                       {l.title}
                     </Tag>
                   </div>
@@ -325,26 +484,24 @@ export function About() {
                 </div>
 
                 <div className="friend-actions">
-                  <Button
-                    variant="accent"
-                    size="sm"
+                  <GlassButton variant={l.key === "ghproxy" ? "glass" : "glassProminent"} controlSize="small"
                     onClick={() => window.open(l.href, "_blank", "noopener")}
                   >
-                    ↗ 前往注册
-                  </Button>
-                  <Button variant="ghost" size="sm" onClick={() => void onCopy(l.href, l.name)}>
+                    {l.key === "ghproxy" ? "↗ 打开" : "↗ 前往注册"}
+                  </GlassButton>
+                  <GlassButton variant="plain" controlSize="small" onClick={() => void onCopy(l.href, l.name)}>
                     ⧉ 复制链接
-                  </Button>
+                  </GlassButton>
                 </div>
               </div>
             ))}
           </div>
 
           <div className="hint" style={{ marginTop: 14 }}>
-            链接为作者邀请链接，你注册后作者可获得少量额度回馈，价格与常规注册一致，
-            不会增加你的任何成本。
+            「前往注册」为作者邀请链接，你注册后作者可获得少量额度回馈，价格与常规注册一致，
+            不会增加你的任何成本；工具站类链接（如 GitHub 加速代理）与作者无利益关系。
           </div>
-        </Card>
+        </AppCard>
       </div>
 
       {/* ---- 开源许可摘要 ---- */}
@@ -354,25 +511,21 @@ export function About() {
             <div className="block-title">开源许可</div>
           </div>
         </div>
-        <Card padding="md">
+        <AppCard padding={16}>
           <div className="hint" style={{ lineHeight: 1.7 }}>
             本软件以 MIT 许可证开源发布，源码托管于 GitHub。软件按「现状」提供，不附带任何
             明示或默示的担保。使用本软件产生的风险由使用者自行承担，请遵守 Microsoft
             服务条款与当地法律法规。
           </div>
           <div className="about-actions">
-            <Button
-              variant="glass"
-              size="sm"
+            <GlassButton variant="glass" controlSize="small"
               onClick={() =>
                 window.open("https://github.com/zefeng1236/ms-rewards-auto", "_blank", "noopener")
               }
             >
               ⌘ 项目仓库
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
+            </GlassButton>
+            <GlassButton variant="plain" controlSize="small"
               onClick={() =>
                 window.open(
                   "https://github.com/zefeng1236/ms-rewards-auto/releases",
@@ -382,9 +535,9 @@ export function About() {
               }
             >
               ↓ 历史版本
-            </Button>
+            </GlassButton>
           </div>
-        </Card>
+        </AppCard>
       </div>
     </>
   );

@@ -115,7 +115,10 @@ async function taskSign(ctx, token) {
     if (isJSON(result.text)) {
       const res = JSON.parse(result.text);
       const point = res.response?.activity?.p;
-      state.get().signPoint = point || 0;
+      // 奖励分必须兜负数：接口对「已签过/无效」会返回 p=-1 这类负数标记，
+      // `point || 0` 拦不住（-1 是真值），会把哨兵值写进 signPoint，
+      // 仪表盘随即显示「已完成 · -1 分」。-1 只允许作为「从未签入」的初值存在。
+      state.get().signPoint = Math.max(0, point || 0);
       state.setTaskDone("sign", state.getDateNum());
       const msg = `📅签入任务已完成！\n${point > 0 ? `✨今日签入奖励：${point}` : "🍵今日已签入，无法二次签入"}`;
       logger.success(msg);
@@ -257,6 +260,104 @@ function extractJsonArray(cleanHtml, marker, openChar, closeChar) {
     return JSON.parse(arrayStr);
   } catch {
     return null;
+  }
+}
+
+/* ============ 活动上报兜底（quiz / BingTrivia） ============ */
+
+/**
+ * 从 rewards.bing.com 首页提取 __RequestVerificationToken。
+ * 旧版 `api/reportactivity` 接口需要它，缺失时那条上报直接跳过（不影响主流程）。
+ * @returns {Promise<string>} 取不到返回空串
+ */
+async function fetchRequestToken(ctx) {
+  try {
+    const res = await httpRequest({ url: "https://rewards.bing.com/", headers: { referer: "https://rewards.bing.com/" }, ctx });
+    const clean = (res.text || "").replace(/\s/g, "");
+    const m = clean.match(/RequestVerificationToken(.*?)value="(.*?)"/);
+    if (m && m[2]) return m[2];
+  } catch (e) {
+    if (e && e.isAbort) throw e;
+  }
+  logger.warn("未取到 RequestVerificationToken（将跳过 api/reportactivity 上报）");
+  return "";
+}
+
+/**
+ * 活动完成上报的兜底组合。
+ *
+ * 主路径是 next-action 交卷（见 taskDaily / taskPromos），但对「每日活动」里的
+ * 答题类活动（quiz）来说，仅靠访问 destination 未必能让服务端记分。参考脚本
+ * （原版.js）在处理活动时额外发两条请求，这里补上：
+ *
+ *   ① rewards.bing.com/api/reportactivity —— 旧版服务端上报，需 __RequestVerificationToken
+ *   ② {bingHost}/msrewards/api/v1/ReportActivity —— quiz 专报（PartnerId=BingTrivia），无需 token
+ *
+ * 两条都是「尽力而为」：失败只 warn，绝不影响任务的完成判定与积分统计。
+ *
+ * @param {object} ctx 账户上下文
+ * @param {{id: string, hash: string, referer?: string}} item
+ */
+async function reportActivityFallback(ctx, item) {
+  if (!item || !item.id) return;
+  const referer = item.referer || "https://rewards.bing.com/";
+  const host = await rewards.resolveHost(ctx);
+
+  // ② quiz 专报（最主要的兜底，无需 token）
+  try {
+    const res = await httpRequest({
+      method: "POST",
+      url: `https://${host}/msrewards/api/v1/ReportActivity?ajaxreq=1`,
+      headers: {
+        "content-type": "application/json; charset=UTF-8",
+        "user-agent": rewards.UA_PC,
+        referer,
+      },
+      data: JSON.stringify({
+        ActivitySubType: "quiz",
+        ActivityType: "notification",
+        OfferId: item.id,
+        Channel: "Bing.Com",
+        PartnerId: "BingTrivia",
+        Timezone: -480,
+      }),
+      ctx,
+    });
+    if (res.status === 200) logger.log("📆", `已补发 quiz 上报（${item.id}）`);
+    else logger.warn(`quiz 上报返回 HTTP ${res.status}（${item.id}）`);
+  } catch (e) {
+    if (e && e.isAbort) throw e;
+    logger.warn(`quiz 上报失败: ${e.message}`);
+  }
+
+  // ① 旧版服务端上报（需首次 200 后取到的 token）
+  try {
+    const token = await fetchRequestToken(ctx);
+    if (!token) return;
+    await httpRequest({
+      method: "POST",
+      url: "https://rewards.bing.com/api/reportactivity?X-Requested-With=XMLHttpRequest",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "user-agent": rewards.UA_PC,
+        referer,
+      },
+      // 参考脚本用 URLSearchParams 序列化，这里保持一致（-1 等价于 HTTP 错误占位）
+      data: new URLSearchParams({
+        id: item.id,
+        hash: item.hash || "",
+        timeZone: 480,
+        activityAmount: 1,
+        dbs: 0,
+        form: "",
+        type: "",
+        __RequestVerificationToken: token,
+      }).toString(),
+      ctx,
+    });
+  } catch (e) {
+    if (e && e.isAbort) throw e;
+    logger.warn(`api/reportactivity 上报失败: ${e.message}`);
   }
 }
 
@@ -426,7 +527,7 @@ async function taskClaimRewards(ctx) {
  * 每日活动（dashboard 页的 dailySet，每日三格）
  *
  * 从原混合活动任务里拆出来的独立任务，由 tasks.daily 开关控制（默认关闭）。
- * 与网页浏览（taskPromos，earn 页）分开统计、分开标记完成。
+ * 与积分活动（taskPromos，earn 页）分开统计、分开标记完成。
  * 每日活动通常只有固定的 2–3 条，一次做完即可，不做单次数量限流。
  */
 async function taskDaily(ctx) {
@@ -511,6 +612,18 @@ async function taskDaily(ctx) {
         if (e && e.isAbort) throw e;
         logger.warn(`每日活动交卷失败: ${e.message}`);
       }
+
+      // ③ 答题类（quiz）兜底上报：next-action 交卷有时不计分，参考脚本额外发的两条上报
+      try {
+        await reportActivityFallback(ctx, {
+          id: item.id,
+          hash: item.hash,
+          referer: item.destination || "https://rewards.bing.com/dashboard",
+        });
+      } catch (e) {
+        if (e && e.isAbort) throw e;
+        logger.warn(`活动上报兜底失败: ${e.message}`);
+      }
       donePoints += item.points;
       state.get().dailyPoint = Math.max(state.get().dailyPoint || 0, donePoints);
       state.save();
@@ -530,7 +643,7 @@ async function taskDaily(ctx) {
 }
 
 /**
- * 网页浏览 / 更多活动（earn 页 activityCards）
+ * 积分活动 / 更多活动（earn 页 activityCards）
  *
  * 由 tasks.promos 开关控制。只处理 earn 页的更多活动；dashboard 的每日三格
  * 已拆到 taskDaily。受单次数量限制（limits.promos）时本轮只做一部分、不标记完成。
@@ -573,7 +686,7 @@ async function taskPromos(ctx) {
       }
     }
   } catch (e) {
-    logger.error(`网页浏览活动解析出错！${e.message}`);
+    logger.error(`积分活动解析出错！${e.message}`);
   }
 
   state.get().promosPoint = Math.max(state.get().promosPoint, earnPoints);
@@ -583,10 +696,10 @@ async function taskPromos(ctx) {
 
   if (totalNewTasks < 1) {
     state.setTaskDone("promos", state.getDateNum());
-    const earnReport = earnMax > 0 ? `\n💻网页浏览活动：${earnPoints}/${earnMax}` : "";
-    const msg = `🧩网页浏览任务已完成！${earnReport}`;
+    const earnReport = earnMax > 0 ? `\n💻积分活动：${earnPoints}/${earnMax}` : "";
+    const msg = `🧩积分活动任务已完成！${earnReport}`;
     logger.success(msg);
-    await notify.sendText(ctx, "微软积分任务-网页浏览", msg);
+    await notify.sendText(ctx, "微软积分任务-积分活动", msg);
     return { status: "done", points: earnPoints };
   }
 
@@ -599,7 +712,7 @@ async function taskPromos(ctx) {
   try {
     logger.log(
       "🧩",
-      `检测到 ${totalNewTasks} 个未完成网页浏览活动，本轮计划执行 ${runCount} 个${
+      `检测到 ${totalNewTasks} 个未完成积分活动，本轮计划执行 ${runCount} 个${
         plan.applied || plan.cancelled ? `（${plan.note}）` : ""
       }`
     );
@@ -609,7 +722,7 @@ async function taskPromos(ctx) {
     for (const item of queue) {
       cancel.throwIfAborted();
       i++;
-      logger.log("💻", `正在执行第 ${i}/${runCount} 个网页浏览活动...`);
+      logger.log("💻", `正在执行第 ${i}/${runCount} 个积分活动...`);
       const reqHeaders = {
         "content-type": "text/plain;charset=UTF-8",
         "next-action": NEXT_ACTION,
@@ -624,32 +737,41 @@ async function taskPromos(ctx) {
         data: JSON.stringify([item.hash, 11, { offerid: item.id, isPromotional: "$undefined", timezoneOffset: "-480" }]),
         ctx,
       });
+
+      // ② 答题类（quiz）兜底上报：失败只 warn，不影响本条活动的计分与任务状态
+      try {
+        await reportActivityFallback(ctx, { id: item.id, hash: item.hash, referer: item.url });
+      } catch (e) {
+        if (e && e.isAbort) throw e;
+        logger.warn(`活动上报兜底失败: ${e.message}`);
+      }
+
       earnPoints += item.points;
       state.get().promosPoint = Math.max(state.get().promosPoint, earnPoints);
       state.save();
       if (i < runCount) await sleep(randInt(2000, 4000));
     }
 
-    const earnReport = earnMax > 0 ? `\n💻网页浏览活动：${earnPoints}/${earnMax}` : "";
+    const earnReport = earnMax > 0 ? `\n💻积分活动：${earnPoints}/${earnMax}` : "";
 
     // 只有把剩余活动全做完才算完成；受单次数量限制时保持「未完成」，
     // 让今日汇总与自动循环如实反映出「还有活动留待下轮」
     if (runCount >= totalNewTasks) {
       state.setTaskDone("promos", state.getDateNum());
-      const msg = `🧩网页浏览任务已完成！${earnReport}`;
+      const msg = `🧩积分活动任务已完成！${earnReport}`;
       logger.success(msg);
-      await notify.sendText(ctx, "微软积分任务-网页浏览", msg);
+      await notify.sendText(ctx, "微软积分任务-积分活动", msg);
       return { status: "done", points: earnPoints };
     }
 
-    const partialMsg = `🧩本轮已执行 ${runCount}/${totalNewTasks} 个网页浏览活动，剩余 ${
+    const partialMsg = `🧩本轮已执行 ${runCount}/${totalNewTasks} 个积分活动，剩余 ${
       totalNewTasks - runCount
     } 个留待下轮`;
     logger.log("🧩", partialMsg);
     return { status: "partial", points: earnPoints, pending: totalNewTasks - runCount };
   } catch (e) {
     if (e && e.isAbort) throw e;
-    logger.error(`网页浏览交卷出错！${e.message}`);
+    logger.error(`积分活动交卷出错！${e.message}`);
     return { status: "error", error: e.message };
   }
 }
@@ -686,13 +808,17 @@ async function taskSearch(ctx) {
   const host = await rewards.resolveHost(ctx);
   const search = state.get();
 
-  // 获取初始进度
-  if (search.lastSearchProgress === -1) {
-    const dashboard = await rewards.getRewardsInfo(ctx);
-    // getRewardsInfo 失败时也会返回对象（ok:false），必须判 ok 而不是判对象是否存在
-    if (!dashboard || !dashboard.ok) {
+  // 每轮开始都先拉一次服务器真实进度，再决定「还要搜多少」：
+  // 用户随时可能在浏览器 Bing / 手机 App 上手动搜索赚分，本地计数只是估算，
+  // 拿它当依据会重复搜索或迟迟不标记完成。拉取失败时：
+  // 当日首轮（无基准）直接报错收工；续轮沿用本地计数继续（绝不能把好数据冲成 0）。
+  const dashboard = await rewards.getRewardsInfo(ctx);
+  if (!dashboard || !dashboard.ok) {
+    if (search.lastSearchProgress === -1 || !search.pc) {
       return { status: "error", error: "获取搜索进度失败（earn 页解析失败或 Cookie 已失效）" };
     }
+    logger.warn("搜索进度拉取失败，本轮沿用本地计数继续（下一轮会重试服务器）");
+  } else {
     // 新版 earn 页 PC 搜索上限为 15（旧版 60），必须采用服务器返回值，
     // 只有在服务器完全没给上限时才退回默认值，否则会一直搜不完
     const pcMax = dashboard.pc.max > 0 ? dashboard.pc.max : DEFAULT_PC_SEARCH_MAX;
@@ -701,6 +827,7 @@ async function taskSearch(ctx) {
     const mPro = dashboard.m.progress;
     const currentTotal = pcPro + mPro;
 
+    // 连续两轮服务器进度纹丝不动且未满额 → 收入受限/账号异常，中止今日搜索
     if (search.lastSearchProgress !== -1) {
       if (currentTotal === search.lastSearchProgress && currentTotal < pcMax + mMax) {
         search.restrictedTimes++;
@@ -722,19 +849,20 @@ async function taskSearch(ctx) {
     search.m = { progress: mPro, max: mMax };
     search.searchPoint = pcPro + mPro;
     state.save();
-    // 搜索额度已满则直接标记完成，避免空转
+    // 搜索额度已满（含用户手动搜满的情形）则直接标记完成，避免空转
     if (pcPro >= pcMax && mPro >= mMax) {
       state.setTaskDone("search", state.getDateNum());
       logger.success(`🔍搜索任务已完成！（PC:${pcPro}/${pcMax}${mMax ? ` Mobile:${mPro}/${mMax}` : ""}）`);
       return { status: "skip", searched: 0, progress: searchProgressSnapshot(state) };
     }
-  } else {
-    search.pc = search.pc || { progress: 0, max: DEFAULT_PC_SEARCH_MAX };
-    search.m = search.m || { progress: 0, max: 0 };
   }
 
-  const limit = randInt(4, 7);
-  logger.log("🔍", `本轮计划搜索 ${limit} 次（PC:${search.pc.progress}/${search.pc.max} Mobile:${search.m.progress}/${search.m.max}）`);
+  // 本轮计划次数 = 随机节奏 与 服务器剩余额度 取小（最后一轮不超搜）
+  const remaining =
+    Math.max(0, (search.pc.max || 0) - (search.pc.progress || 0)) +
+    Math.max(0, (search.m.max || 0) - (search.m.progress || 0));
+  const limit = Math.max(1, Math.min(randInt(4, 7), remaining));
+  logger.log("🔍", `服务器进度已同步，本轮计划搜索 ${limit} 次（剩余 ${remaining} 次，PC:${search.pc.progress}/${search.pc.max} Mobile:${search.m.progress}/${search.m.max}）`);
   let searched = 0;
 
   while (searched < limit && (search.pc.progress < search.pc.max || search.m.progress < search.m.max)) {
@@ -826,4 +954,16 @@ async function taskSearch(ctx) {
   return { status: "partial", searched, pc: search.pc.progress, m: search.m.progress, progress: searchProgressSnapshot(state) };
 }
 
-module.exports = { taskSign, taskRead, taskDaily, taskPromos, taskClaimRewards, taskSearch, searchProgressSnapshot };
+// reportActivityFallback / fetchRequestToken 导出是为了让自检脚本与打桩测试能直接驱动，
+// 业务侧仍通过 taskDaily / taskPromos 调用。
+module.exports = {
+  taskSign,
+  taskRead,
+  taskDaily,
+  taskPromos,
+  taskClaimRewards,
+  taskSearch,
+  searchProgressSnapshot,
+  reportActivityFallback,
+  fetchRequestToken,
+};

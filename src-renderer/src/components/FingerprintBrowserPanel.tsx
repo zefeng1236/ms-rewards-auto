@@ -1,0 +1,271 @@
+import { useEffect, useState } from "react";
+import { GlassButton } from "@ttqtt/liquid-glass-react";
+import { AppCard, Tag, toast } from "./liquidGlassCompat";
+import { NumberField, SelectField, SwitchField } from "./fields";
+import { api } from "../api/ipc";
+import type {
+  AppConfig,
+  CheckFingerprintUpdateResult,
+  FingerprintStatus,
+  InstallProgress,
+} from "../types";
+
+type FpCfg = AppConfig["browser"]["fingerprint"];
+
+const FALLBACK: FpCfg = { enable: false, seed: 0, brand: "Chrome", hardwareConcurrency: 0 };
+
+const BRAND_OPTIONS = [
+  { label: "Chrome", value: "Chrome" },
+  { label: "Edge", value: "Edge" },
+  { label: "Opera", value: "Opera" },
+  { label: "Vivaldi", value: "Vivaldi" },
+];
+
+/**
+ * 指纹浏览器面板（可选增强）
+ *
+ * 放设置页而不是塞进 SettingsForm，是因为它不只是配置项 —— 还带一次
+ * 约 181MB 的运行时下载。独立成块才能给下载进度、卸载这些操作留位置。
+ *
+ * 设计上刻意做成「可选」：没下载、没启用时自动回落普通 Chromium，
+ * 绝不因为这是个增强项就把登录流程卡住。
+ */
+export function FingerprintBrowserPanel() {
+  const [st, setSt] = useState<FingerprintStatus | null>(null);
+  const [cfg, setCfg] = useState<FpCfg>(FALLBACK);
+  const [busy, setBusy] = useState(false);
+  const [confirmDel, setConfirmDel] = useState(false);
+  const [progress, setProgress] = useState<InstallProgress | null>(null);
+  const [check, setCheck] = useState<CheckFingerprintUpdateResult | null>(null);
+  const [checking, setChecking] = useState(false);
+
+  useEffect(() => {
+    api
+      .fingerprintStatus()
+      .then(setSt)
+      .catch(() => setSt(null));
+    api
+      .getGlobalConfig()
+      .then((c) => setCfg(c?.browser?.fingerprint || FALLBACK))
+      .catch(() => setCfg(FALLBACK));
+  }, []);
+
+  useEffect(() => {
+    api.onFingerprintStatus((v) => setSt(v));
+    const off = api.onInstallProgress((p) => setProgress(p));
+    return () => {
+      if (off) off();
+    };
+  }, []);
+
+  const patch = async (p: Partial<FpCfg>) => {
+    const next = await api.setGlobalConfig({ browser: { fingerprint: p } });
+    setCfg(next?.browser?.fingerprint || FALLBACK);
+  };
+
+  const refresh = async () => {
+    try {
+      setSt(await api.fingerprintStatus());
+    } catch {
+      /* 保持上一次状态 */
+    }
+  };
+
+  const onInstall = async (force: boolean) => {
+    setBusy(true);
+    setProgress({ pct: 0 });
+    try {
+      const r = await api.installFingerprint({ force });
+      if (r.ok) {
+        toast.success(r.skipped ? "指纹浏览器已是最新版本" : "指纹浏览器安装完成");
+      } else {
+        toast.error(r.error || "指纹浏览器安装失败");
+      }
+      await refresh();
+    } finally {
+      setBusy(false);
+      setProgress(null);
+    }
+  };
+
+  /**
+   * 检查更新：只查询上游版本，不触发下载。
+   * 0.9.4.18 修：此前该按钮直连 install(force=true)，点一下就把 181MB 重下一遍。
+   */
+  const onCheck = async () => {
+    setChecking(true);
+    setCheck(null);
+    try {
+      const r = await api.checkFingerprintUpdate();
+      setCheck(r);
+      if (!r.ok) {
+        toast.error(r.error || "查询上游版本失败");
+      } else if (r.reinstallAvailable) {
+        toast.info(`已安装 ${r.installed || "无"}，钉死版本 ${r.pinned}，可点「重新安装」对齐`);
+      } else if (r.updateAvailable) {
+        toast.info(`上游已有新版 ${r.latest}（本项目钉死 ${r.pinned}，不自动跟进）`);
+      } else {
+        toast.success(`已是钉死版本 ${r.pinned}`);
+      }
+    } catch (e) {
+      toast.error(String((e as Error).message || e));
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const onUninstall = async () => {
+    setBusy(true);
+    try {
+      await api.uninstallFingerprint();
+      toast.success("已删除指纹浏览器，后续将使用普通 Chromium");
+      await refresh();
+    } finally {
+      setBusy(false);
+      setConfirmDel(false);
+    }
+  };
+
+  const supported = st ? st.supported : true;
+  const outdated = !!st && !!st.version && st.pinned && st.version !== st.pinned;
+  const pct = progress && typeof progress.pct === "number" ? Math.min(99, progress.pct) : 0;
+
+  return (
+    <div className="block">
+      <div className="block-head">
+        <div>
+          <div className="block-title">指纹浏览器（可选）</div>
+          <div className="block-sub">
+            用 patch 过源码的 Chromium 统一生成 UA / Client Hints / 插件 / CPU 等指纹，需单独下载约 181MB
+          </div>
+        </div>
+        <Tag color={st?.ready ? "success" : "default"} size="sm">
+          {st ? (st.ready ? "● 已安装" : "○ 未安装") : "检查中…"}
+        </Tag>
+      </div>
+
+      <AppCard padding={16}>
+        {!supported ? (
+          <div className="hint">当前平台暂不支持指纹浏览器，将继续使用普通 Chromium。</div>
+        ) : (
+          <>
+            <SwitchField
+              label="启用指纹浏览器"
+              hint="未安装或启动失败时自动回落普通 Chromium，不影响登录与任务"
+              checked={cfg.enable}
+              disabled={!st?.ready}
+              onChange={(v) => void patch({ enable: v })}
+            />
+
+            <div className="form-grid" style={{ marginTop: 12 }}>
+              <SelectField
+                label="浏览器品牌"
+                hint="UA 与 Client Hints 声明的品牌，必须与内核一致才不会自相矛盾"
+                value={cfg.brand}
+                options={BRAND_OPTIONS}
+                onChange={(v) => void patch({ brand: v })}
+              />
+              <NumberField
+                label="指纹种子"
+                hint="0 = 按账号 ID 自动派生（同一账号长期稳定，不同账号互不相同）"
+                value={cfg.seed}
+                min={0}
+                max={4294967295}
+                onChange={(v) => void patch({ seed: Math.max(0, Math.floor(v) || 0) })}
+              />
+              <NumberField
+                label="CPU 核数"
+                hint="0 = 由指纹种子生成"
+                value={cfg.hardwareConcurrency}
+                min={0}
+                max={256}
+                onChange={(v) => void patch({ hardwareConcurrency: Math.max(0, Math.floor(v) || 0) })}
+              />
+            </div>
+
+            <div className="fp-actions">
+              <GlassButton
+                variant="plain"
+                controlSize="small"
+                loading={busy && !progress}
+                disabled={busy}
+                onClick={() => void onInstall(false)}
+              >
+                {st?.ready ? "重新安装" : "下载并安装"}
+              </GlassButton>
+              {st?.ready && (
+                <>
+                  <GlassButton
+                    variant="plain"
+                    controlSize="small"
+                    loading={checking}
+                    disabled={busy || checking}
+                    onClick={() => void onCheck()}
+                  >
+                    检查更新
+                  </GlassButton>
+                  {confirmDel ? (
+                    <GlassButton
+                      variant="plain"
+                      controlSize="small"
+                      disabled={busy}
+                      onClick={() => void onUninstall()}
+                    >
+                      确认删除
+                    </GlassButton>
+                  ) : (
+                    <GlassButton
+                      variant="plain"
+                      controlSize="small"
+                      disabled={busy}
+                      onClick={() => setConfirmDel(true)}
+                    >
+                      删除
+                    </GlassButton>
+                  )}
+                </>
+              )}
+            </div>
+
+            {progress && pct < 100 && (
+              <div className="fp-progress">
+                <div className="fp-bar">
+                  <div className="fp-bar-fill" style={{ width: `${pct}%` }} />
+                </div>
+                <div className="hint" title={progress.message || ""}>
+                  {progress.message || `正在下载 ${pct}%`}
+                </div>
+              </div>
+            )}
+
+            {check && check.ok && (
+              <div className="hint fp-note">
+                检查结果：上游最新 {check.latest || "未知"} · 本项目钉死 {check.pinned} · 已安装{" "}
+                {check.installed || "无"}
+                {check.reinstallAvailable ? "（与钉死版本不一致，可点「重新安装」对齐）" : "（与钉死版本一致）"}
+                {check.updateAvailable ? "；上游已发新版，本项目不自动跟进" : ""}
+              </div>
+            )}
+
+            <div className="hint fp-note">
+              {st?.ready ? (
+                <>
+                  已安装版本 {st.version}
+                  {outdated ? `（与钉死版本 ${st.pinned} 不一致，可点「重新安装」对齐）` : "（已是本版钉死版本）"}
+                </>
+              ) : (
+                <>
+                  下载走 gh-proxy 镜像链（国内直连 GitHub Releases 通常不可达），支持断点续传；
+                  失败会自动换镜像并回落直连。
+                </>
+              )}
+              <br />
+              注意两处上游限制：GPU 指纹仅 Linux 生效（Windows 上 WebGL 由本项目自己的补丁兜底）；
+              headless 下它只把 UA 的 HeadlessChrome 改成 Chrome，其余 headless 特征不变。
+            </div>
+          </>
+        )}
+      </AppCard>
+    </div>
+  );
+}

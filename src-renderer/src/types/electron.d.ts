@@ -8,11 +8,15 @@ import type {
   AppearanceSetResult,
   BgSrcResult,
   BgProgress,
+  CheckFingerprintUpdateResult,
   ChromiumStatus,
   CloseAction,
   DeepPartial,
   DownloadResult,
+  FingerprintStatus,
   InstallBrowserResult,
+  InstallFingerprintResult,
+  InstallProgress,
   LaunchConfig,
   Overview,
   PushTestResult,
@@ -126,6 +130,14 @@ export interface ElectronApi {
   chromiumStatus(): Promise<ChromiumStatus>;
   installBrowser(): Promise<InstallBrowserResult>;
 
+  // ---- 指纹浏览器（可选增强）----
+  fingerprintStatus(): Promise<FingerprintStatus>;
+  /** 下载并安装指纹浏览器（约 181MB，走 gh-proxy 镜像链）；force 为 true 时强制重装 */
+  installFingerprint(opts?: { force?: boolean }): Promise<InstallFingerprintResult>;
+  uninstallFingerprint(): Promise<{ ok: boolean }>;
+  /** 检查更新：只查询上游版本，不下载不安装 */
+  checkFingerprintUpdate(): Promise<CheckFingerprintUpdateResult>;
+
   // ---- 主进程推送 ----
   onRunning(cb: (v: boolean) => void): void;
   onLog(cb: (line: string) => void): void;
@@ -134,6 +146,10 @@ export interface ElectronApi {
   /** 壁纸下载进度推送：{ loaded, total, pct } 或 { done: true }；返回退订函数 */
   onBgProgress(cb: (v: BgProgress) => void): () => void;
   onChromiumStatus(cb: (v: ChromiumStatus) => void): void;
+  /** 指纹浏览器安装/卸载后的状态推送 */
+  onFingerprintStatus(cb: (v: FingerprintStatus) => void): void;
+  /** Chromium 自动安装进度：{ stage, message?, pct?, speed?, eta?, loaded?, total? }；返回退订函数 */
+  onInstallProgress(cb: (v: InstallProgress) => void): () => void;
   /** 每账号运行态变更；返回退订函数 */
   onAccountStatus(cb: (v: { id: string; status: AccountRunStatusMap[string]["status"]; reason?: string }) => void): () => void;
   /** 每账号结构化日志；返回退订函数 */

@@ -3,6 +3,9 @@ const path = require("path");
 const { chromium } = require("playwright-core");
 const logger = require("./logger");
 const sp = require("./storage-path");
+const stealth = require("./stealth");
+const globalConfig = require("./global-config");
+const fpBrowser = require("./fingerprint-browser");
 
 const ROOT = path.join(__dirname, "..");
 
@@ -46,6 +49,63 @@ function chromiumExecutablePath() {
   }
 }
 
+/** Playwright 自带 Chromium 的路径（不含环境变量覆盖），供来源优先级排序用 */
+function bundledChromiumPath() {
+  try {
+    const p = chromium.executablePath();
+    return p && fs.existsSync(p) ? p : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 读取浏览器指纹配置：优先账户有效配置，取不到再退回全局设置 */
+function fingerprintCfg(ctx) {
+  let b = null;
+  try {
+    if (ctx && ctx.config && typeof ctx.config.get === "function") b = ctx.config.get().browser;
+  } catch {}
+  if (!b || typeof b !== "object") {
+    try {
+      b = globalConfig.get().browser;
+    } catch {}
+  }
+  const fp = (b && b.fingerprint) || {};
+  return {
+    enable: fp.enable === true,
+    seed: Number(fp.seed) || 0,
+    brand: typeof fp.brand === "string" && fp.brand ? fp.brand : "Chrome",
+    hardwareConcurrency: Number(fp.hardwareConcurrency) || 0,
+  };
+}
+
+/**
+ * 决定本次用哪个浏览器。
+ *
+ * 优先级：
+ *   1. PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH —— 运维显式指定的永远最高（Docker / 调试）
+ *   2. 指纹浏览器 —— 设置里启用且已安装（src/fingerprint-browser.js）
+ *   3. Playwright 自带 Chromium —— 默认行为
+ *
+ * 指纹浏览器没装好时是**静默回落**而不是报错：它是可选增强，不该因为没下载
+ * 就把登录流程整个打断。
+ *
+ * @param {object} [ctx] 账户上下文（用于读配置与派生种子）
+ * @returns {{kind: "override"|"fingerprint"|"chromium", executable: string|null, cfg?: object}}
+ */
+function resolveBrowserSource(ctx) {
+  const override = (process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || "").trim();
+  if (override && fs.existsSync(override)) return { kind: "override", executable: override };
+
+  const cfg = fingerprintCfg(ctx);
+  if (cfg.enable) {
+    const exe = fpBrowser.executablePath();
+    if (exe) return { kind: "fingerprint", executable: exe, cfg };
+    logger.warn("已启用指纹浏览器但尚未安装，本轮回落到普通 Chromium（可在设置页下载）");
+  }
+  return { kind: "chromium", executable: bundledChromiumPath(), cfg };
+}
+
 /** 额外的 Chromium 启动参数（逗号分隔，Docker 下需要 --no-sandbox） */
 function extraChromiumArgs() {
   return (process.env.MS_REWARDS_CHROMIUM_ARGS || "")
@@ -74,17 +134,25 @@ function isChromiumReady() {
  * @param {{cookies?: object[]}} [opts] 要注入的登录 Cookie（来自加密存储）
  */
 async function openContext(ctx, headless, opts) {
-  const executable = chromiumExecutablePath();
+  const source = resolveBrowserSource(ctx);
+  const executable = source.executable;
   if (!executable) {
     throw new Error(
-      "未检测到 Playwright Chromium。请先运行: npx playwright install chromium（或在 GUI 中点击「安装 Chromium」）。"
+      "未检测到可用的浏览器。请先运行: npx playwright install chromium（或在 GUI 中点击「安装 Chromium」）。"
     );
   }
+  const isFp = source.kind === "fingerprint";
+  // 指纹模式下算一次种子：配置里没指定就按账户 ID 派生，保证同账号长期稳定
+  const fpSeed = isFp
+    ? (source.cfg && source.cfg.seed) || fpBrowser.seedFor((ctx && ctx.id) || "")
+    : 0;
   // storage/tmp 可能还不存在（全新安装 / 容器首次运行），mkdtemp 不会自动建父目录
   const tmpRoot = sp.resolve("tmp");
   if (!fs.existsSync(tmpRoot)) fs.mkdirSync(tmpRoot, { recursive: true });
   const tempDir = fs.mkdtempSync(path.join(tmpRoot, "prof-"));
-  logger.info(`使用 Chromium: ${executable} (headless=${headless})`);
+  logger.info(
+    `使用 ${isFp ? "指纹浏览器" : "Chromium"}: ${executable} (headless=${headless}${isFp ? `, seed=${fpSeed}` : ""})`
+  );
 
   const launchOpts = {
     headless,
@@ -92,6 +160,7 @@ async function openContext(ctx, headless, opts) {
     locale: "zh-CN",
     args: [
       "--disable-blink-features=AutomationControlled",
+      ...stealth.EXTRA_ARGS,
       "--no-first-run",
       "--disable-default-apps",
       "--no-default-browser-check",
@@ -99,6 +168,24 @@ async function openContext(ctx, headless, opts) {
       ...extraChromiumArgs(),
     ],
   };
+  if (isFp) {
+    // 指纹浏览器：由种子统一生成 UA / userAgentData / Client Hints / 插件 / CPU / 内存
+    launchOpts.args.push(
+      ...fpBrowser.buildArgs({
+        seed: fpSeed,
+        brand: source.cfg ? source.cfg.brand : "Chrome",
+        hardwareConcurrency: source.cfg ? source.cfg.hardwareConcurrency : 0,
+      })
+    );
+    // ⚠️ 刻意不设 userAgent。
+    // 实测证明 sec-ch-ua 请求头改不动（setExtraHTTPHeaders / page.route 都无效），
+    // 它是浏览器如实生成的。若这里再硬改 UA，就会回到「UA 自称 X、CH 说 Y」的
+    // 自相矛盾状态 —— 那正是引入指纹浏览器要解决的问题。
+  } else {
+    // headless Chromium 默认 UA 带 "HeadlessChrome" 字样，是最直白的自曝；
+    // 统一改成与 HTTP 请求一致的桌面 Edge UA
+    launchOpts.userAgent = stealth.STEALTH_USER_AGENT;
+  }
   // 显式指定可执行文件：
   //   - 环境变量指了外部 Chromium（Docker/apt 场景）→ 用它
   //   - 否则用 Playwright 自带的（桌面版默认行为）
@@ -106,6 +193,18 @@ async function openContext(ctx, headless, opts) {
   launchOpts.executablePath = executable;
 
   const context = await chromium.launchPersistentContext(tempDir, launchOpts);
+
+  // 在所有页面脚本之前注入去自动化补丁（抹掉 webdriver / 补全 chrome 对象与插件等指纹）
+  try {
+    // 指纹模式下置位 __MSR_FP：stealth.js 会据此让出 languages / plugins / CPU 核数等
+    // 它由种子生成的维度，避免两套补丁叠加出矛盾指纹
+    const initSrc = isFp ? "window.__MSR_FP = true;\n" + stealth.STEALTH_INIT : stealth.STEALTH_INIT;
+    await context.addInitScript({ content: initSrc });
+    // 指纹模式下也不盖 accept-language：--accept-lang 已经由上游统一处理
+    if (!isFp) await context.setExtraHTTPHeaders(stealth.EXTRA_HTTP_HEADERS);
+  } catch (e) {
+    logger.warn(`注入去自动化补丁失败（不影响主流程）: ${e.message}`);
+  }
 
   const cookies = (opts && opts.cookies) || [];
   if (cookies.length) {
@@ -299,6 +398,17 @@ async function loginInteractive(ctx) {
     logger.info(
       `已同步 ${cookies.length} 个 Cookie，命中认证票据: ${hit.length ? hit.join(", ") : "无"}，登录状态: ${loggedIn ? "已登录" : "未登录"}`
     );
+    // 登录完成后导航到完成页，noVNC 里会显示大字提示用户返回控制台。
+    // 只有 Web/Docker 模式（src/server.js listen 成功后才设 MS_REWARDS_HTTP_LISTENING）
+    // 才需要这一步；桌面版不启 server，跳了反而触发 ECONNREFUSED 噪声 warn。
+    if (loggedIn && process.env.MS_REWARDS_HTTP_LISTENING) {
+      const port = process.env.MS_REWARDS_PORT || "25560";
+      try {
+        await page.goto(`http://localhost:${port}/login-done`, { waitUntil: "domcontentloaded", timeout: 10000 });
+      } catch (e) {
+        logger.warn(`导航到登录完成页失败: ${e.message}`);
+      }
+    }
     return { code, loggedIn };
   } finally {
     await closeContext(handle);
@@ -320,6 +430,9 @@ module.exports = {
   AUTH_COOKIE_NAMES,
   hasAuthCookies,
   chromiumExecutablePath,
+  bundledChromiumPath,
+  fingerprintCfg,
+  resolveBrowserSource,
   extraChromiumArgs,
   isChromiumReady,
   clearBrowserCache,

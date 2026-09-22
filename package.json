@@ -1,6 +1,7 @@
 {
   "name": "ms-rewards-auto",
-  "version": "0.9.4",
+  "version": "0.10.0",
+  "buildNumber": "0",
   "description": "微软积分（Microsoft Rewards）自动任务独立软件 · 多账户隔离 · 加密保险库 · 密码强度校验 · 每日活动/每周领取 · Electron GUI",
   "main": "src/electron-main.js",
   "scripts": {
@@ -24,14 +25,14 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
-    "@ttqtt/liquid-glass-react": "file:docker/vendor/liquid-glass-react-0.2.0.tgz",
+    "@ttqtt/liquid-glass-react": "0.0.1",
     "playwright-core": "^1.45.0",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
   },
   "devDependencies": {
-    "@types/react": "^18.3.31",
-    "@types/react-dom": "^18.3.7",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.7.0",
     "electron": "^31.0.0",
     "electron-builder": "^25.1.8",
@@ -55,6 +56,8 @@
       "package.json",
       "package-lock.json",
       "start.bat",
+      "LICENSE",
+      "THIRD_PARTY_NOTICES.md",
       "参考js脚本/**/*"
     ],
     "extraResources": [
@@ -80,13 +83,15 @@
         }
       ],
       "icon": "build/icon.ico",
-      "artifactName": "Microsoft-Rewards-Auto-Setup-${version}.exe",
+      "artifactName": "Microsoft-Rewards-Auto-Setup-${buildVersion}.exe",
       "signAndEditExecutable": false,
       "verifyUpdateCodeSignature": false
     },
+    "beforePack": "scripts/beforePack.js",
     "afterPack": "scripts/afterPack.js",
     "nsis": {
       "oneClick": false,
+      "license": "license.txt",
       "language": "2052",
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,

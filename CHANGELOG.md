@@ -1,6 +1,200 @@
 # 更新日志
 
-本文件记录各版本的重要变更。版本格式为主版本.次版本.修订号，带 `-beta` 后缀的为测试版本。
+本文件记录各版本的重要变更。版本格式为主版本.次版本.修订号，带 `-beta` 后缀的为测试版本。带「.N」四位小版本的为内部交付号（安装包文件名与 exe FileVersion 使用），主版本段仍为 0.9.4。
+
+## 0.10.0
+
+发布日期：2026-09-21 · 安装包 `Microsoft-Rewards-Auto-Setup-0.10.0.exe`
+
+0.9.4.16 ~ 0.9.4.22 这批测试版（`-test` 后缀）验证完毕，合并进主线并发布为**正式版 0.10.0**。版本号规则调整：**`buildNumber` 为 `0` 表示正式版**，展示串与安装包文件名都用干净三段（`v0.10.0` / `0.10.0.exe`）；后续热修把 `buildNumber` 递增到 1、2… 才回到四位（`0.10.0.1`）。
+
+正式版包含的主要变更：
+
+- **设置页拆分**：原「全局设置」改名「任务全局设置」（图标换任务书），只留与积分任务有关的配置；新增「软件设置」标签页，按**个性化 / 启动与托盘 / 浏览器 / 安全**四类分区。
+- **指纹浏览器默认启用**（adryfish，BSD-3）：未安装时首次运行后台自动下载（gh-proxy 镜像链 + 空闲超时换源），未装则静默回落普通 Chromium；设置页有独立面板（开关 / 品牌 / 种子 / 下载 / 更新 / 删除）。
+- **软件设置分类选项卡**：进入后侧栏变为分类选项卡，点击平滑定位、右侧滚动自动高亮（scroll-spy）、底部「返回」；进出场有滑入/离场动画，切页内容区上浮淡入。
+- **首次登录后自动同步**：授权成功即自动跑一次刷新链路（Cookie → 积分 → 搜索/阅读进度）。
+- **仪表盘卡片修复**：签入 `-1` 哨兵不再当真值显示；每日/积分活动未运行时显示「未运行」；受限次数恒显数字。数字统一千分位。
+- **关于页**：依赖版本修正（React 19.3.0 / liquid-glass-react 0.0.1），第三方组件**点击整行打开项目主页**，新增 gh-proxy 友情链接；侧栏左下角显示版本号。
+- **许可**：`THIRD_PARTY_NOTICES.md` 补齐 fingerprint-chromium（BSD-3）等第三方声明。
+
+## 0.9.4.22
+
+发布日期：2026-09-21
+
+### 第三方组件改为整行点击打开主页
+
+0.9.4.20 在第三方开源组件每项右侧加的「↗ 主页」按钮视觉上破坏了原有列表样式，本版回退：
+
+- 移除「↗ 主页」按钮，恢复原来的行样式与宽度。
+- 改为**点击整行直接打开项目主页**：行加 `cursor: pointer` 与悬停高亮反馈，悬停 title 显示目标链接；支持键盘操作（Tab 聚焦 + Enter/空格触发）。
+- 六个直接依赖（Electron / Playwright Core / React / React DOM / liquid-glass-react / fingerprint-chromium）行为一致。
+
+### 验证
+
+- tsc 0 错误；selfcheck **297/297**。
+- UI 实测 **24/24**：6 行均有含主页链接的 title、按钮 0 残留。
+
+## 0.9.4.21
+
+发布日期：2026-09-21
+
+### 进入 / 退出软件设置的切换动画
+
+此前点「软件设置」时侧边栏是瞬间换掉整列（主导航 → 分类选项卡），观感很硬。现在两阶段过渡：
+
+- **离场**：当前列表挂 `is-out` 播 150ms 淡出左移，随后才卸载。
+- **入场**：新列表挂载播 280ms 滑入（右侧 16px → 归位），分类条目按 45ms 递增错开进场。
+- **胶囊**：整列切换期间先淡出（`is-hidden`），位置跳变发生在不可见时，切换完成后再淡入——否则胶囊会从「软件设置」那一行硬瞬移到分类首行。
+- **内容区**：切任意标签页都播一次上浮淡入（`.view-enter`，key=当前视图，只有切页才重播）。
+- 返回（侧栏底部「返回」）走同一套反向动画；离场途中再点回来会立刻取消，不会卡在淡出态。
+
+### 验证
+
+- tsc 0 错误；selfcheck **297/297**（新增 2 条守卫：侧栏两阶段切换接线、nav-switch 关键帧与胶囊 is-hidden）。
+- UI 实测（playwright-core + msedge + vite dev）**23/23**：用 `animationstart` 事件取证 `navSwitchOut → navSwitchIn → navItemIn / viewIn` 真实播放，并采样确认 `is-out` / `is-hidden` 出现过且切换完成后摘掉。
+
+## 0.9.4.20
+
+发布日期：2026-09-21
+
+### 软件设置左侧分类选项卡（点击定位 + scroll-spy + 返回）
+
+进入「软件设置」后左侧边栏切换为分类选项卡（个性化 / 启动与托盘 / 浏览器 / 安全）：
+
+- **点击定位**：点选项卡平滑滚动到对应分区（scrollIntoView + scroll-margin），滑动胶囊（nav-indicator 320ms）跟着滑过去。
+- **scroll-spy**：右侧滚动时自动高亮当前所处分类；滚到底强制选中最后一节。点击后的平滑滚动期间加锁忽略上报，避免胶囊被途经分区来回拽。
+- **返回**：侧栏底部新增「返回」，回仪表盘后侧栏恢复主导航。
+- 分区 id 规约 `swsec-<key>`，分类清单 `SOFTWARE_SECTIONS`（Sidebar 选项卡与页面分区共用，Web 版自动少「启动与托盘」）。
+
+### 首次登录后自动同步账户信息
+
+登录成功（授权码换 token）后自动执行一次「刷新状态」链路（Cookie 同步 → 积分余额 → 搜索/阅读进度），不再需要手动点「⟳ 刷新状态」。Dashboard 与账户详情页两个登录入口都已接入。
+
+### 仪表盘卡片信息缺失修复
+
+- **签入显示 -1**：`signPoint=-1` 是「从未签入」的哨兵初值，未跑任务时 describe 原样透出、展示层把 -1 当真值渲染。现按无数据处理显示「--」。
+- **空态文案**：每日活动 / 积分活动未运行时显示「未运行」而不是「--」；受限次数恒显数字（0 = 今日没被限流），并注明含义。
+- 卡片副标题说明数据来源：总积分/今日合计/搜索/阅读来自服务器实时进度，签入/每日活动/积分活动要等任务实际运行后才有数据。
+
+### 关于页更新
+
+- 修正依赖版本显示（React 18.3.1→19.3.0、@ttqtt/liquid-glass-react 0.2.0→0.0.1）。
+- 第三方开源组件（直接依赖）每项新增「↗ 主页」按钮，点击经系统浏览器打开项目主页。
+- 友情链接新增「GitHub加速下载代理」（gh-proxy.com，图片 logo 深色主题自动反色）。
+- 侧边栏左下角新增版本号 `v0.9.4.20`（来自新增的 `src-renderer/src/version.ts`，selfcheck 锁定与 package.json 同步）。
+
+### 卡片数字千分位
+
+仪表盘统计卡 / 账户列表 / 账户详情任务卡的大数字统一按三位一组加逗号（toLocaleString en-US，不随系统 locale 变化）。
+
+### 验证
+
+- 门禁：tsc 0 错；selfcheck **294/294**（新增：渲染层 version.ts 版本同步、软件设置选项卡接线、侧栏版本号走 DISPLAY_VERSION；「Sidebar 指示器按 DOM 位置量取」守卫随重构改指 activeKey）。
+- UI 实测（playwright-core + msedge + vite dev mock）：软件设置选项卡 10/10——选项卡渲染、点击定位、scroll-spy 双向联动、返回恢复主导航、版本号显示。
+- 构建：vite build 通过；buildNumber 19 → 20。
+
+---
+
+## 0.9.4.19
+
+发布日期：2026-09-21
+
+### 设置页拆分：任务全局设置 / 软件设置
+
+按「只留任务相关」原则重构导航：
+
+- **「全局设置」→「任务全局设置」**：图标由齿轮改为「任务书」，页面只保留与积分任务执行有关的配置（任务开关 / 数量 / 区域 / 搜索 / 日志 / 推送 / 积分目标等）。
+- **新增「软件设置」标签页**：把「个性化」「启动与托盘」「浏览器」「安全」四类移入，按大类分区展示（桌面端专属的启动与托盘在 Web/Docker 版自动隐藏）。
+
+### 默认启用指纹浏览器
+
+`browser.fingerprint.enable` 默认值由 `false` 改为 `true`：首次运行检测到未安装且已启用时，后台自动下载指纹浏览器（约 181MB，走 gh-proxy 镜像链，不阻塞 UI、不打断登录流程）。未安装或下载失败时仍静默回落普通 Chromium。
+
+### 补充 fingerprint-chromium 许可声明
+
+按上游作者许可要求，在 `THIRD_PARTY_NOTICES.md` 与关于页新增 fingerprint-chromium（adryfish，基于 Ungoogled Chromium，BSD 3-Clause）条目，含仓库链接、用途与完整版权声明。
+
+### 验证
+
+- 门禁：tsc 0 错；selfcheck **291 项全绿**（「软件设置页挂载指纹浏览器面板」断言由原「设置页」改写指向新页面）。
+- 构建：渲染层 vite build 通过。
+
+---
+
+## 0.9.4.18
+
+发布日期：2026-09-21
+
+### 下载卡死自动换源（指纹浏览器 181MB 下载）
+
+用户实测反馈下载会卡在某个进度不动弹。此前只有 30 秒「空闲超时」（一个字节都不来才触发），抓不到「还在来但慢到不可用」的涓流卡死（实测 10.9KB/s，181MB 要下 4 个多小时）。本版补了两道防线：
+
+- **连接阶段超时**：fetch 发出后 20 秒内拿不到响应头就换源。镜像节点半死时 TCP 连得上但首字节永远等不到，空闲超时管不到这一段。用 `AbortController` 计时、拿到响应头即撤表——**刻意不用 `AbortSignal.timeout`**，后者在超时后会连 body 读取一起 abort，导致「头拿到了但 body 慢」的正常下载也被误杀。
+- **低速熔断**：连续 20 秒滑动窗口内的均速低于 32KB/s 就判定该源「卡住」，立刻中断换下一个镜像。阈值取值依据：实测最慢可用节点 axisnow 也有 ~30KB/s 量级突发，真正卡死的通常是个位数 KB/s；取 32KB/s 既能砍掉涓流又不误伤慢节点（误伤的代价只是换源，分片保留、下一源续传，不丢数据）。
+
+### 「检查更新」改为只查询、不下载
+
+此前设置页「检查更新」按钮直连 `install(force=true)`，点一下就把 181MB 重新下一遍。现改为纯查询：`checkUpdate()` 只调 `latestVersion()` 对比「最新版 / 已装版本 / 项目钉死版本」，返回 `{updateAvailable, reinstallAvailable}` 供面板 toast 展示，不再触碰下载/安装链路。
+
+### 验证
+
+- 门禁：tsc 0 错；selfcheck **291 项全绿**（新增下载熔断 / 连接超时 / checkUpdate 纯查询等守卫）；反例验证 **19 场景全红**（含「熔断被注释」「连接超时退回 AbortSignal.timeout」「checkUpdate 混入 install」「按钮改回 onInstall(true)」）。
+
+---
+
+## 0.9.4.17
+
+发布日期：2026-09-21
+
+### 指纹浏览器可选链路（fingerprint-chromium）
+
+- 新增 `src/fingerprint-browser.js`：接入 **fingerprint-chromium**（adryfish 基于 Ungoogled Chromium 的 patch 版，BSD-3，钉死 148.0.7778.215）作为可选的浏览器档位。它 patch 源码层统一改 `navigator.userAgent` / `navigator.userAgentData` / **Client Hints**——正好补上我们实测证明「应用层够不到」的那一层（`sec-ch-ua` 请求头 setExtraHTTPHeaders / page.route 均改不动）。
+- **来源优先级**：显式 env > 指纹浏览器（设置页启用 + 已安装）> 系统 Chrome > 自带 Chromium，未装静默回落。
+- **种子化指纹**：种子 = FNV-1a(账户 ID)，`--fingerprint=<seed> --fingerprint-platform --fingerprint-brand --timezone=Asia/Shanghai --accept-lang`。同一账号长期稳定、不同账号各不相同；刻意**不设 UA / 不盖 accept-language**，让种子统一生成，避免回到「UA 说 X、CH 说 Y」的自相矛盾。
+- **与 stealth.js 互斥**：指纹模式下 initScript 前置 `window.__MSR_FP=1`，stealth 据此让出 languages / plugins / CPU（GPU 指纹上游仅 Linux 生成，Windows 仍靠 stealth WebGL 兜底）。
+- **WebGL 成对替换**：修掉 0.9.4.16 发现的负优化——原 patch 只替换命中 SwiftShader 的 vendor，拼出一对现实中不存在的 vendor/renderer 组合（比不打补丁更可疑），现改为先探测软渲染、命中则 vendor/renderer 成对替换。
+- **端到端实测**：Playwright 成功驱动 Ungoogled Chromium；headless 下 HTTP UA == JS UA == Chrome/148、CH 头 == JS brands、webdriver=false、plugins=5 → 指纹自洽，当初引入它的全部理由落地。
+
+### 下载（gh-proxy 多节点 + 完整性验收）
+
+- 镜像链按实测吞吐排序：gh-proxy.com > v4.gh-proxy.org > cdn.gh-proxy.org > gh-proxy.org > axisnow > v6 > 直连兜底。181MB 实测约 41 秒（4.8MB/s）。
+- 两个实测坑：① **Range 是对压缩后的流切片**（22KB README 被当 6092B 切），断点续传必产坏文件、自报长度自洽、普通校验抓不到 → 用 HEAD + Releases API 资产 size 当权威总长，Content-Range 自报不符立即放弃续传整体重下；② 掉速会僵到 fetch 不报错 → 30 秒空闲超时。
+- 解压用系统自有工具（Windows 下 bsdtar + PowerShell Expand-Archive），不依赖 extract-zip/yauzl（lockfile 里 dev=true，打包会被剪掉）。
+
+### 设置页面板
+
+新增 FingerprintBrowserPanel：开关 / 品牌 / 种子 / 核数 / 下载 / 检查更新 / 删除，进度走 install-progress 通道。
+
+### 验证
+
+- tsc 0 错；selfcheck 285 项；反例 13 场景全红；打桩 36/36；e2e 8/9（唯一 FAIL 是测试脚本品牌对照写太糙，非缺陷）；verify-pack 40/40。
+
+---
+
+## 0.9.4.16
+
+发布日期：2026-09-21
+
+### 活动上报兜底（quiz）
+
+- `src/tasks.js` 新增 `reportActivityFallback()`，taskDaily / taskPromos 交卷后各补发两条参考脚本在用的上报：① quiz 专报 `POST msrewards/api/v1/ReportActivity`（PartnerId=BingTrivia）；② 旧版 `POST api/reportactivity`（需先提 `__RequestVerificationToken`）。一律 try/catch + warn，token 取不到就跳过，绝不影响任务完成判定与积分统计。
+
+### 浏览器去自动化补丁（stealth.js）
+
+- 新增 `src/stealth.js`：抹 `navigator.webdriver`、补 `window.chrome.runtime`、languages/plugins/mimeTypes、platform 对齐 UA（Win32）、WebGL SwiftShader/Mesa 替换等。
+- `src/browser.js` 装配：覆盖 UA（裸 headless 是 HeadlessChrome，最致命）、addInitScript、`--exclude-switches=enable-automation`。
+- 实测对照 12/12：裸 headless 全部自曝（UA 带 HeadlessChrome / webdriver=true / plugins=0 / SwiftShader），打补丁后回到正常浏览器水平。
+
+### 参考脚本致谢
+
+「关于」页新增「灵感来源与致谢」：潘钜森（原始作者）、SDSmalin、DuskLight、withfeel。网名用真机抓取（ScriptCat 有自动化防护，WebFetch / agent-browser 拿不到）。
+
+### 验证
+
+- tsc 0 错；selfcheck **254 项**（+23 条）；反例 9 场景全红；打桩 11/11；指纹实测 12/12；verify-pack 新增 5 项。
+
+---
 
 ## 0.9.4
 
