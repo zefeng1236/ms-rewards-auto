@@ -32,6 +32,8 @@ services:
     ports:
       # 服务端口固定 25560（3000 太常见易冲突）；只改左边即可换宿主端口
       - "25560:25560"
+      # 内置 noVNC（MS_REWARDS_ENABLE_NOVNC=1 时才真的拉起）：http://<服务器IP>:6080
+      - "6080:6080"
 
     environment:
       # ---------- 时区（很重要）----------
@@ -59,10 +61,17 @@ services:
 
       MS_REWARDS_PORT: "25560"
 
-      # ---------- 图形转发（配合 --profile login 的 noVNC）----------
-      # 「去登录」弹出的微软授权窗口会渲染到 noVNC 容器的 X 服务上，
-      # 在 http://<服务器IP>:6080 里可见可操作；noVNC 未启动时该项无副作用
-      DISPLAY: "ms-rewards-novnc:0"
+      # ---------- 图形转发（内置 noVNC，手动授权登录用）----------
+      # 图形栈（Xvfb + x11vnc + websockify）已内置在本容器：X11 走 Unix socket
+      # 并启用 MIT-SHM，不再跨容器传原始像素（以前 1080p 下每帧 8.3MB 走 TCP，
+      # 累计 140MB，noVNC 里鼠标卡到点不动）。
+      # 置 0 即完全不拉起（同时可删掉上面 6080 的映射）。
+      # 桌面 1440x900 是权衡值：比 1080p 少 37% 像素，noVNC 的 JS 解码器才喂得动；
+      # 还嫌卡就往下降到 1280x800。
+      MS_REWARDS_ENABLE_NOVNC: "1"
+      DISPLAY: ":0"
+      DISPLAY_WIDTH: 1440
+      DISPLAY_HEIGHT: 900
 
     volumes:
       # 账户配置、登录态、保险库、日志 —— 全部在这里，容器重建不丢
@@ -89,25 +98,12 @@ services:
       retries: 3
 
 # ---------------------------------------------------------------------------
-# 首次授权登录辅助（仅需要微软 OAuth 手动登录时启用）
-#   docker compose -f docker/docker-compose.yml --profile login up -d
+# 首次授权登录辅助（仅需要微软 OAuth 手动登录时）
+#   noVNC 已内置在 ms-rewards 容器里，随服务一起启动（MS_REWARDS_ENABLE_NOVNC=1）：
 #   浏览器打开 http://<服务器IP>:6080 → 在里面完成微软登录
 #   然后：docker exec -it ms-rewards node src/main.js login 1
-#   用完：docker compose -f docker/docker-compose.yml --profile login stop
+#   不需要就把它置 0 并删掉 6080 映射，图形栈完全不会拉起。
+#
+# 这里不再有独立的 novnc 容器：跨容器 X11 只能走 TCP 且共享内存失效，
+# 1080p 下每帧 8.3MB 原始像素过网络，鼠标卡到没法用（详见 docker/novnc-stack.sh）。
 # ---------------------------------------------------------------------------
-  novnc:
-    profiles: ["login"]
-    image: theasp/novnc:latest
-    container_name: ms-rewards-novnc
-    restart: unless-stopped
-    environment:
-      # 虚拟桌面分辨率。必须 ≥ 浏览器窗口尺寸，否则 noVNC 里只看得到中间一块、
-      # 微软登录页的按钮落在视口外点不到（表现为「点了登录没反应」）。
-      # 1920x1080 是稳妥值：浏览器 --start-maximized 后内容区约 1920x995。
-      DISPLAY_WIDTH: 1920
-      DISPLAY_HEIGHT: 1080
-      RUN_XTERM: "no"
-    ports:
-      - "6080:8080"
-    depends_on:
-      - ms-rewards

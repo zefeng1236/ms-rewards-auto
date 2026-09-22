@@ -1658,19 +1658,72 @@ checkTrue(
   "compose 镜像 tag 与 package.json 版本一致",
   new RegExp(`image: ms-rewards-auto:${String(pkgRaw.version).replace(/\./g, "\\.")}(\\s|$)`).test(composeSrc)
 );
-// 虚拟桌面必须放得下浏览器窗口：以前 1280x800 配写死的 1366x768 视口，
-// 窗口两个维度都超出桌面，noVNC 里只剩中间一块，微软登录页按钮点不到
-// —— 表现是「输入了密码但点登录没反应」，极难往分辨率上想。
+// 虚拟桌面尺寸两头都踩过坑：
+//   太小/写死视口 → 窗口超出桌面，noVNC 里只剩中间一块，微软登录页按钮点不到
+//     （表现是「输入了密码但点登录没反应」，极难往分辨率上想）。
+//   太大（1920x1080）→ noVNC 是纯 JS 解码器，1080p 帧喂不动，实测 x11vnc 与
+//     websockify 之间的回环 rx_queue 积压 693KB，鼠标拖影卡到点不动。
+// 因此锁死区间：下限保证看得全，上限保证 JS 解码器喂得动。
 const dispW = Number((composeSrc.match(/DISPLAY_WIDTH:\s*(\d+)/) || [])[1] || 0);
 const dispH = Number((composeSrc.match(/DISPLAY_HEIGHT:\s*(\d+)/) || [])[1] || 0);
 checkTrue(
-  `noVNC 虚拟桌面分辨率 ≥ 1920x1080（当前 ${dispW}x${dispH}）`,
-  dispW >= 1920 && dispH >= 1080
+  `noVNC 虚拟桌面分辨率落在 1280x800 ~ 1440x900（当前 ${dispW}x${dispH}）`,
+  dispW >= 1280 && dispH >= 800 && dispW <= 1440 && dispH <= 900
 );
 checkTrue(
   "有头模式不写死视口 + 窗口最大化（写死会让窗口超出虚拟桌面，页面显示不全）",
   /viewport:\s*headless\s*\?\s*\{[^}]*\}\s*:\s*null/.test(browserSrcFp) &&
     /--start-maximized/.test(browserSrcFp)
+);
+
+/* ---------------- 内置 noVNC（替代独立 novnc 容器） ----------------
+ * 跨容器 X11 只能走 TCP，且两个容器 IpcMode 都是 private → MIT-SHM 用不了，
+ * 1080p 全屏每帧 8.3MB 原始像素过网络（docker stats 实测累计 140MB），
+ * 浏览器每帧 PutImage 都在等 TCP。这组守卫锁住「图形栈必须在本容器内」，
+ * 别被人改回独立容器（改回去鼠标立刻又卡）。
+ */
+const novncSrc = fs.readFileSync(path.join(ROOT, "docker", "novnc-stack.sh"), "utf8");
+const entrySrc = fs.readFileSync(path.join(ROOT, "docker", "entrypoint.sh"), "utf8");
+checkTrue(
+  "镜像内置图形栈（xvfb / x11vnc / websockify / novnc / fluxbox 五项都得装）",
+  // 必须是「独立成一行的 apt 列表项」：注释里也会出现这些名字，
+  // 用裸 /x11vnc/ 匹配会被注释蒙混，漏掉「从 apt 列表里删掉」这种真故障。
+  ["xvfb", "x11vnc", "websockify", "novnc", "fluxbox"].every((p) =>
+    new RegExp(`^\\s*${p}\\b`, "m").test(dockerfileSrc)
+  )
+);
+checkTrue(
+  "compose 不再有独立 novnc 容器（跨容器 X11 走 TCP + 共享内存失效）",
+  !/^\s{2}novnc:/m.test(composeSrc) && !/ms-rewards-novnc/.test(composeSrc) && !/theasp\/novnc/.test(composeSrc)
+);
+// ⚠️ 参数断言必须落在**真实命令行**上，不能全文匹配：
+//    这些参数在脚本的注释里也各写了一份（解释为什么加），全文匹配会被注释蒙混
+//    —— 实测踩到：把 -defer 0 从命令里删掉，守卫因为注释里还有一份而照旧全绿。
+//    所以取「命令起始标记之后」的片段再断言。
+const afterMarker = (src, marker) => src.split(marker)[1] || "";
+const xvfbCmd = afterMarker(novncSrc, "nohup Xvfb");
+const x11vncCmd = afterMarker(novncSrc, "nohup x11vnc");
+const websockifyCmd = afterMarker(novncSrc, "nohup websockify");
+checkTrue(
+  "X11 指向本容器 :0 且禁掉 TCP 监听（同容器才用得上 MIT-SHM）",
+  /DISPLAY: ":0"/.test(composeSrc) &&
+    /MS_REWARDS_ENABLE_NOVNC: "1"/.test(composeSrc) &&
+    xvfbCmd.includes("-nolisten tcp")
+);
+checkTrue(
+  "x11vnc 去掉默认 20ms 输入节流（-defer 0）并加速抓屏（-wait 10 -threads）",
+  ["-defer 0", "-wait 10", "-threads"].every((a) => x11vncCmd.includes(a))
+);
+checkTrue(
+  "内置 noVNC 对外服务 6080 且静态资源指向 /usr/share/novnc",
+  websockifyCmd.includes("6080") && websockifyCmd.includes("/usr/share/novnc")
+);
+checkTrue(
+  "图形栈以 node 身份拉起（root 起的 X server，node 的 Chromium attach 不了它的 SHM 段，会静默回退 TCP）",
+  /gosu node \/usr\/local\/bin\/novnc-stack\.sh/.test(entrySrc) &&
+    /MS_REWARDS_ENABLE_NOVNC/.test(entrySrc) &&
+    /export DISPLAY=:0/.test(entrySrc) &&
+    /novnc-stack\.sh/.test(dockerfileSrc)
 );
 const dashboardSrc = fs.readFileSync(
   path.join(ROOT, "src-renderer", "src", "views", "Dashboard.tsx"),

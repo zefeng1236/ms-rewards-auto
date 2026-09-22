@@ -105,6 +105,12 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\nAcquire::http::Pipeline-Depth "10";\nAcquire::Queue-Mode "access";\n' \
       > /etc/apt/apt.conf.d/99-msrewards-tuning; \
     apt-get update; \
+    # 图形转发栈（xvfb/x11vnc/websockify/novnc/fluxbox）：给「去登录」的手动
+    #   授权窗口用。以前是独立 novnc 容器，跨容器 X11 只能走 TCP、共享内存失效，
+    #   1080p 全屏每帧 8.3MB 原始像素走网络，noVNC 里鼠标卡得点不动；
+    #   现在搬进本容器，X11 走 Unix socket + MIT-SHM（见 docker/novnc-stack.sh）。
+    #   fluxbox 是必备的窗口管理器：没有它 X 的输入焦点停在 root window，
+    #   noVNC 里能点鼠标但打不了字。
     apt-get install -y --no-install-recommends \
         chromium \
         xz-utils \
@@ -112,6 +118,11 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         gosu \
         fonts-noto-cjk \
         fonts-noto-color-emoji \
+        xvfb \
+        x11vnc \
+        websockify \
+        novnc \
+        fluxbox \
     ; \
     ln -snf /usr/share/zoneinfo/$TZ /etc/localtime; \
     echo $TZ > /etc/timezone; \
@@ -137,12 +148,19 @@ COPY package.json ./
 COPY --from=frontend /build/src/web/dist ./src/web/dist
 
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+COPY docker/novnc-stack.sh /usr/local/bin/novnc-stack.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/novnc-stack.sh
 
-RUN mkdir -p /data/storage && chown -R node:node /data /app
+# fluxbox 默认带一条底部工具栏，会吃掉窗口高度（最大化就不是满屏）→ 关掉
+RUN mkdir -p /home/node/.fluxbox \
+    && printf 'session.screen0.toolbar.visible: false\n' > /home/node/.fluxbox/init
+
+RUN mkdir -p /data/storage && chown -R node:node /data /app /home/node
 VOLUME ["/data"]
 
 EXPOSE 25560
+# 内置 noVNC（MS_REWARDS_ENABLE_NOVNC=1 时才真的拉起）
+EXPOSE 6080
 
 HEALTHCHECK --interval=60s --timeout=10s --start-period=20s --retries=3 \
   CMD node -e "require('http').get('http://127.0.0.1:25560/api/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
