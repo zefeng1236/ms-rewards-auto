@@ -155,6 +155,11 @@ RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/novnc-stack.sh
 RUN mkdir -p /home/node/.fluxbox \
     && printf 'session.screen0.toolbar.visible: false\n' > /home/node/.fluxbox/init
 
+# Xvfb 是以 node 身份跑的，它不会自己创建 /tmp/.X11-unix（日志里会报
+#   "_XSERVTransmkdir: ERROR: euid != 0, directory ... will not be created"）。
+# 先由 root 建好并给 1777，省掉这条误导性报错。
+RUN mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix
+
 RUN mkdir -p /data/storage && chown -R node:node /data /app /home/node
 VOLUME ["/data"]
 

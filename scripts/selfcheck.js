@@ -1719,6 +1719,10 @@ checkTrue(
   websockifyCmd.includes("6080") && websockifyCmd.includes("/usr/share/novnc")
 );
 checkTrue(
+  "镜像预建 /tmp/.X11-unix（Xvfb 以 node 身份跑时不会自建，日志会报 euid != 0）",
+  /mkdir -p \/tmp\/\.X11-unix/.test(dockerfileSrc) && /chmod 1777 \/tmp\/\.X11-unix/.test(dockerfileSrc)
+);
+checkTrue(
   "图形栈以 node 身份拉起（root 起的 X server，node 的 Chromium attach 不了它的 SHM 段，会静默回退 TCP）",
   /gosu node \/usr\/local\/bin\/novnc-stack\.sh/.test(entrySrc) &&
     /MS_REWARDS_ENABLE_NOVNC/.test(entrySrc) &&
