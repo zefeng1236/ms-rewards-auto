@@ -1701,11 +1701,13 @@ checkTrue(
     lines[index + 1]?.includes("ln -snf /usr/share/zoneinfo/")
   )
 );
-// 老的四件套必须全删：Xvfb + x11vnc + websockify + novnc + fluxbox
+// 旧的四件套必须全删：Xvfb + x11vnc + websockify + novnc
 // （用「键入 apt 列表」的精确匹配 —— 注释里也会提到这些词，全文匹配会假阴性）
+// 注意 fluxbox 不在禁用列表里：KasmVNC 需要它当常驻 WM（见下方 xstartup 守卫），
+// 空 xstartup 会被包装器判定「会话结束」→ shutting down server → 误报 deadlocked 杀掉。
 checkTrue(
-  "旧图形栈四件套已从 apt 列表清干净（xvfb / x11vnc / websockify / novnc / fluxbox）",
-  !["xvfb", "x11vnc", "websockify", "novnc", "fluxbox"].some((p) =>
+  "旧图形栈四件套已从 apt 列表清干净（xvfb / x11vnc / websockify / novnc）",
+  !["xvfb", "x11vnc", "websockify", "novnc"].some((p) =>
     new RegExp(`^\\s*${p}\\b`, "m").test(dockerfileSrc)
   )
 );
@@ -1725,10 +1727,31 @@ checkTrue(
     /require_ssl:\s*false/.test(kasmYamlSrc)
 );
 checkTrue(
-  "KasmVNC 使用官方包装器并跳过交互式桌面启动",
-  kasmCmd.includes("-noxstartup") &&
+  "KasmVNC 使用官方包装器并显式指定常驻 xstartup（exec fluxbox 兜底，否则会误报 deadlocked）",
+  kasmCmd.includes("-xstartup /home/node/.vnc/xstartup") && !kasmCmd.includes("-noxstartup") &&
     kasmCmd.includes("-prompt 0") &&
     /server:\s*\n\s*http:\s*\n[\s\S]*httpd_directory:\s*\/usr\/share\/kasmvnc\/www/.test(kasmYamlSrc)
+);
+// KasmVNC 三层根因之一：logging 三个键必须全有或全无，只写 level 会 config errors 直接退出。
+checkTrue(
+  "kasmvnc.yaml logging 三键齐全（log_writer_name / log_dest / level，缺一会 config errors）",
+  /log_writer_name:\s*all/.test(kasmYamlSrc) &&
+    /log_dest:\s*logfile/.test(kasmYamlSrc) &&
+    /level:\s*30/.test(kasmYamlSrc)
+);
+// KasmVNC 三层根因之二：即使 require_ssl:false，包装器仍无条件读 ssl-cert-snakeoil.key，
+// node 必须加入 ssl-cert 组才能进 /etc/ssl/private（否则 KEY_UNREADABLE → exit 1）。
+checkTrue(
+  "Dockerfile 把 node 加入 ssl-cert 组（require_ssl 关闭时仍要读 snakeoil key）",
+  /usermod -aG ssl-cert node/.test(dockerfileSrc)
+);
+// KasmVNC 三层根因之三：xstartup 必须常驻（exec fluxbox），且标记 DE 已选择。
+checkTrue(
+  "预建 xstartup（exec fluxbox）与 .de-was-selected 标记，避免空会话被判定结束",
+  /printf '.*exec fluxbox.*/.test(dockerfileSrc) &&
+    /exec fluxbox/.test(dockerfileSrc) &&
+    /\.de-was-selected/.test(dockerfileSrc) &&
+    /^\s*fluxbox\s*\\/m.test(dockerfileSrc)
 );
 checkTrue(
   "KasmVNC 配置启用 GPU DRI3 加速节点（NAS 上有 /dev/dri/renderD128 即可走 VAAPI）",

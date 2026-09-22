@@ -44,6 +44,10 @@ runtime_configuration:
   allow_client_to_override_kasm_server_settings: true
 
 logging:
+  # 踩坑：这三个键必须「全有或全无」。只写 level:30 时包装器判定 config errors 直接退出。
+  # 实测 defaults.yaml 的值就是 all / logfile / 30，照抄即可。
+  log_writer_name: all
+  log_dest: logfile
   level: 30
 
 encoding:

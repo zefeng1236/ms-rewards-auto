@@ -144,6 +144,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         libdatetime-timezone-perl \
         libscalar-list-utils-perl \
         libhash-merge-simple-perl \
+        fluxbox \
     ; \
     # KasmVNC deb 装在第二阶段（不在 cache mount 下，避免半成品污染 apt 缓存）。
     # 镜像里预装 + 缓存版本号 ARG，将来上游发版只改这一处。
@@ -196,6 +197,22 @@ RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/novnc-stack.sh
 # Xkasmvnc / Xvfb 以 node 身份跑时不会自建 /tmp/.X11-unix（root 跑又会让 Chromium
 # attach 不了 SHM）。先由 root 建好 + 1777 权限，省掉日志里那条 euid != 0 报错。
 RUN mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix
+
+# KasmVNC 三层根因之一：即使 require_ssl:false，包装器仍会无条件 CheckSslCertReadable
+# 读 /etc/ssl/private/ssl-cert-snakeoil.key。该目录是 drwx--x--- root:ssl-cert，
+# node(uid 1000) 不在 ssl-cert 组里 → 进不去 → KEY_UNREADABLE → 打印
+# "certificate file doesn't exist or isn't a file" → exit 1。把 node 加进 ssl-cert 组。
+RUN usermod -aG ssl-cert node
+
+# KasmVNC 三层根因之二：包装器跑完 ~/.vnc/xstartup 后若没有常驻进程，会判定「会话结束」
+# 直接 shutting down server，并误报 "Xvnc seems to be deadlocked" 杀掉 Xkasmvnc。
+# 必须有常驻 WM 兜底（fluxbox）。这里预建 xstartup（exec fluxbox），并放一个
+# .de-was-selected 标记让 select-de.sh 别再去猜桌面环境。
+RUN mkdir -p /home/node/.vnc \
+    && printf '#!/bin/sh\nexec fluxbox\n' > /home/node/.vnc/xstartup \
+    && chmod +x /home/node/.vnc/xstartup \
+    && touch /home/node/.vnc/.de-was-selected \
+    && chown -R node:node /home/node/.vnc
 
 RUN mkdir -p /data/storage && chown -R node:node /data /app /home/node /etc/kasmvnc
 VOLUME ["/data"]
