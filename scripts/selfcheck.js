@@ -1304,9 +1304,39 @@ checkTrue(
   "反例守卫 ⑯：指定镜像时不得掺入自动链其他节点（否则「指定」失去意义）",
   !/return \[p\]\.concat\(MIRROR_PREFIXES\)/.test(fpSrc)
 );
+// —— 镜像源默认值：六处必须同值，且必须是 MIRROR_KEYS 里登记过的节点 ——
+// 这几处一旦漂移，界面显示的「当前源」和主进程实际用的源就不是同一个，
+// 排查起来极费劲（本项目已踩过「旧配置缺新字段 → 白屏」的同类坑）。
+const fpDefaultMirror = (fpSrc.match(/const DEFAULT_MIRROR = "([^"]+)"/) || [])[1] || null;
+const cfgDefaultMirror = (cfgSrcFp.match(/mirror: "([^"]+)"/) || [])[1] || null;
+const gcfgDefaultMirror = (gcfgSrcFp.match(/mirror: "([^"]+)"/) || [])[1] || null;
+const mockDefaultMirror = (mockSrcFp.match(/mirror: "([^"]+)"/) || [])[1] || null;
+const panelDefaultMirror = (panelSrcFp.match(/mirror:\s*"([^"]+)"/) || [])[1] || null;
+const wizardDefaultMirror =
+  (wizardSource.match(/const \[mirror, setMirror\] = useState\("([^"]+)"\)/) || [])[1] || null;
+const runtimeDefaultMirror = globalDefaults?.browser?.fingerprint?.mirror || null;
+const mirrorDefaultPlaces = [
+  ["src/fingerprint-browser.js (DEFAULT_MIRROR)", fpDefaultMirror],
+  ["src/config.js", cfgDefaultMirror],
+  ["src/global-config.js", gcfgDefaultMirror],
+  ["渲染层 api/mock.ts", mockDefaultMirror],
+  ["面板 FALLBACK", panelDefaultMirror],
+  ["向导 useState", wizardDefaultMirror],
+  ["运行时 GLOBAL_DEFAULTS", runtimeDefaultMirror],
+];
+const mirrorDefaultValues = mirrorDefaultPlaces.map(([, v]) => v);
 checkTrue(
-  "渲染层 mock 的 fingerprint 默认值含 mirror（防白屏：四处必须同字段）",
-  /fingerprint: \{[^}]*mirror: "auto"/.test(mockSrcFp)
+  `镜像源默认值六处一致（当前 ${fpDefaultMirror || "(未取到)"}）`,
+  fpDefaultMirror !== null &&
+    mirrorDefaultValues.every((v) => v === fpDefaultMirror) &&
+    wizardDefaultMirror !== null
+);
+checkTrue(
+  "镜像源默认值必须是 MIRROR_KEYS 里登记过的键（防止改成未登记域名 → 静默走兜底链）",
+  !!fpDefaultMirror &&
+    new RegExp(`["']?${fpDefaultMirror.replace(/\./g, "\\.")}["']?:`).test(
+      (fpSrc.match(/const MIRROR_KEYS = \{([\s\S]*?)\n\};/) || ["", ""])[1]
+    )
 );
 checkTrue(
   "类型定义 browser.fingerprint 含 mirror，状态类型含可选 mirrors",

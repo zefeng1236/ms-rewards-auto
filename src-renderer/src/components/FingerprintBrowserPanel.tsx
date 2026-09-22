@@ -12,7 +12,14 @@ import type {
 
 type FpCfg = AppConfig["browser"]["fingerprint"];
 
-const FALLBACK: FpCfg = { enable: false, seed: 0, brand: "Chrome", hardwareConcurrency: 0, mirror: "auto" };
+// ⚠️ mirror 默认值必须与 src/config.js / src/global-config.js 一致（selfcheck 有跨文件守卫）
+const FALLBACK: FpCfg = {
+  enable: false,
+  seed: 0,
+  brand: "Chrome",
+  hardwareConcurrency: 0,
+  mirror: "cdn.gh-proxy.org",
+};
 
 const BRAND_OPTIONS = [
   { label: "Chrome", value: "Chrome" },

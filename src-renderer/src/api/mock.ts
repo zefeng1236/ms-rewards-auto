@@ -54,7 +54,8 @@ const DEFAULT_CONFIG: AppConfig = {
     items: [{ name: "积分目标", scope: "balance", target: 300, rewardName: "", showDashboard: true }],
   },
   browser: {
-    fingerprint: { enable: true, seed: 0, brand: "Chrome", hardwareConcurrency: 0, mirror: "auto" },
+    // mirror 默认值必须与 src/config.js / src/global-config.js 一致（selfcheck 有跨文件守卫）
+    fingerprint: { enable: true, seed: 0, brand: "Chrome", hardwareConcurrency: 0, mirror: "cdn.gh-proxy.org" },
   },
 };
 

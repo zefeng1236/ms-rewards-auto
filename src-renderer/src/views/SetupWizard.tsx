@@ -812,7 +812,8 @@ function PagePersonalize({
 function PageFingerprint({ onCanProceed }: { onCanProceed: (v: boolean) => void }) {
   // enable=false 等价于「跳过」：写进全局配置后与设置页、主进程回落逻辑同一口径
   const [enable, setEnable] = useState(true);
-  const [mirror, setMirror] = useState("auto");
+  // 与主进程 DEFAULT_MIRROR / config.js 默认值保持一致；真实值由下面 setGlobalConfig 读到后覆盖
+  const [mirror, setMirror] = useState("cdn.gh-proxy.org");
   const [st, setSt] = useState<FingerprintStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<InstallProgress | null>(null);
@@ -939,7 +940,7 @@ function PageFingerprint({ onCanProceed }: { onCanProceed: (v: boolean) => void 
                 disabled={skip || !!st?.ready}
                 onChange={(e) => void pickMirror(e.target.value)}
               >
-                {(st?.mirrors || [{ value: "auto", label: "自动（按顺序尝试全部）" }]).map((m) => (
+                {(st?.mirrors || [{ value: "cdn.gh-proxy.org", label: "cdn.gh-proxy.org（默认）" }]).map((m) => (
                   <option key={m.value} value={m.value}>
                     {m.label}
                   </option>

@@ -86,14 +86,27 @@ const MIRROR_KEYS = {
 /** 供界面下拉展示的镜像源选项（顺序即自动链的尝试顺序） */
 const MIRROR_OPTIONS = [
   { value: "auto", label: "自动（按顺序尝试全部）" },
-  { value: "gh-proxy.com", label: "gh-proxy.com（实测最快）" },
+  { value: "cdn.gh-proxy.org", label: "cdn.gh-proxy.org（默认 · Fastly）" },
+  { value: "gh-proxy.com", label: "gh-proxy.com" },
   { value: "v4.gh-proxy.org", label: "v4.gh-proxy.org（官方推荐）" },
-  { value: "cdn.gh-proxy.org", label: "cdn.gh-proxy.org（Fastly）" },
   { value: "gh-proxy.org", label: "gh-proxy.org" },
   { value: "axisnow.gh-proxy.org", label: "axisnow.gh-proxy.org" },
   { value: "v6.gh-proxy.org", label: "v6.gh-proxy.org（IPv6 线路）" },
   { value: "direct", label: "直连 GitHub" },
 ];
+
+/**
+ * 默认镜像源：配置缺失/为空/写了未知值时都退回它。
+ *
+ * 2026-09-22 起默认是 cdn.gh-proxy.org 单个节点，而不是 auto（按序试全部）。
+ * 理由：auto 链的第一位是 gh-proxy.com，它挂掉时每次下载都要先吃一遍它的
+ * 连接超时才轮到后面的节点；而 cdn 是实测稳定可用的 CDN 节点，直接命中更快。
+ * 用户仍可在下拉里改回 auto 或任选其它节点 —— 这里只是「缺省值」。
+ *
+ * ⚠️ 改这个值必须同步 src/config.js 与 src/global-config.js 的
+ * browser.fingerprint.mirror 默认值（selfcheck 有跨文件一致性守卫）。
+ */
+const DEFAULT_MIRROR = "cdn.gh-proxy.org";
 
 /**
  * 各镜像节点的连通延迟（毫秒）。
@@ -854,8 +867,10 @@ async function install(opts) {
     } catch {}
   }
 
-  const mirrorKey = String(o.mirror == null ? "" : o.mirror).trim() || "auto";
-  const mirrorLabel = mirrorKey === "auto" ? "gh-proxy 镜像链" : `指定镜像 ${mirrorKey}`;
+  // 空 / 缺失 → 默认节点（DEFAULT_MIRROR）；未知值仍由 resolveMirrors 退回完整链，
+  // 那才是「配置写错了也不该卡住下载」的安全兜底。
+  const mirrorKey = String(o.mirror == null ? "" : o.mirror).trim() || DEFAULT_MIRROR;
+  const mirrorLabel = mirrorKey === "auto" ? "gh-proxy 镜像链" : `镜像 ${mirrorKey}`;
   report({ message: `准备下载指纹浏览器 ${version}（约 181MB，${mirrorLabel}）`, pct: 0 });
   let file;
   try {
@@ -1008,6 +1023,7 @@ module.exports = {
   hasChromeExe,
   MIRROR_OPTIONS,
   MIRROR_KEYS,
+  DEFAULT_MIRROR,
   resolveMirrors,
   sha256File,
   mirrorLatency,
