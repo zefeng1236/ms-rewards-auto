@@ -13,15 +13,48 @@ chown -R node:node /data 2>/dev/null || true
 # 内置 KasmVNC（替代早期的独立 novnc 容器）：默认关，MS_REWARDS_ENABLE_NOVNC=1 启用。
 # 必须在主进程前起来：
 #   - 以 node 身份拉起（root 起的 X server，Chromium attach 不了它的 SHM 段）
-#   - 提前写 /home/node/.kasmpasswd（KasmVNC 启动会检查，没就报错要交互）
+#   - 准备至少一个 Kasm 用户；官方包装器在禁止交互时遇到空文件会直接退出
 #   - 等 /tmp/.X11-unix/X1 出现再放行主进程，否则「去登录」会撞上还没就绪的 X
 if [ "${MS_REWARDS_ENABLE_NOVNC:-0}" = "1" ]; then
-  if [ ! -f /home/node/.kasmpasswd ]; then
-    # 空密码文件（kasmpasswd 把"无密码"理解为保留文件不存在；这里手动建空文件，
-    # KasmVNC 启动时检测到就跳过密码校验）。
-    touch /home/node/.kasmpasswd
+  umask 077
+  KASM_USER="${MS_REWARDS_KASM_USER:-msrewards}"
+  KASM_CREDENTIALS="${MS_REWARDS_STORAGE_DIR:-/data/storage}/kasm-credentials.txt"
+  KASM_PASSWD="/home/node/.kasmpasswd"
+  KASM_PASSWORD="${MS_REWARDS_KASM_PASSWORD:-}"
+
+  # 首次启动生成随机密码并持久化；文件权限 600，日志中不打印密码。
+  # 用户也可以通过 MS_REWARDS_KASM_PASSWORD 固定密码，便于 NAS 部署后统一配置。
+  if [ -z "$KASM_PASSWORD" ] && [ -f "$KASM_CREDENTIALS" ]; then
+    saved_user="$(sed -n 's/^username=//p' "$KASM_CREDENTIALS" | head -n 1)"
+    saved_password="$(sed -n 's/^password=//p' "$KASM_CREDENTIALS" | head -n 1)"
+    if [ -n "$saved_user" ] && [ -n "$saved_password" ]; then
+      KASM_USER="$saved_user"
+      KASM_PASSWORD="$saved_password"
+    fi
   fi
-  chown node:node /home/node/.kasmpasswd 2>/dev/null || true
+  if [ -z "$KASM_PASSWORD" ]; then
+    KASM_PASSWORD="$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n' | cut -c1-24)"
+  fi
+
+  credentials_tmp="$(mktemp)"
+  {
+    printf 'username=%s\n' "$KASM_USER"
+    printf 'password=%s\n' "$KASM_PASSWORD"
+  } > "$credentials_tmp"
+  mv "$credentials_tmp" "$KASM_CREDENTIALS"
+  chown node:node "$KASM_CREDENTIALS"
+  chmod 600 "$KASM_CREDENTIALS"
+
+  # KasmVNC 官方入口固定从 $HOME/.kasmpasswd 读取用户数据库；每次启动从
+  # 持久化凭据重建哈希文件，容器重建也不会丢登录用户。
+  passwd_tmp="$(mktemp)"
+  chown node:node "$passwd_tmp"
+  printf '%s\n%s\n' "$KASM_PASSWORD" "$KASM_PASSWORD" |
+    gosu node /usr/bin/kasmvncpasswd -u "$KASM_USER" -w "$passwd_tmp"
+  mv "$passwd_tmp" "$KASM_PASSWD"
+  chown node:node "$KASM_PASSWD"
+  chmod 600 "$KASM_PASSWD"
+
   gosu node /usr/local/bin/novnc-stack.sh >/tmp/novnc-stack.log 2>&1 &
   i=0
   while [ "$i" -lt 100 ] && [ ! -S /tmp/.X11-unix/X1 ]; do

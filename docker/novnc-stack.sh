@@ -6,13 +6,15 @@
 #   Xvfb 出画面 → x11vnc 抓 X 协议 → websockify 转发 → 浏览器 noVNC JS 解码
 # 每一段都是瓶颈：1080p 全屏每帧 8.3MB 原始像素过 X 协议；noVNC 又是纯 JS 解码。
 #
-# 这一版换成 KasmVNC（1 个进程 Xkasmvnc = X server + VNC server + Web UI 三合一）：
+# 这一版换成 KasmVNC（kasmvncserver 包装器 + Xkasmvnc 子进程）：
 #   - framebuffer 直出，根本不经过 X11 协议传输这一段
 #   - 浏览器原生 WebP 解码（不再是 noVNC 那套 JS 解 tight）
 #   - DRI3 GPU 加速（NAS 上的 AMD/Intel 核显可启用 VAAPI 硬解；没有时静默回退 CPU）
 #   - 多线程编码
 #
-# 因此本脚本从「拉起 4 个进程」收敛成「起 1 个进程」。
+# 官方 Debian 包的 kasmvncserver 负责读取 YAML、初始化 X authority / 用户配置，
+# 再拉起 Xkasmvnc；不能直接把 Xkasmvnc 当成完整 Web 服务入口。
+# 因此本脚本从「拉起 4 个进程」收敛成「起 1 个包装器及其子进程」。
 #
 # ⚠️ 必须以 node 身份拉起（entrypoint 用 gosu node）：
 #   Xkasmvnc 自带 X server，root 起的 X server，Chromium 同样 attach 不了 SHM
@@ -26,20 +28,16 @@ DISPLAY_NUM=":1"
 export DISPLAY="$DISPLAY_NUM"
 export HOME="${HOME:-/home/node}"
 
-# KasmVNC 端口 = 6080。Deb 默认是 5900 + websocket 自动；我们显式钉 6080 以与
-# 历史端口和 compose 端口映射保持一致（少改一处）。
-# -ssl=0：与 kasmvnc.yaml 的 network.ssl.require_ssl: false 配套；
-#   不写 -ssl=0 时它会要求 snakeoil 证书，没有就启动失败。
-# -no-bootstrap：KasmVNC 启动后想给我们自动生成密码+选桌面，容器里非交互，
-#   没这套机制能跑。密码文件 /home/node/.kasmpasswd 由 entrypoint 提前生成。
-# -select-de=none：不调 select-de.sh；启动 X server 即可，Chromium 自己会起。
-nohup /usr/bin/Xkasmvnc \
+# KasmVNC 官方 Debian 入口是 kasmvncserver（/usr/bin/vncserver 同源）：
+# 它会读取 /etc/kasmvnc/kasmvnc.yaml，再以当前用户启动 Xkasmvnc。
+# -fg：让日志和生命周期由本脚本控制；-noxstartup：不要启动未安装的桌面环境，
+# Chromium 由业务进程直接连接这个 DISPLAY。
+# 6080 由 YAML 的 network.websocket_port 固定，Web UI 目录也由 YAML 指定。
+nohup /usr/bin/kasmvncserver \
   "$DISPLAY_NUM" \
   -fg \
-  -httpd /usr/share/kasmvnc/www \
-  -port 6080 \
+  -noxstartup \
   -interface 0.0.0.0 \
-  -ssl=0 \
-  -no-bootstrap \
-  -select-de none \
+  -websocketPort 6080 \
+  -prompt 0 \
   > /tmp/kasmvnc.log 2>&1 &

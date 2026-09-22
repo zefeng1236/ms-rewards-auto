@@ -1687,8 +1687,17 @@ const kasmYamlSrc = fs.readFileSync(path.join(ROOT, "docker", "kasmvnc.yaml"), "
 checkTrue(
   "镜像装 KasmVNC（必备 deb 下载 + Xkasmvnc 可执行）",
   /Xkasmvnc/.test(dockerfileSrc) &&
-    /curl -fsSL -o \/tmp\/kasmvnc\.deb/.test(dockerfileSrc) &&
-    /kasmvncserver_bookworm/.test(dockerfileSrc)
+    /curl [^\n]*-fsSL -o \/tmp\/kasmvnc\.deb/.test(dockerfileSrc) &&
+    /kasmvncserver_bookworm/.test(dockerfileSrc) &&
+    /KASMVNC_PROXY/.test(dockerfileSrc) &&
+    /\"\$\{KASMVNC_PROXY\}\$\{KASMVNC_URL\}\"/.test(dockerfileSrc)
+);
+checkTrue(
+  "Dockerfile apt 安装层在清理列表后正确续行（避免 ln 被解析成 Docker 指令）",
+  dockerfileSrc.split("\n").some((line, index, lines) =>
+    line.includes("rm -rf /var/lib/apt/lists/*; \\") &&
+    lines[index + 1]?.includes("ln -snf /usr/share/zoneinfo/")
+  )
 );
 // 老的四件套必须全删：Xvfb + x11vnc + websockify + novnc + fluxbox
 // （用「键入 apt 列表」的精确匹配 —— 注释里也会提到这些词，全文匹配会假阴性）
@@ -1706,21 +1715,24 @@ checkTrue(
 //    这些参数在脚本的注释里也各写了一份（解释为什么加），全文匹配会被注释蒙混。
 //    所以取「命令起始标记之后」的片段再断言。
 const afterMarker = (src, marker) => src.split(marker)[1] || "";
-const xkasmCmd = afterMarker(novncSrc, "nohup /usr/bin/Xkasmvnc");
+const kasmCmd = afterMarker(novncSrc, "nohup /usr/bin/kasmvncserver");
 checkTrue(
-  "KasmVNC 走明文 6080（容器里没有 CA 证书，要求 SSL 会启动失败）",
-  xkasmCmd.includes("-port 6080") &&
-    xkasmCmd.includes("-ssl=0") &&
+  "KasmVNC 官方包装器走明文 6080（容器里没有 CA 证书，要求 SSL 会启动失败）",
+  kasmCmd.includes("-websocketPort 6080") &&
+    /websocket_port:\s*6080/.test(kasmYamlSrc) &&
     /require_ssl:\s*false/.test(kasmYamlSrc)
 );
 checkTrue(
-  "KasmVNC 跳过交互式引导（容器里没法跑那个密码+选桌面的脚本）",
-  xkasmCmd.includes("-no-bootstrap") && xkasmCmd.includes("-select-de none")
+  "KasmVNC 使用官方包装器并跳过交互式桌面启动",
+  kasmCmd.includes("-noxstartup") &&
+    kasmCmd.includes("-prompt 0") &&
+    /server:\s*\n\s*http:\s*\n[\s\S]*httpd_directory:\s*\/usr\/share\/kasmvnc\/www/.test(kasmYamlSrc)
 );
 checkTrue(
   "KasmVNC 配置启用 GPU DRI3 加速节点（NAS 上有 /dev/dri/renderD128 即可走 VAAPI）",
   /drinode:\s*\/dev\/dri\/renderD128/.test(kasmYamlSrc) &&
-    /gpu:\s*\n\s*hw3d:/.test(kasmYamlSrc)
+    /gpu:\s*\n\s*hw3d:/.test(kasmYamlSrc) &&
+    !/^\s*intel-media-va-driver-non-free\b/m.test(dockerfileSrc)
 );
 checkTrue(
   "镜像预建 /tmp/.X11-unix（Xkasmvnc 以 node 身份跑时不会自建，日志会报 euid != 0）",
@@ -1733,6 +1745,16 @@ checkTrue(
     /export DISPLAY=:1/.test(entrySrc) &&
     /novnc-stack\.sh/.test(dockerfileSrc) &&
     /\.kasmpasswd/.test(entrySrc)
+);
+checkTrue(
+  "KasmVNC 首次启动自动创建并持久化用户凭据（不能用空 .kasmpasswd）",
+  /MS_REWARDS_KASM_USER/.test(entrySrc) &&
+    /MS_REWARDS_KASM_PASSWORD/.test(entrySrc) &&
+    /kasm-credentials\.txt/.test(entrySrc) &&
+    /kasmvncpasswd -u/.test(entrySrc) &&
+    /-w/.test(entrySrc) &&
+    /chmod 600/.test(entrySrc) &&
+    !/touch \/home\/node\/\.kasmpasswd/.test(entrySrc)
 );
 const dashboardSrc = fs.readFileSync(
   path.join(ROOT, "src-renderer", "src", "views", "Dashboard.tsx"),

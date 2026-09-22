@@ -111,8 +111,10 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     #   KasmVNC 浏览器原生 WebP 解码（瓶颈 3 直接消失），并自带 WebP/JPEG/QOI
     #   编码 + 多线程 + DRI3 GPU 加速（NAS 上 AMD/Intel 核显直接可用）。
     #   官方 deb 在 https://github.com/kasmtech/KasmVNC/releases
-    #   -intel-media-va-driver-non-free 是 KasmVNC 的 Recommends，AMD/Intel
-    #   VAAPI 硬解就要它；Intel 非核显装一下有备无患。
+    #   GPU 驱动不在基础镜像里硬装：Debian 默认只启用 main，
+    #   intel-media-va-driver-non-free 属于可选 non-free 包，且 NAS 通常已经由宿主
+    #   管理驱动。需要硬件加速时只需透传 /dev/dri（见 compose 注释）；无 GPU 时
+    #   KasmVNC 自动回退 CPU，不应阻塞普通服务器构建。
     apt-get install -y --no-install-recommends \
         chromium \
         xz-utils \
@@ -140,11 +142,10 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         libdatetime-timezone-perl \
         libscalar-list-utils-perl \
         libhash-merge-simple-perl \
-        intel-media-va-driver-non-free \
     ; \
     # KasmVNC deb 装在第二阶段（不在 cache mount 下，避免半成品污染 apt 缓存）。
     # 镜像里预装 + 缓存版本号 ARG，将来上游发版只改这一处。
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/*; \
     ln -snf /usr/share/zoneinfo/$TZ /etc/localtime; \
     echo $TZ > /etc/timezone; \
     chromium --version; \
@@ -152,12 +153,16 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 
 # ⑥ KasmVNC（核心图形栈）
 #   - 必须卸掉 apt cache 防止半成品（deb 没装完时缓存里有 锁文件，污染下次构建）
-#   - 必须先有 ca-certificates（已在阶段二 ① 装），直连 GitHub 不稳所以走 gh-proxy
+#   - 必须先有 ca-certificates（已在阶段二 ① 装），直连 GitHub 失败时回退 gh-proxy
 #   - 一旦上游发新版：改 KASMVNC_VERSION 与 URL 一处即可
 ARG KASMVNC_VERSION=1.5.0
 ARG KASMVNC_URL=https://github.com/kasmtech/KasmVNC/releases/download/v${KASMVNC_VERSION}/kasmvncserver_bookworm_${KASMVNC_VERSION}_amd64.deb
+ARG KASMVNC_PROXY=https://gh-proxy.org/
 RUN set -eux; \
-    curl -fsSL -o /tmp/kasmvnc.deb "$KASMVNC_URL"; \
+    if ! curl --connect-timeout 10 --max-time 120 -fsSL -o /tmp/kasmvnc.deb "$KASMVNC_URL"; then \
+      rm -f /tmp/kasmvnc.deb; \
+      curl --connect-timeout 10 --max-time 180 -fsSL -o /tmp/kasmvnc.deb "${KASMVNC_PROXY}${KASMVNC_URL}"; \
+    fi; \
     apt-get install -y --no-install-recommends /tmp/kasmvnc.deb; \
     rm /tmp/kasmvnc.deb; \
     which Xkasmvnc; \
