@@ -52,8 +52,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TZ=Asia/Shanghai \
     NODE_ENV=production \
     MS_REWARDS_STORAGE_DIR=/data/storage \
-    PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium \
+    MS_REWARDS_CHROMIUM_FALLBACK=/usr/bin/chromium \
     MS_REWARDS_CHROMIUM_ARGS=--no-sandbox,--disable-dev-shm-usage,--disable-gpu
+
+# 注意这里用的是 MS_REWARDS_CHROMIUM_FALLBACK 而不是 PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH：
+#   前者 = 「指纹浏览器不可用时的兜底」，后者 = 「运维强指定，永远优先」。
+# 早期版本用后者把容器 Chromium 钉死，结果指纹浏览器下载完也永远轮不到它
+# （优先级见 src/browser.js 的 resolveBrowserSource）。容器里 Playwright 自带
+# Chromium 是缺席的（npm ci --ignore-scripts 跳过了下载），所以这个兜底必须留着。
 
 # ① 先装 CA 证书（用镜像自带的 http 官方源）
 #    坑：node:*-slim 不带 ca-certificates，直接换 https 国内源会报
@@ -65,6 +71,10 @@ RUN apt-get update \
 
 # ② 换成国内源后装 Chromium 本体 + 时区 + 中文字体
 #    deb822（bookworm 默认）与传统 sources.list 都试一遍
+#
+#    xz-utils 是给**指纹浏览器**用的：Linux 版资产是 .tar.xz，而 GNU tar 解 xz
+#    必须调用外部 `xz` 程序（不链接 liblzma）。实测不装它时 `tar -xf` 直接
+#    exit 127「xz: not found」——指纹浏览器会卡在解压这一步。体积只有几百 KB。
 RUN set -eux; \
     if [ -n "$DEBIAN_MIRROR" ]; then \
       sed -i "s|http://deb.debian.org/debian|$DEBIAN_MIRROR|g" /etc/apt/sources.list.d/debian.sources 2>/dev/null || \
@@ -73,6 +83,7 @@ RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
         chromium \
+        xz-utils \
         tzdata \
         gosu \
         fonts-noto-cjk \
@@ -82,7 +93,8 @@ RUN set -eux; \
     echo $TZ > /etc/timezone; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/*; \
-    chromium --version
+    chromium --version; \
+    xz --version | head -1
 
 WORKDIR /app
 

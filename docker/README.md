@@ -75,7 +75,8 @@ docker compose -f docker/docker-compose.yml --profile login stop
 方法名与 `src-renderer/src/types/electron.d.ts` 的 `ElectronApi` 完全同名（`overview` / `runAll` /
 `getVaultStatus` …），因此新增功能时两端只需各自实现同一个方法名。
 
-事件类型：`running` `log` `accounts` `appearance` `chromium-status` `account-status` `account-log`。
+事件类型：`running` `log` `accounts` `appearance` `chromium-status` `fingerprint-status`
+`install-progress` `account-status` `account-log` `bg-progress`。
 
 ### HTTP 接口一览
 
@@ -108,6 +109,8 @@ storage/
 ├── uploads/                 Web 端上传的自定义背景图
 ├── cache/                   远程壁纸缓存
 ├── accounts/<id>/state.json 账户登录态（secrets 为密文）
+├── fingerprint-chromium/    指纹浏览器解压目录（可选增强，约 480MB，不装则无）
+├── fp-download/             指纹浏览器下载缓存（装完自动清掉）
 └── ../logs/app.log          日志
 ```
 
@@ -118,6 +121,9 @@ storage/
 
 - **时区**：compose 已设 `TZ=Asia/Shanghai`，改部署地区时记得同步改，否则每日定时会错。
 - **不要以 root 跑**：镜像内已切到 `node` 用户，因此 Chromium 必须带 `--no-sandbox`（已在 compose 配好）。
+- **不要设 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`**：那是「运维强指定，永远最高优先级」的口子，
+  设了以后指纹浏览器**装了也不会被用**。容器需要兜底浏览器，请用 `MS_REWARDS_CHROMIUM_FALLBACK`
+  （语义是「指纹浏览器不可用时才用」，compose 已配好）。优先级见 `src/browser.js` 的 `resolveBrowserSource`。
 - **账号数量**：建议单 IP ≤ 5 个账户，沿用桌面版的串行执行与账号间 20–60 秒随机间隔。
 - **宿主断电容灾**：`restart: unless-stopped` 已配置，Docker 随系统启动后容器会自动拉起。
   保险库若未配置环境变量解锁，重启后需在页面上登录一次（可点一键登录）。
@@ -132,3 +138,36 @@ storage/
 ```bash
 npm run build:web:docker     # 产物输出到 src/web/dist
 ```
+
+## 九、浏览器来源与指纹浏览器（可选增强）
+
+容器里跑哪一个 Chromium，由 `src/browser.js` 的 `resolveBrowserSource()` 按优先级决定：
+
+| 优先级 | 来源 | 容器里的实际取值 |
+|---|---|---|
+| 1 | `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` | **不要设**（设了会永久屏蔽第 2 档） |
+| 2 | **指纹浏览器**（设置里启用且已下载） | `/data/storage/fingerprint-chromium/.../chrome` |
+| 3 | `MS_REWARDS_CHROMIUM_FALLBACK` | `/usr/bin/chromium`（apt 装的，compose 已配） |
+| 4 | Playwright 自带 Chromium | 镜像里不存在（`npm ci --ignore-scripts` 跳过了下载） |
+
+**指纹浏览器是干什么的**：Playwright 驱动普通 Chromium 时 `sec-ch-ua`（Client Hints）请求头改不动，
+会出现「UA 自称 Edge、CH 说 Chromium」的自相矛盾指纹。指纹浏览器是 patch 过源码的
+[fingerprint-chromium](https://github.com/adryfish/fingerprint-chromium)，UA / userAgentData / CH 三者同源生成，
+并用 `--fingerprint=<种子>` 做种子化指纹（本项目按账户 ID 派生，同账号长期稳定、不同账号互不相关）。
+
+**在容器里是可用的**（已实测，非推测）：
+
+- Linux 版资产是 `ungoogled-chromium-<版本>-1-x86_64_linux.tar.xz`，约 **134MB**（Windows 版是 181MB）；
+- 解压需要 `xz-utils`：GNU tar 解 `.tar.xz` 会调用外部 `xz` 程序，镜像里**已装**（别从 Dockerfile 的 apt 列表里删掉，
+  删了会 `tar: Child returned status 127`，指纹浏览器卡在解压这一步）；
+- 解出的 `chrome` 与 `chrome_crashpad_handler` 同级，满足 `findExecutable()` 的 Linux 判定；
+- 容器内 `chrome --version` 正常、`ldd` 缺失动态库 **0 个**、headless 带 `--no-sandbox` 实跑通过
+  （只有 dbus 连不上的噪音，apt Chromium 同样会打，无害）。
+
+下载与安装：
+
+- 路径：「软件设置 → 浏览器 → 立即下载」，或**安装向导最后一页**（可勾「跳过」直接下一步）；
+- 落在 `/data/storage/fingerprint-chromium/`（在卷内，容器重建不丢），临时下载缓存在 `/data/storage/fp-download/`；
+- 走 gh-proxy 镜像链 + 断点续传 + 失败自动换源，下完做 sha256 完整性校验；
+- 全局配置 `browser.fingerprint.enable` 默认为 `true`，但**没装好时是静默回落**到第 3 档兜底 Chromium，
+  只在日志里留一条 warn —— 所以不装也能正常跑任务，装了才生效。

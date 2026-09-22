@@ -22,7 +22,7 @@ services:
         # npm 与 Debian 源，默认国内；海外环境可改成官方地址
         NPM_REGISTRY: https://registry.npmmirror.com
         DEBIAN_MIRROR: https://mirrors.aliyun.com/debian
-    image: ms-rewards-auto:0.9.4
+    image: ms-rewards-auto:0.10.1
     container_name: ms-rewards
     restart: unless-stopped
 
@@ -46,7 +46,12 @@ services:
 
       # ---------- Chromium ----------
       # 镜像内已 apt 安装；容器内非 root 运行，必须带 --no-sandbox
-      PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH: /usr/bin/chromium
+      #
+      # ⚠️ 这里必须是 FALLBACK 而不是 PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH：
+      #    前者语义是「指纹浏览器不可用时的兜底」，后者是「运维强指定，永远优先」。
+      #    用后者会把容器 Chromium 钉死，指纹浏览器装了也永远轮不到（已实测踩过）。
+      #    优先级：强指定 > 指纹浏览器 > 本兜底 > Playwright 自带（见 src/browser.js）
+      MS_REWARDS_CHROMIUM_FALLBACK: /usr/bin/chromium
       MS_REWARDS_CHROMIUM_ARGS: "--no-sandbox,--disable-dev-shm-usage,--disable-gpu"
 
       MS_REWARDS_PORT: "25560"

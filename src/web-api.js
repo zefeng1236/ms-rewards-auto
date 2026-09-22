@@ -429,7 +429,9 @@ function createApi({ emit }) {
       return { ready: browser.isChromiumReady(), executable: browser.chromiumExecutablePath() };
     },
     installBrowser() {
-      // 容器内 Chromium 由镜像 apt 安装，无需再下载
+      // 容器内 Chromium 由镜像 apt 安装（MS_REWARDS_CHROMIUM_FALLBACK 指过去），
+      // 且 npm ci --ignore-scripts 跳过了 playwright 自带的浏览器下载，所以这里
+      // 没有「下载 Chromium」这回事，直接回 already-ready。
       return { ok: browser.isChromiumReady(), method: "preinstalled", executable: browser.chromiumExecutablePath() };
     },
     async fingerprintStatus() {
@@ -440,6 +442,9 @@ function createApi({ emit }) {
         force: !!(opts && opts.force),
         // 与桌面端一致：镜像源由全局配置决定
         mirror: globalConfig.get()?.browser?.fingerprint?.mirror,
+        // 进度必须转发到 SSE：侧边栏徽章靠 install-progress 显示下载百分比与速度，
+        // 不转发的话 Web 端下载 130MB 期间界面毫无反馈（桌面版见 electron-main.js）
+        onProgress: (p) => emit("install-progress", p),
       });
       emit("fingerprint-status", await fpBrowser.status());
       return r;

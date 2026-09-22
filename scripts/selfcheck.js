@@ -1503,11 +1503,17 @@ checkTrue(
   "browser.js 有来源优先级解析并导出",
   /function resolveBrowserSource/.test(browserSrcFp) && /^\s*resolveBrowserSource,$/m.test(browserSrcFp)
 );
+// 优先级顺序是本块最容易改错的地方：把「系统兜底」挪到指纹浏览器之前，
+// Docker 里指纹浏览器就永远轮不到（下载了也不用），而桌面端完全看不出来。
+const rbBody = browserSrcFp.slice(browserSrcFp.indexOf("function resolveBrowserSource"));
 checkTrue(
-  "优先级顺序：显式 env > 指纹浏览器 > 自带 Chromium",
+  "优先级顺序：运维强指定 > 指纹浏览器 > 系统兜底 > Playwright 自带",
   /kind: "override"/.test(browserSrcFp) &&
     /kind: "fingerprint"/.test(browserSrcFp) &&
-    /kind: "chromium"/.test(browserSrcFp)
+    /kind: "chromium"/.test(browserSrcFp) &&
+    rbBody.indexOf('kind: "override"') < rbBody.indexOf('kind: "fingerprint"') &&
+    rbBody.indexOf('kind: "fingerprint"') < rbBody.indexOf("fallbackChromiumPath") &&
+    rbBody.indexOf("fallbackChromiumPath") < rbBody.indexOf("bundledChromiumPath")
 );
 checkTrue(
   "指纹浏览器不可用时静默回落（不打断登录流程）",
@@ -1574,6 +1580,35 @@ checkTrue(
 checkTrue(
   "前端类型补齐 FingerprintStatus / InstallFingerprintResult",
   /interface FingerprintStatus/.test(typesSrcFp) && /interface InstallFingerprintResult/.test(typesSrcFp)
+);
+
+/* ---------------- Docker 版接线（0.10.1 后增补） ----------------
+ * 此前容器里指纹浏览器「装了也用不上」的两个原因，各锁一条守卫：
+ *   ① compose 用 PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH 把容器 Chromium 钉死（优先级最高）
+ *   ② 镜像没装 xz-utils，GNU tar 解 .tar.xz 直接 exit 127
+ */
+const dockerfileSrc = fs.readFileSync(path.join(ROOT, "docker", "Dockerfile"), "utf8");
+const composeSrc = fs.readFileSync(path.join(ROOT, "docker", "docker-compose.yml"), "utf8");
+checkTrue(
+  "Dockerfile 装 xz-utils（Linux 版指纹浏览器是 .tar.xz，GNU tar 需外部 xz）",
+  // 断言必须是「独立成一行的 apt 列表项」：注释里也会出现 xz-utils 三个字，
+  // 用 /xz-utils/ 或 [^;]* 跨行匹配都会被注释蒙混，漏掉「从 apt 列表里删掉」这种真故障。
+  /^\s*xz-utils\b/m.test(dockerfileSrc) && /xz --version/.test(dockerfileSrc)
+);
+checkTrue(
+  "Docker 侧用 MS_REWARDS_CHROMIUM_FALLBACK 兜底，而非强指定 PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH",
+  /MS_REWARDS_CHROMIUM_FALLBACK=\/usr\/bin\/chromium/.test(dockerfileSrc) &&
+    /MS_REWARDS_CHROMIUM_FALLBACK: \/usr\/bin\/chromium/.test(composeSrc) &&
+    !/^\s*PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH[=:]/m.test(dockerfileSrc) &&
+    !/^\s*PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH[=:]/m.test(composeSrc)
+);
+checkTrue(
+  "Web 端 installFingerprint 把下载进度转发到 SSE（否则侧边栏徽章在 Web 版永远 0%）",
+  /onProgress: \(p\) => emit\("install-progress", p\)/.test(webApiSrcFp)
+);
+checkTrue(
+  "compose 镜像 tag 与 package.json 版本一致",
+  new RegExp(`image: ms-rewards-auto:${String(pkgRaw.version).replace(/\./g, "\\.")}(\\s|$)`).test(composeSrc)
 );
 
 /* ============ 汇总 ============ */

@@ -31,22 +31,35 @@ function hasAuthCookies(cookies) {
 }
 
 /**
- * Playwright 自带 Chromium 的可执行路径（与系统 Edge/Chrome 完全隔离）
- * 未安装时返回 null
+ * 运维显式指定的 Chromium（最高优先级）。
  *
- * Docker 场景：镜像内没有 Playwright 下载的 Chromium（官方 CDN 在国内常不可用），
- * 改为 apt 安装系统 Chromium，用 PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH 指过来。
- * 桌面版不设该变量，行为与以前完全一致。
+ * ⚠️ 一旦设了它，指纹浏览器就**永远不会被选中**。Docker 镜像早期版本正是这么配的
+ * （直接把容器里的 apt Chromium 钉死），导致指纹浏览器下载完也用不上。
+ * 容器场景请改用 MS_REWARDS_CHROMIUM_FALLBACK —— 那个只在指纹浏览器不可用时兜底。
  */
+function overrideChromiumPath() {
+  const p = (process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || "").trim();
+  return p && fs.existsSync(p) ? p : null;
+}
+
+/**
+ * 兜底 Chromium（**指纹浏览器不可用时**才用）。
+ *
+ * 为什么需要这个中间档：Docker 镜像用 apt 装了系统 Chromium，又用
+ * `npm ci --ignore-scripts` 跳过了 playwright 的浏览器下载（镜像里根本没有
+ * Playwright 自带 Chromium）。若直接去掉 PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH，
+ * 未启用指纹浏览器时就会落到「一个可执行文件都找不到」。
+ *
+ * 桌面版不设这个变量，行为完全不变。
+ */
+function fallbackChromiumPath() {
+  const p = (process.env.MS_REWARDS_CHROMIUM_FALLBACK || "").trim();
+  return p && fs.existsSync(p) ? p : null;
+}
+
+/** 当前可用的 Chromium：运维指定 > 系统兜底 > Playwright 自带 */
 function chromiumExecutablePath() {
-  const override = (process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || "").trim();
-  if (override && fs.existsSync(override)) return override;
-  try {
-    const p = chromium.executablePath();
-    return p && fs.existsSync(p) ? p : null;
-  } catch {
-    return null;
-  }
+  return overrideChromiumPath() || fallbackChromiumPath() || bundledChromiumPath();
 }
 
 /** Playwright 自带 Chromium 的路径（不含环境变量覆盖），供来源优先级排序用 */
@@ -83,9 +96,10 @@ function fingerprintCfg(ctx) {
  * 决定本次用哪个浏览器。
  *
  * 优先级：
- *   1. PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH —— 运维显式指定的永远最高（Docker / 调试）
+ *   1. PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH —— 运维强指定（调试用；设了就再不会用指纹浏览器）
  *   2. 指纹浏览器 —— 设置里启用且已安装（src/fingerprint-browser.js）
- *   3. Playwright 自带 Chromium —— 默认行为
+ *   3. MS_REWARDS_CHROMIUM_FALLBACK —— 系统兜底（Docker 的 apt Chromium；仅在上一步不可用时）
+ *   4. Playwright 自带 Chromium —— 桌面版默认行为
  *
  * 指纹浏览器没装好时是**静默回落**而不是报错：它是可选增强，不该因为没下载
  * 就把登录流程整个打断。
@@ -94,15 +108,19 @@ function fingerprintCfg(ctx) {
  * @returns {{kind: "override"|"fingerprint"|"chromium", executable: string|null, cfg?: object}}
  */
 function resolveBrowserSource(ctx) {
-  const override = (process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || "").trim();
-  if (override && fs.existsSync(override)) return { kind: "override", executable: override };
+  const override = overrideChromiumPath();
+  if (override) return { kind: "override", executable: override };
 
   const cfg = fingerprintCfg(ctx);
   if (cfg.enable) {
     const exe = fpBrowser.executablePath();
     if (exe) return { kind: "fingerprint", executable: exe, cfg };
-    logger.warn("已启用指纹浏览器但不可用（未安装或 chrome.dll 损坏），本轮回落到普通 Chromium（可在设置页重新下载）");
+    logger.warn("已启用指纹浏览器但不可用（未安装或主程序损坏），本轮回落到普通 Chromium（可在设置页重新下载）");
   }
+  // 系统兜底（Docker 用 apt Chromium）：必须排在指纹浏览器之后，
+  // 否则容器里指纹浏览器下载完也永远轮不到它。
+  const fb = fallbackChromiumPath();
+  if (fb) return { kind: "chromium", executable: fb, cfg };
   return { kind: "chromium", executable: bundledChromiumPath(), cfg };
 }
 
