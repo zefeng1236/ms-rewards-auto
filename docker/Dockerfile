@@ -105,12 +105,14 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\nAcquire::http::Pipeline-Depth "10";\nAcquire::Queue-Mode "access";\n' \
       > /etc/apt/apt.conf.d/99-msrewards-tuning; \
     apt-get update; \
-    # 图形转发栈（xvfb/x11vnc/websockify/novnc/fluxbox）：给「去登录」的手动
-    #   授权窗口用。以前是独立 novnc 容器，跨容器 X11 只能走 TCP、共享内存失效，
-    #   1080p 全屏每帧 8.3MB 原始像素走网络，noVNC 里鼠标卡得点不动；
-    #   现在搬进本容器，X11 走 Unix socket + MIT-SHM（见 docker/novnc-stack.sh）。
-    #   fluxbox 是必备的窗口管理器：没有它 X 的输入焦点停在 root window，
-    #   noVNC 里能点鼠标但打不了字。
+    # 图形转发栈（KasmVNC = X server + VNC server + Web UI 三合一）
+    #   取代原先的 xvfb + x11vnc + websockify + novnc + fluxbox。
+    #   为什么换：noVNC 是纯 JS 解码器（瓶颈 3），1440×900 才能勉强喂得动；
+    #   KasmVNC 浏览器原生 WebP 解码（瓶颈 3 直接消失），并自带 WebP/JPEG/QOI
+    #   编码 + 多线程 + DRI3 GPU 加速（NAS 上 AMD/Intel 核显直接可用）。
+    #   官方 deb 在 https://github.com/kasmtech/KasmVNC/releases
+    #   -intel-media-va-driver-non-free 是 KasmVNC 的 Recommends，AMD/Intel
+    #   VAAPI 硬解就要它；Intel 非核显装一下有备无患。
     apt-get install -y --no-install-recommends \
         chromium \
         xz-utils \
@@ -118,16 +120,48 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         gosu \
         fonts-noto-cjk \
         fonts-noto-color-emoji \
-        xvfb \
-        x11vnc \
-        websockify \
-        novnc \
-        fluxbox \
+        curl \
+        ca-certificates \
+        x11-xkb-utils \
+        xkb-data \
+        xauth \
+        libbsd0 \
+        libgbm1 \
+        libgl1 \
+        libpixman-1-0 \
+        libxfont2 \
+        libxshmfence1 \
+        libxtst6 \
+        libyaml-tiny-perl \
+        libswitch-perl \
+        libtry-tiny-perl \
+        liblist-moreutils-perl \
+        libdatetime-perl \
+        libdatetime-timezone-perl \
+        libscalar-list-utils-perl \
+        libhash-merge-simple-perl \
+        intel-media-va-driver-non-free \
     ; \
+    # KasmVNC deb 装在第二阶段（不在 cache mount 下，避免半成品污染 apt 缓存）。
+    # 镜像里预装 + 缓存版本号 ARG，将来上游发版只改这一处。
+    rm -rf /var/lib/apt/lists/*
     ln -snf /usr/share/zoneinfo/$TZ /etc/localtime; \
     echo $TZ > /etc/timezone; \
     chromium --version; \
     xz --version | head -1
+
+# ⑥ KasmVNC（核心图形栈）
+#   - 必须卸掉 apt cache 防止半成品（deb 没装完时缓存里有 锁文件，污染下次构建）
+#   - 必须先有 ca-certificates（已在阶段二 ① 装），直连 GitHub 不稳所以走 gh-proxy
+#   - 一旦上游发新版：改 KASMVNC_VERSION 与 URL 一处即可
+ARG KASMVNC_VERSION=1.5.0
+ARG KASMVNC_URL=https://github.com/kasmtech/KasmVNC/releases/download/v${KASMVNC_VERSION}/kasmvncserver_bookworm_${KASMVNC_VERSION}_amd64.deb
+RUN set -eux; \
+    curl -fsSL -o /tmp/kasmvnc.deb "$KASMVNC_URL"; \
+    apt-get install -y --no-install-recommends /tmp/kasmvnc.deb; \
+    rm /tmp/kasmvnc.deb; \
+    which Xkasmvnc; \
+    /usr/bin/Xkasmvnc --help 2>&1 | head -3 || true
 
 WORKDIR /app
 
@@ -149,22 +183,18 @@ COPY --from=frontend /build/src/web/dist ./src/web/dist
 
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY docker/novnc-stack.sh /usr/local/bin/novnc-stack.sh
+COPY docker/kasmvnc.yaml /etc/kasmvnc/kasmvnc.yaml
 RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/novnc-stack.sh
 
-# fluxbox 默认带一条底部工具栏，会吃掉窗口高度（最大化就不是满屏）→ 关掉
-RUN mkdir -p /home/node/.fluxbox \
-    && printf 'session.screen0.toolbar.visible: false\n' > /home/node/.fluxbox/init
-
-# Xvfb 是以 node 身份跑的，它不会自己创建 /tmp/.X11-unix（日志里会报
-#   "_XSERVTransmkdir: ERROR: euid != 0, directory ... will not be created"）。
-# 先由 root 建好并给 1777，省掉这条误导性报错。
+# Xkasmvnc / Xvfb 以 node 身份跑时不会自建 /tmp/.X11-unix（root 跑又会让 Chromium
+# attach 不了 SHM）。先由 root 建好 + 1777 权限，省掉日志里那条 euid != 0 报错。
 RUN mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix
 
-RUN mkdir -p /data/storage && chown -R node:node /data /app /home/node
+RUN mkdir -p /data/storage && chown -R node:node /data /app /home/node /etc/kasmvnc
 VOLUME ["/data"]
 
 EXPOSE 25560
-# 内置 noVNC（MS_REWARDS_ENABLE_NOVNC=1 时才真的拉起）
+# KasmVNC 内置 web UI（MS_REWARDS_ENABLE_NOVNC=1 时才真的拉起）
 EXPOSE 6080
 
 HEALTHCHECK --interval=60s --timeout=10s --start-period=20s --retries=3 \

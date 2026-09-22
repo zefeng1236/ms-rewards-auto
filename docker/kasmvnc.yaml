@@ -1,0 +1,60 @@
+# ---------------------------------------------------------------------------
+# MS Rewards Auto · 容器内置 KasmVNC 配置
+# 覆盖 deb 自带的 /etc/kasmvnc/kasmvnc.yaml（deb 装的是全注释的模板）
+#
+# 设计要点（踩过坑的）：
+#   - 桌面分辨率 / GPU / DRInode / 网络协议全部在这文件里，**改这里比改 compose
+#     环境变量优先级更高**（KasmVNC 不会从环境变量读这些，会读 yaml）。
+#   - 不能用 require_ssl=true（容器里没有 CA 签的证书），用 ssl 关闭 → 走 HTTP 6080。
+#   - 浏览器 WebP 解码 + 多线程编码 + DRI3 GPU 加速是 KasmVNC 默认就开的，不用手动改。
+#   - DRI 节点在容器内是 /dev/dri/renderD128（NAS 上裸核 PCI/Intel/AMD 核显的标准路径）。
+#     没有时也没事：KasmVNC 静默回退 CPU 软光栅，DRI3 失效但不会崩。
+# ---------------------------------------------------------------------------
+---
+desktop:
+  resolution:
+    # 1920×1080：之前 Xvfb + noVNC 路径因为 JS 解码器扛不住被迫降到 1440×900。
+    # KasmVNC 浏览器原生 WebP 解码，可以放回去了。
+    width: 1920
+    height: 1080
+  allow_resize: true
+  pixel_depth: 24
+  gpu:
+    hw3d: false
+    drinode: /dev/dri/renderD128
+
+network:
+  protocol: http
+  interface: 0.0.0.0
+  websocket_port: auto
+  use_ipv4: true
+  use_ipv6: true
+  ssl:
+    require_ssl: false   # 容器里没有 CA 证书，关掉走明文 6080
+
+user_session:
+  new_session_disconnects_existing_exclusive_session: false
+  concurrent_connections_prompt: false
+
+pointer:
+  enabled: true
+  game_mode: false
+
+runtime_configuration:
+  allow_client_to_override_kasm_server_settings: true
+
+logging:
+  level: 30
+
+encoding:
+  max_frame_rate: 60
+  rect_encoding_mode:
+    rectangle_compress_threads: auto
+
+server:
+  http:
+    headers:
+      - Cross-Origin-Embedder-Policy=require-corp
+      - Cross-Origin-Opener-Policy=same-origin
+  advanced:
+    kasm_password_file: /home/node/.kasmpasswd

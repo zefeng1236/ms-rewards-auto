@@ -1658,17 +1658,14 @@ checkTrue(
   "compose 镜像 tag 与 package.json 版本一致",
   new RegExp(`image: ms-rewards-auto:${String(pkgRaw.version).replace(/\./g, "\\.")}(\\s|$)`).test(composeSrc)
 );
-// 虚拟桌面尺寸两头都踩过坑：
-//   太小/写死视口 → 窗口超出桌面，noVNC 里只剩中间一块，微软登录页按钮点不到
-//     （表现是「输入了密码但点登录没反应」，极难往分辨率上想）。
-//   太大（1920x1080）→ noVNC 是纯 JS 解码器，1080p 帧喂不动，实测 x11vnc 与
-//     websockify 之间的回环 rx_queue 积压 693KB，鼠标拖影卡到点不动。
-// 因此锁死区间：下限保证看得全，上限保证 JS 解码器喂得动。
+// 虚拟桌面尺寸：换了 KasmVNC 之后瓶颈 3（noVNC 纯 JS 解码器）没了，
+// 可以放心提回 1920x1080。KasmVNC 自带 WebP/QOI 编码 + 浏览器原生解码，
+// 1080p 是默认也能吃下的尺寸。
 const dispW = Number((composeSrc.match(/DISPLAY_WIDTH:\s*(\d+)/) || [])[1] || 0);
 const dispH = Number((composeSrc.match(/DISPLAY_HEIGHT:\s*(\d+)/) || [])[1] || 0);
 checkTrue(
-  `noVNC 虚拟桌面分辨率落在 1280x800 ~ 1440x900（当前 ${dispW}x${dispH}）`,
-  dispW >= 1280 && dispH >= 800 && dispW <= 1440 && dispH <= 900
+  `KasmVNC 虚拟桌面分辨率 ≥ 1920x1080（当前 ${dispW}x${dispH}）`,
+  dispW >= 1920 && dispH >= 1080
 );
 checkTrue(
   "有头模式不写死视口 + 窗口最大化（写死会让窗口超出虚拟桌面，页面显示不全）",
@@ -1676,19 +1673,28 @@ checkTrue(
     /--start-maximized/.test(browserSrcFp)
 );
 
-/* ---------------- 内置 noVNC（替代独立 novnc 容器） ----------------
- * 跨容器 X11 只能走 TCP，且两个容器 IpcMode 都是 private → MIT-SHM 用不了，
- * 1080p 全屏每帧 8.3MB 原始像素过网络（docker stats 实测累计 140MB），
- * 浏览器每帧 PutImage 都在等 TCP。这组守卫锁住「图形栈必须在本容器内」，
- * 别被人改回独立容器（改回去鼠标立刻又卡）。
+/* ---------------- 内置 KasmVNC（替代 Xvfb+x11vnc+websockify+novnc 四件套） ----------------
+ * 上一版用 4 进程：跨容器 X11 走 TCP、noVNC 纯 JS 解码，1080p 必卡。
+ * 现版 1 进程 Xkasmvnc = X server + VNC server + Web UI 三合一：
+ *   - framebuffer 直出（不经 X11 协议传输）
+ *   - 浏览器原生 WebP 解码
+ *   - DRI3 GPU 加速（NAS 上 AMD/Intel 核显）
+ * 这组守卫锁住它就在本容器内、且关键参数没退化。
  */
 const novncSrc = fs.readFileSync(path.join(ROOT, "docker", "novnc-stack.sh"), "utf8");
 const entrySrc = fs.readFileSync(path.join(ROOT, "docker", "entrypoint.sh"), "utf8");
+const kasmYamlSrc = fs.readFileSync(path.join(ROOT, "docker", "kasmvnc.yaml"), "utf8");
 checkTrue(
-  "镜像内置图形栈（xvfb / x11vnc / websockify / novnc / fluxbox 五项都得装）",
-  // 必须是「独立成一行的 apt 列表项」：注释里也会出现这些名字，
-  // 用裸 /x11vnc/ 匹配会被注释蒙混，漏掉「从 apt 列表里删掉」这种真故障。
-  ["xvfb", "x11vnc", "websockify", "novnc", "fluxbox"].every((p) =>
+  "镜像装 KasmVNC（必备 deb 下载 + Xkasmvnc 可执行）",
+  /Xkasmvnc/.test(dockerfileSrc) &&
+    /curl -fsSL -o \/tmp\/kasmvnc\.deb/.test(dockerfileSrc) &&
+    /kasmvncserver_bookworm/.test(dockerfileSrc)
+);
+// 老的四件套必须全删：Xvfb + x11vnc + websockify + novnc + fluxbox
+// （用「键入 apt 列表」的精确匹配 —— 注释里也会提到这些词，全文匹配会假阴性）
+checkTrue(
+  "旧图形栈四件套已从 apt 列表清干净（xvfb / x11vnc / websockify / novnc / fluxbox）",
+  !["xvfb", "x11vnc", "websockify", "novnc", "fluxbox"].some((p) =>
     new RegExp(`^\\s*${p}\\b`, "m").test(dockerfileSrc)
   )
 );
@@ -1697,37 +1703,36 @@ checkTrue(
   !/^\s{2}novnc:/m.test(composeSrc) && !/ms-rewards-novnc/.test(composeSrc) && !/theasp\/novnc/.test(composeSrc)
 );
 // ⚠️ 参数断言必须落在**真实命令行**上，不能全文匹配：
-//    这些参数在脚本的注释里也各写了一份（解释为什么加），全文匹配会被注释蒙混
-//    —— 实测踩到：把 -defer 0 从命令里删掉，守卫因为注释里还有一份而照旧全绿。
+//    这些参数在脚本的注释里也各写了一份（解释为什么加），全文匹配会被注释蒙混。
 //    所以取「命令起始标记之后」的片段再断言。
 const afterMarker = (src, marker) => src.split(marker)[1] || "";
-const xvfbCmd = afterMarker(novncSrc, "nohup Xvfb");
-const x11vncCmd = afterMarker(novncSrc, "nohup x11vnc");
-const websockifyCmd = afterMarker(novncSrc, "nohup websockify");
+const xkasmCmd = afterMarker(novncSrc, "nohup /usr/bin/Xkasmvnc");
 checkTrue(
-  "X11 指向本容器 :0 且禁掉 TCP 监听（同容器才用得上 MIT-SHM）",
-  /DISPLAY: ":0"/.test(composeSrc) &&
-    /MS_REWARDS_ENABLE_NOVNC: "1"/.test(composeSrc) &&
-    xvfbCmd.includes("-nolisten tcp")
+  "KasmVNC 走明文 6080（容器里没有 CA 证书，要求 SSL 会启动失败）",
+  xkasmCmd.includes("-port 6080") &&
+    xkasmCmd.includes("-ssl=0") &&
+    /require_ssl:\s*false/.test(kasmYamlSrc)
 );
 checkTrue(
-  "x11vnc 去掉默认 20ms 输入节流（-defer 0）并加速抓屏（-wait 10 -threads）",
-  ["-defer 0", "-wait 10", "-threads"].every((a) => x11vncCmd.includes(a))
+  "KasmVNC 跳过交互式引导（容器里没法跑那个密码+选桌面的脚本）",
+  xkasmCmd.includes("-no-bootstrap") && xkasmCmd.includes("-select-de none")
 );
 checkTrue(
-  "内置 noVNC 对外服务 6080 且静态资源指向 /usr/share/novnc",
-  websockifyCmd.includes("6080") && websockifyCmd.includes("/usr/share/novnc")
+  "KasmVNC 配置启用 GPU DRI3 加速节点（NAS 上有 /dev/dri/renderD128 即可走 VAAPI）",
+  /drinode:\s*\/dev\/dri\/renderD128/.test(kasmYamlSrc) &&
+    /gpu:\s*\n\s*hw3d:/.test(kasmYamlSrc)
 );
 checkTrue(
-  "镜像预建 /tmp/.X11-unix（Xvfb 以 node 身份跑时不会自建，日志会报 euid != 0）",
+  "镜像预建 /tmp/.X11-unix（Xkasmvnc 以 node 身份跑时不会自建，日志会报 euid != 0）",
   /mkdir -p \/tmp\/\.X11-unix/.test(dockerfileSrc) && /chmod 1777 \/tmp\/\.X11-unix/.test(dockerfileSrc)
 );
 checkTrue(
-  "图形栈以 node 身份拉起（root 起的 X server，node 的 Chromium attach 不了它的 SHM 段，会静默回退 TCP）",
+  "图形栈以 node 身份拉起（root 起的 X server，Chromium attach 不了它的 SHM 段，会静默回退 TCP）",
   /gosu node \/usr\/local\/bin\/novnc-stack\.sh/.test(entrySrc) &&
     /MS_REWARDS_ENABLE_NOVNC/.test(entrySrc) &&
-    /export DISPLAY=:0/.test(entrySrc) &&
-    /novnc-stack\.sh/.test(dockerfileSrc)
+    /export DISPLAY=:1/.test(entrySrc) &&
+    /novnc-stack\.sh/.test(dockerfileSrc) &&
+    /\.kasmpasswd/.test(entrySrc)
 );
 const dashboardSrc = fs.readFileSync(
   path.join(ROOT, "src-renderer", "src", "views", "Dashboard.tsx"),

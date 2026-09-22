@@ -61,21 +61,26 @@ services:
 
       MS_REWARDS_PORT: "25560"
 
-      # ---------- 图形转发（内置 noVNC，手动授权登录用）----------
-      # 图形栈（Xvfb + x11vnc + websockify）已内置在本容器：X11 走 Unix socket
-      # 并启用 MIT-SHM，不再跨容器传原始像素（以前 1080p 下每帧 8.3MB 走 TCP，
-      # 累计 140MB，noVNC 里鼠标卡到点不动）。
+      # ---------- 图形转发（内置 KasmVNC，手动授权登录用）----------
+      # KasmVNC = X server + VNC server + Web UI 三合一（比之前的 Xvfb +
+      # x11vnc + websockify + noVNC 四件套少一层 X11 协议传输），浏览器原生
+      # WebP 解码（不再是 noVNC 的纯 JS 解码），并可走 DRI3 GPU 加速
+      # （NAS 上的 AMD/Intel 核显）。
       # 置 0 即完全不拉起（同时可删掉上面 6080 的映射）。
-      # 桌面 1440x900 是权衡值：比 1080p 少 37% 像素，noVNC 的 JS 解码器才喂得动；
-      # 还嫌卡就往下降到 1280x800。
       MS_REWARDS_ENABLE_NOVNC: "1"
-      DISPLAY: ":0"
-      DISPLAY_WIDTH: 1440
-      DISPLAY_HEIGHT: 900
+      DISPLAY: ":1"
+      DISPLAY_WIDTH: 1920
+      DISPLAY_HEIGHT: 1080
 
     volumes:
       # 账户配置、登录态、保险库、日志 —— 全部在这里，容器重建不丢
       - ../storage:/data/storage
+
+    # GPU 加速（可选，NAS 上建议开）：宿主有 AMD/Intel 核显或独显时取消注释，
+    # 容器内 KasmVNC 走 VAAPI 硬解（DRI3）。⚠️ 没有 /dev/dri 的宿主不要开，
+    # 否则容器会因设备映射失败而起不来。
+    # devices:
+    #   - /dev/dri:/dev/dri
 
     # Chromium 共享内存，不加容易在大页面崩溃
     shm_size: "1gb"
