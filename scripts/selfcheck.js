@@ -1610,6 +1610,21 @@ checkTrue(
   "compose 镜像 tag 与 package.json 版本一致",
   new RegExp(`image: ms-rewards-auto:${String(pkgRaw.version).replace(/\./g, "\\.")}(\\s|$)`).test(composeSrc)
 );
+// npm ci 会严格校验 package.json 与 lock 的依赖声明：漂移了 Docker 构建直接 exit 1，
+// 而且报错只躺在构建日志里（桌面版不跑 npm ci，本地完全无感）。实测踩过：
+// package.json 写着 liquid-glass-react "0.0.1"，lock 却还停在 file:docker/vendor/…0.2.0.tgz。
+const lockRaw = JSON.parse(fs.readFileSync(path.join(ROOT, "package-lock.json"), "utf8"));
+const lockDeps = (lockRaw.packages && lockRaw.packages[""] && lockRaw.packages[""].dependencies) || {};
+const lockDrift = Object.keys(pkgRaw.dependencies || {}).filter(
+  (k) => lockDeps[k] !== pkgRaw.dependencies[k]
+);
+checkTrue(
+  "package-lock.json 与 package.json 的 dependencies 声明一致（npm ci 严格校验，漂移会让构建直接失败）",
+  Object.keys(pkgRaw.dependencies || {}).length > 0 && lockDrift.length === 0,
+  lockDrift.length
+    ? `漂移: ${lockDrift.map((k) => `${k} lock=${lockDeps[k]} vs pkg=${pkgRaw.dependencies[k]}`).join("; ")}`
+    : ""
+);
 
 /* ============ 汇总 ============ */
 console.log(`\n${"=".repeat(46)}`);

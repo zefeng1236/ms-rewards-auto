@@ -27,10 +27,15 @@ ARG NPM_REGISTRY=https://registry.npmmirror.com
 WORKDIR /build
 
 # 依赖层：只依赖 package*.json，源码改动不会触发重新 npm ci
-# @ttqtt/liquid-glass-react 上游已从 npm 撤版（0.2.0 各镜像站 404），
-# 依赖改为 file:docker/vendor/…tgz 离线包，npm ci 需要该 tarball 在上下文里
+#
+# ⚠️ npm ci 会**严格校验** package.json 与 package-lock.json 是否一致：两者一旦漂移
+#    （哪怕只是一个依赖的 spec 不同），这里会直接 exit 1，而且报错只在构建日志里，
+#    前端产物根本没生成。改依赖后务必重新跑 `npm install --package-lock-only` 同步 lock。
+#
+#    历史上踩过：package.json 写着 "@ttqtt/liquid-glass-react": "0.0.1"，
+#    而 lock 还停在 file:docker/vendor/…0.2.0.tgz，容器构建一直失败。
+#    0.2.0 上游已撤版，项目现在直接用 npm 上的 0.0.1（不再需要 vendor tarball）。
 COPY package.json package-lock.json ./
-COPY docker/vendor ./docker/vendor
 # --ignore-scripts：跳过 electron / playwright 的 postinstall 下载（构建前端用不到）
 RUN npm config set registry "$NPM_REGISTRY" \
     && npm ci --no-audit --no-fund --ignore-scripts \
@@ -99,9 +104,8 @@ RUN set -eux; \
 WORKDIR /app
 
 # ③ 后端依赖层：单独一层，源码变动不会重装依赖
-#    liquid-glass-react 为 file: 离线依赖（见阶段一注释），需带上 vendor tarball
+#    （npm ci 严格校验 package.json 与 lock 的一致性，详见阶段一注释）
 COPY package.json package-lock.json ./
-COPY docker/vendor ./docker/vendor
 RUN npm config set registry "$NPM_REGISTRY" \
     && npm ci --omit=dev --no-audit --no-fund --ignore-scripts \
     && npm cache clean --force
