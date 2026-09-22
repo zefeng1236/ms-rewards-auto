@@ -134,6 +134,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         libxfont2 \
         libxshmfence1 \
         libxtst6 \
+        libunwind8 \
+        ssl-cert \
         libyaml-tiny-perl \
         libswitch-perl \
         libtry-tiny-perl \

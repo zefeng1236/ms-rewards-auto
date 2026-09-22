@@ -1685,12 +1685,14 @@ const novncSrc = fs.readFileSync(path.join(ROOT, "docker", "novnc-stack.sh"), "u
 const entrySrc = fs.readFileSync(path.join(ROOT, "docker", "entrypoint.sh"), "utf8");
 const kasmYamlSrc = fs.readFileSync(path.join(ROOT, "docker", "kasmvnc.yaml"), "utf8");
 checkTrue(
-  "镜像装 KasmVNC（必备 deb 下载 + Xkasmvnc 可执行）",
+  "镜像装 KasmVNC（deb 下载、关键依赖和 Xkasmvnc 可执行）",
   /Xkasmvnc/.test(dockerfileSrc) &&
     /curl [^\n]*-fsSL -o \/tmp\/kasmvnc\.deb/.test(dockerfileSrc) &&
     /kasmvncserver_bookworm/.test(dockerfileSrc) &&
     /KASMVNC_PROXY/.test(dockerfileSrc) &&
-    /\"\$\{KASMVNC_PROXY\}\$\{KASMVNC_URL\}\"/.test(dockerfileSrc)
+    /\"\$\{KASMVNC_PROXY\}\$\{KASMVNC_URL\}\"/.test(dockerfileSrc) &&
+    /^\s*libunwind8\s*\\/m.test(dockerfileSrc) &&
+    /^\s*ssl-cert\s*\\/m.test(dockerfileSrc)
 );
 checkTrue(
   "Dockerfile apt 安装层在清理列表后正确续行（避免 ln 被解析成 Docker 指令）",
