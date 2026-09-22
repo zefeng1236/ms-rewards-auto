@@ -1270,10 +1270,10 @@ checkTrue(
 
 // —— 下载镜像源可配置（0.10.1）——
 checkTrue(
-  "镜像源有标识→前缀映射与解析器：auto 走全链，指定则只走那一个节点",
+  "镜像源有标识→前缀映射与解析器：auto 走实测排序的全链，指定则只走那一个节点",
   /const MIRROR_KEYS = \{/.test(fpSrc) &&
-    /function resolveMirrors/.test(fpSrc) &&
-    /return p === null \? MIRROR_PREFIXES\.slice\(\) : \[p\]/.test(fpSrc)
+    /async function resolveMirrors/.test(fpSrc) &&
+    /return p === null \? await mirrorsByLatency\(\) : \[p\]/.test(fpSrc)
 );
 checkTrue(
   "镜像源穿透到下载与探测（downloadAsset / probeTotal 都按配置解析镜像链）",
@@ -1284,7 +1284,25 @@ checkTrue(
 checkTrue(
   "未知或空的镜像标识一律退回自动链（脏配置不能把下载卡死）",
   /hasOwnProperty\.call\(MIRROR_KEYS, key\)/.test(fpSrc) &&
-    /return MIRROR_PREFIXES\.slice\(\);/.test(fpSrc)
+    /return await mirrorsByLatency\(\);/.test(fpSrc)
+);
+checkTrue(
+  "自动模式按实测延迟排序整条链（含直连 direct），不是写死顺序",
+  /async function mirrorsByLatency/.test(fpSrc) &&
+    /lat = await mirrorLatency\(\)/.test(fpSrc) &&
+    /MIRROR_PREFIXES\.slice\(\)\.sort\(\(a, b\) => rank\(a\) - rank\(b\)\)/.test(fpSrc) &&
+    // 直连的前缀是空串，反查表必须原样包含它（一旦被 filter 掉，
+    // 直连就查不到延迟 → 永远排末尾，海外用户明明直连最快却轮不到）
+    /Object\.entries\(MIRROR_KEYS\)\.map\(\(\[k, v\]\) => \[v, k\]\)/.test(fpSrc)
+);
+checkTrue(
+  "测不到的节点排在末尾而不是被丢弃（全部超时时等价于旧的固定顺序）",
+  /MAX_SAFE_INTEGER/.test(fpSrc) && /stable|稳定排序/.test(fpSrc)
+);
+checkTrue(
+  "resolveMirrors 转 async 后调用点都已 await（漏一个会拿到 Promise 而非数组）",
+  /await resolveMirrors\(mirror\)/.test(fpSrc) &&
+    (fpSrc.match(/await resolveMirrors\(mirror\)/g) || []).length >= 2
 );
 checkTrue(
   "主进程两处下载都把配置的镜像源传进去（IPC 安装 + 首次运行自动下载）",
@@ -1639,6 +1657,31 @@ checkTrue(
 checkTrue(
   "compose 镜像 tag 与 package.json 版本一致",
   new RegExp(`image: ms-rewards-auto:${String(pkgRaw.version).replace(/\./g, "\\.")}(\\s|$)`).test(composeSrc)
+);
+// 虚拟桌面必须放得下浏览器窗口：以前 1280x800 配写死的 1366x768 视口，
+// 窗口两个维度都超出桌面，noVNC 里只剩中间一块，微软登录页按钮点不到
+// —— 表现是「输入了密码但点登录没反应」，极难往分辨率上想。
+const dispW = Number((composeSrc.match(/DISPLAY_WIDTH:\s*(\d+)/) || [])[1] || 0);
+const dispH = Number((composeSrc.match(/DISPLAY_HEIGHT:\s*(\d+)/) || [])[1] || 0);
+checkTrue(
+  `noVNC 虚拟桌面分辨率 ≥ 1920x1080（当前 ${dispW}x${dispH}）`,
+  dispW >= 1920 && dispH >= 1080
+);
+checkTrue(
+  "有头模式不写死视口 + 窗口最大化（写死会让窗口超出虚拟桌面，页面显示不全）",
+  /viewport:\s*headless\s*\?\s*\{[^}]*\}\s*:\s*null/.test(browserSrcFp) &&
+    /--start-maximized/.test(browserSrcFp)
+);
+const dashboardSrc = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "views", "Dashboard.tsx"),
+  "utf8"
+);
+checkTrue(
+  "Web 版「授权登录」先弹远程桌面引导（仪表盘与账户详情页两处都要有）",
+  /WebLoginModal/.test(dashboardSrc) &&
+    /WebLoginModal/.test(detailSrc) &&
+    /onClick=\{onLoginClick\}/.test(detailSrc) &&
+    /setLoginConfirm\(true\)/.test(detailSrc)
 );
 // npm ci 会严格校验 package.json 与 lock 的依赖声明：漂移了 Docker 构建直接 exit 1，
 // 而且报错只躺在构建日志里（桌面版不跑 npm ci，本地完全无感）。实测踩过：

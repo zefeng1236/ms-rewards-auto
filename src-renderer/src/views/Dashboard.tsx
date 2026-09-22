@@ -1,9 +1,10 @@
 import { useMemo, useState } from "react";
 import { GlassButton, GlassSwitch } from "@ttqtt/liquid-glass-react";
-import { AppCard, Empty, Input, Modal, Table, Tag, toast, type TableColumn } from "../components/liquidGlassCompat";
+import { AppCard, Empty, Input, Table, Tag, toast, type TableColumn } from "../components/liquidGlassCompat";
 import { api, IS_WEB } from "../api/ipc";
 import { useAppState } from "../hooks/useAppState";
 import { AskTextModal } from "../components/AskTextModal";
+import { WebLoginModal } from "../components/WebLoginModal";
 import type { Account, AccountRunStatus } from "../types";
 
 /** 千分位格式化（仪表盘大数字每三位加逗号；强制 en-US 分组，不随系统 locale 变化） */
@@ -449,32 +450,12 @@ export function Dashboard({ onOpenAccount }: { onOpenAccount?: (id: string) => v
         onClose={() => setAddOpen(false)}
       />
 
-      <Modal
+      <WebLoginModal
         open={!!loginConfirm}
-        onOpenChange={(o) => { if (!o) setLoginConfirm(null); }}
-        title="登录说明"
-        size="md"
-        footer={
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <GlassButton variant="plain" controlSize="small" onClick={() => setLoginConfirm(null)}>
-              取消登录
-            </GlassButton>
-            <GlassButton variant="glassProminent" controlSize="small" onClick={onLoginConfirm}>
-              打开远程桌面
-            </GlassButton>
-          </div>
-        }
-      >
-        <div style={{ lineHeight: 1.8 }}>
-          <p>登录将在 <b>服务器浏览器</b> 中完成，请按以下步骤操作：</p>
-          <ol style={{ paddingLeft: 20, margin: "8px 0" }}>
-            <li>点击下方「打开远程桌面」按钮，会在新标签页打开 noVNC</li>
-            <li>在 noVNC 页面中点击 <b>「连接」</b> 按钮进入远程桌面</li>
-            <li>在远程桌面的浏览器中完成微软账号授权登录</li>
-            <li>登录成功后远程桌面会显示「登录已完成」，返回本页面即可</li>
-          </ol>
-        </div>
-      </Modal>
+        accountName={loginConfirm?.name}
+        onCancel={() => setLoginConfirm(null)}
+        onConfirm={onLoginConfirm}
+      />
     </>
   );
 }

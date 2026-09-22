@@ -18,7 +18,7 @@ const FALLBACK: FpCfg = {
   seed: 0,
   brand: "Chrome",
   hardwareConcurrency: 0,
-  mirror: "cdn.gh-proxy.org",
+  mirror: "auto",
 };
 
 const BRAND_OPTIONS = [

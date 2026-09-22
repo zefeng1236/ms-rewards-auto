@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GlassButton, GlassSwitch, GlassSurface } from "@ttqtt/liquid-glass-react";
 import { AppCard, Empty, Modal, Select, Tag, toast } from "../components/liquidGlassCompat";
-import { api } from "../api/ipc";
+import { api, IS_WEB } from "../api/ipc";
 import { useAppState } from "../hooks/useAppState";
 import { SettingsForm } from "../components/SettingsForm";
 import { AskTextModal } from "../components/AskTextModal";
+import { WebLoginModal } from "../components/WebLoginModal";
 import { mergeDeep } from "../utils";
 import type { AccountLogEntry, AppConfig, DeepPartial, GoalItem } from "../types";
 
@@ -279,6 +280,26 @@ export function AccountDetail({
     [account, refreshAccounts]
   );
 
+  // Web/Docker 版：容器里的浏览器显示在 noVNC 虚拟桌面上，用户自己的屏幕看不到，
+  // 所以点「授权登录」要先弹说明、让他主动打开远程桌面，再真正发起登录 ——
+  // 否则点了毫无反应，只能干等到浏览器超时被回收。与仪表盘共用同一个弹窗组件。
+  const [loginConfirm, setLoginConfirm] = useState(false);
+
+  const onLoginClick = () => {
+    if (IS_WEB) {
+      setLoginConfirm(true);
+      return;
+    }
+    void onLogin();
+  };
+
+  const onLoginConfirm = () => {
+    setLoginConfirm(false);
+    const novncUrl = `${location.protocol}//${location.hostname}:6080/vnc.html`;
+    window.open(novncUrl, "_blank");
+    void onLogin();
+  };
+
   const onLogin = async () => {
     if (!account) return;
     setBusy("login");
@@ -446,7 +467,7 @@ export function AccountDetail({
 
           <div style={{ display: "flex", gap: 8 }}>
             <GlassButton variant="glassProminent" controlSize="small"
-              onClick={onLogin}
+              onClick={onLoginClick}
               loading={busy === "login"}
               disabled={running}
             >
@@ -665,6 +686,13 @@ export function AccountDetail({
         okText="保存"
         onOk={onRename}
         onClose={() => setRenameOpen(false)}
+      />
+
+      <WebLoginModal
+        open={loginConfirm}
+        accountName={account.name}
+        onCancel={() => setLoginConfirm(false)}
+        onConfirm={onLoginConfirm}
       />
     </>
   );

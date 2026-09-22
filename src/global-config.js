@@ -75,7 +75,7 @@ const GLOBAL_DEFAULTS = {
       seed: 0,         // 指纹种子（32 位整数）；0 = 按账户 ID 自动派生，保证同账号长期稳定
       brand: "Chrome", // UA / Client Hints 声明的品牌：Chrome | Edge | Opera | Vivaldi
       hardwareConcurrency: 0, // CPU 核数；0 = 由指纹种子生成
-      mirror: "cdn.gh-proxy.org", // 下载镜像源：默认 cdn.gh-proxy.org；也可 auto=按顺序尝试全部，或指定其它节点 / direct 直连
+      mirror: "auto", // 下载镜像源：auto=实测各节点延迟选最快的（推荐）；也可指定单个节点或 direct 直连
     },
   },
   // 积分目标。可配多个，按账户总积分余额判断，可选设置奖品与详情页显示。

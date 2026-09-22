@@ -172,9 +172,15 @@ async function openContext(ctx, headless, opts) {
     `使用 ${isFp ? "指纹浏览器" : "Chromium"}: ${executable} (headless=${headless}${isFp ? `, seed=${fpSeed}` : ""})`
   );
 
+  // 视口策略分两档（踩过坑的地方）：
+  //   headless  → 固定 1366x768，任务流程依赖稳定的窗口尺寸。
+  //   headful   → 不限制视口 + 窗口最大化，跟随虚拟桌面大小。
+  // 以前 headful 也写死 1366x768，而容器虚拟桌面只有 1280x800，窗口两个维度
+  // 都超出桌面 —— noVNC 里只看得到中间一小块，微软登录页的按钮落在视口外，
+  // 表现为「输入了密码但点登录没反应」（其实是按钮根本点不到）。
   const launchOpts = {
     headless,
-    viewport: { width: 1366, height: 768 },
+    viewport: headless ? { width: 1366, height: 768 } : null,
     locale: "zh-CN",
     args: [
       "--disable-blink-features=AutomationControlled",
@@ -184,6 +190,8 @@ async function openContext(ctx, headless, opts) {
       "--no-default-browser-check",
       "--disable-sync",
       ...extraChromiumArgs(),
+      // 有头模式（noVNC 手动登录）：窗口撑满虚拟桌面
+      ...(headless ? [] : ["--start-maximized"]),
     ],
   };
   if (isFp) {

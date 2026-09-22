@@ -55,7 +55,7 @@ const DEFAULT_CONFIG: AppConfig = {
   },
   browser: {
     // mirror 默认值必须与 src/config.js / src/global-config.js 一致（selfcheck 有跨文件守卫）
-    fingerprint: { enable: true, seed: 0, brand: "Chrome", hardwareConcurrency: 0, mirror: "cdn.gh-proxy.org" },
+    fingerprint: { enable: true, seed: 0, brand: "Chrome", hardwareConcurrency: 0, mirror: "auto" },
   },
 };
 

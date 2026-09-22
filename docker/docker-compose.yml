@@ -101,8 +101,11 @@ services:
     container_name: ms-rewards-novnc
     restart: unless-stopped
     environment:
-      DISPLAY_WIDTH: 1280
-      DISPLAY_HEIGHT: 800
+      # 虚拟桌面分辨率。必须 ≥ 浏览器窗口尺寸，否则 noVNC 里只看得到中间一块、
+      # 微软登录页的按钮落在视口外点不到（表现为「点了登录没反应」）。
+      # 1920x1080 是稳妥值：浏览器 --start-maximized 后内容区约 1920x995。
+      DISPLAY_WIDTH: 1920
+      DISPLAY_HEIGHT: 1080
       RUN_XTERM: "no"
     ports:
       - "6080:8080"

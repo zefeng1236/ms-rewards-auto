@@ -145,6 +145,24 @@ export function Sidebar({
   const [fp, setFp] = useState<FingerprintStatus | null>(null);
   const [fpProg, setFpProg] = useState<InstallProgress | null>(null);
 
+  // Web 版的「退出登录」只在真的存在登录态时才有意义。
+  // 保险库没设密码时服务端 needLogin=false、根本不下发会话，此时点按钮
+  // 只会把页面刷新一下 —— 看上去就是「点了没反应」。与其让它无效，不如不显示。
+  const [webLoggedIn, setWebLoggedIn] = useState(false);
+  useEffect(() => {
+    if (!IS_WEB) return;
+    let alive = true;
+    api
+      .getVaultStatus()
+      .then((s) => {
+        if (alive) setWebLoggedIn(!!s && !!s.configured);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   /* 滑动高亮胶囊：量取当前项在列表里的位置，transform 过去（首帧不播动画） */
   const listRef = useRef<HTMLElement | null>(null);
   const itemRefs = useRef(new Map<string, HTMLButtonElement>());
@@ -430,11 +448,12 @@ export function Sidebar({
           </GlassButton>
         )}
 
-        {IS_WEB && (
+        {IS_WEB && webLoggedIn && (
           <GlassButton variant="plain" controlSize="small"
             title="仅退出当前浏览器的登录，后台定时任务继续运行"
             onClick={async () => {
               await webLogout();
+              toast.success("已退出登录，正在返回登录页…");
               window.location.reload();
             }}
           >

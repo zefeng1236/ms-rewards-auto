@@ -51,8 +51,9 @@ const PINNED_VERSION = "148.0.7778.215";
  *   gh-proxy.com 6.26 MB/s > v4.gh-proxy.org 1.68（官方标「推荐」）
  *   > cdn.gh-proxy.org 0.99（Fastly）> gh-proxy.org 0.24
  *   > axisnow 0.03 > v6（IPv6 线路，本机没测出数据，留给 v6 网络的用户）
- * 节点速度随时间波动，这个顺序只是「当前更好的猜测」，真正的保障是
- * 失败自动换下一个 + 空闲超时 + 两轮重试。
+ * 节点速度随时间波动，且每个用户所在网络完全不同，所以**这个顺序只是保底**：
+ * auto 模式会先实测各节点延迟再重排（见 mirrorsByLatency），这里只决定
+ * 「同分/全部测不到时」的先后。真正的保障始终是失败自动换下一个 + 空闲超时 + 两轮重试。
  */
 const MIRROR_PREFIXES = [
   "https://gh-proxy.com/",
@@ -85,8 +86,8 @@ const MIRROR_KEYS = {
 
 /** 供界面下拉展示的镜像源选项（顺序即自动链的尝试顺序） */
 const MIRROR_OPTIONS = [
-  { value: "auto", label: "自动（按顺序尝试全部）" },
-  { value: "cdn.gh-proxy.org", label: "cdn.gh-proxy.org（默认 · Fastly）" },
+  { value: "auto", label: "自动（测速选最快 · 推荐）" },
+  { value: "cdn.gh-proxy.org", label: "cdn.gh-proxy.org（Fastly）" },
   { value: "gh-proxy.com", label: "gh-proxy.com" },
   { value: "v4.gh-proxy.org", label: "v4.gh-proxy.org（官方推荐）" },
   { value: "gh-proxy.org", label: "gh-proxy.org" },
@@ -98,15 +99,15 @@ const MIRROR_OPTIONS = [
 /**
  * 默认镜像源：配置缺失/为空/写了未知值时都退回它。
  *
- * 2026-09-22 起默认是 cdn.gh-proxy.org 单个节点，而不是 auto（按序试全部）。
- * 理由：auto 链的第一位是 gh-proxy.com，它挂掉时每次下载都要先吃一遍它的
- * 连接超时才轮到后面的节点；而 cdn 是实测稳定可用的 CDN 节点，直接命中更快。
- * 用户仍可在下拉里改回 auto 或任选其它节点 —— 这里只是「缺省值」。
+ * = "auto"，即**先实测各节点延迟，最快的排最前，失败自动顺着链往下回落**。
+ * 不写死某个节点：每个用户的运营商/地域不同（实测过同一时刻这里 cdn 只有
+ * 0.94 MB/s 而 axisnow 有 11.31，海外用户则可能直连最快），任何写死的默认值
+ * 都只对写下它的那一刻那台机器成立。
  *
  * ⚠️ 改这个值必须同步 src/config.js 与 src/global-config.js 的
  * browser.fingerprint.mirror 默认值（selfcheck 有跨文件一致性守卫）。
  */
-const DEFAULT_MIRROR = "cdn.gh-proxy.org";
+const DEFAULT_MIRROR = "auto";
 
 /**
  * 各镜像节点的连通延迟（毫秒）。
@@ -160,20 +161,52 @@ async function mirrorOptionsWithLatency() {
   });
 }
 
+/** 前缀 → 镜像标识（测速结果是以 key 为索引的，排序时要反查回来） */
+const PREFIX_TO_KEY = Object.fromEntries(
+  Object.entries(MIRROR_KEYS).map(([k, v]) => [v, k])
+);
+
+/**
+ * 按实测延迟升序排出的完整镜像链。
+ *
+ * 「自动」不再是「按写死的顺序挨个试」，而是先探一圈延迟、最快的排最前。
+ * 每个用户的运营商和地域都不一样（有人直连 GitHub 反而最快），写死的顺序
+ * 只对写下它的那一刻那台机器成立；实测则永远贴合当下这台机器。
+ *
+ * 注意返回的是**完整链**而不只是最快的那一个：最快的节点也可能在下载中途
+ * 挂掉，排好序的链天然就是回落顺序，不用再写一套失败重试。
+ * 探测不到的一律排到末尾（保留原顺序），全部超时时等价于旧的固定顺序。
+ */
+async function mirrorsByLatency() {
+  let lat = {};
+  try {
+    lat = await mirrorLatency();
+  } catch {
+    lat = {};
+  }
+  const rank = (prefix) => {
+    const ms = lat[PREFIX_TO_KEY[prefix]];
+    return ms == null ? Number.MAX_SAFE_INTEGER : ms;
+  };
+  // Array.prototype.sort 在 V8 是稳定排序 → 同分（含都测不到）保持原顺序
+  return MIRROR_PREFIXES.slice().sort((a, b) => rank(a) - rank(b));
+}
+
 /**
  * 把配置里的镜像标识解析成「本次要尝试的前缀数组」。
  *
  * 指定某个节点时就只用那一个（用户既然明确选了，就别再让自动链里的慢节点掺和）；
- * auto / 空 / 未知值一律退回完整链 —— 未知值多半是手改配置写错的，
- * 静默当 auto 处理比直接报错更符合「可选增强不该卡住主流程」的原则。
+ * auto / 空 / 未知值一律走 mirrorsByLatency()（实测排序的完整链）—— 未知值
+ * 多半是手改配置写错的，静默当自动处理比直接报错更符合
+ * 「可选增强不该卡住主流程」的原则。
  */
-function resolveMirrors(mirror) {
+async function resolveMirrors(mirror) {
   const key = String(mirror == null ? "" : mirror).trim();
   if (key && Object.prototype.hasOwnProperty.call(MIRROR_KEYS, key)) {
     const p = MIRROR_KEYS[key];
-    return p === null ? MIRROR_PREFIXES.slice() : [p];
+    return p === null ? await mirrorsByLatency() : [p];
   }
-  return MIRROR_PREFIXES.slice();
+  return await mirrorsByLatency();
 }
 
 /** 低于这个字节数视为「镜像返回了错误页」而不是真文件 */
@@ -466,7 +499,7 @@ function fmtEta(sec) {
  *   调用方跳过长度校验）；sha256=十六进制小写（API 不可达时为 null，退回长度校验）
  */
 async function probeTotal(rawUrl, version, mirror) {
-  const mirrors = resolveMirrors(mirror);
+  const mirrors = await resolveMirrors(mirror);
 
   // ① HEAD：直连 GitHub 会如实返回 content-length；经 gh-proxy 时拿不到（实测为 null）
   const headTotal = async () => {
@@ -702,7 +735,7 @@ async function downloadAsset(version, onProgress, mirror) {
   const asset = assetName(version);
   const raw = releaseUrl(version);
   if (!asset || !raw) throw new Error(`当前平台（${process.platform}）不提供指纹浏览器`);
-  const mirrors = resolveMirrors(mirror);
+  const mirrors = await resolveMirrors(mirror);
 
   const dir = downloadDir();
   fs.mkdirSync(dir, { recursive: true });
@@ -870,7 +903,7 @@ async function install(opts) {
   // 空 / 缺失 → 默认节点（DEFAULT_MIRROR）；未知值仍由 resolveMirrors 退回完整链，
   // 那才是「配置写错了也不该卡住下载」的安全兜底。
   const mirrorKey = String(o.mirror == null ? "" : o.mirror).trim() || DEFAULT_MIRROR;
-  const mirrorLabel = mirrorKey === "auto" ? "gh-proxy 镜像链" : `镜像 ${mirrorKey}`;
+  const mirrorLabel = mirrorKey === "auto" ? "自动测速（选最快节点）" : `指定镜像 ${mirrorKey}`;
   report({ message: `准备下载指纹浏览器 ${version}（约 181MB，${mirrorLabel}）`, pct: 0 });
   let file;
   try {
