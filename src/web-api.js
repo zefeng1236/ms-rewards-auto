@@ -432,17 +432,21 @@ function createApi({ emit }) {
       // 容器内 Chromium 由镜像 apt 安装，无需再下载
       return { ok: browser.isChromiumReady(), method: "preinstalled", executable: browser.chromiumExecutablePath() };
     },
-    fingerprintStatus() {
+    async fingerprintStatus() {
       return fpBrowser.status();
     },
     async installFingerprint(opts) {
-      const r = await fpBrowser.install({ force: !!(opts && opts.force) });
-      emit("fingerprint-status", fpBrowser.status());
+      const r = await fpBrowser.install({
+        force: !!(opts && opts.force),
+        // 与桌面端一致：镜像源由全局配置决定
+        mirror: globalConfig.get()?.browser?.fingerprint?.mirror,
+      });
+      emit("fingerprint-status", await fpBrowser.status());
       return r;
     },
-    uninstallFingerprint() {
+    async uninstallFingerprint() {
       const r = fpBrowser.uninstall();
-      emit("fingerprint-status", fpBrowser.status());
+      emit("fingerprint-status", await fpBrowser.status());
       return r;
     },
     // 「检查更新」只查询不下载（0.9.4.18 修：此前按钮直连 install(force) 会重下 181MB）

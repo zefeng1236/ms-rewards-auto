@@ -5,7 +5,7 @@ import { api, IS_WEB } from "../api/ipc";
 import { saveRecoveryKeyToBrowser } from "../api/web";
 import { PasswordInput } from "../components/PasswordInput";
 import { evaluatePassword, STRENGTH_COLORS } from "../utils/passwordStrength";
-import type { SetupState } from "../types";
+import type { FingerprintStatus, InstallProgress, SetupState } from "../types";
 
 /** 恢复密钥 txt 的内容（含使用说明，避免用户只存到一串字符不知用途） */
 function buildRecoveryText(key: string): string {
@@ -26,16 +26,17 @@ function buildRecoveryText(key: string): string {
 /**
  * 首次启动向导。
  *
- * 只在用户第一次打开软件时出现（setup.json 的 done 为 false 时），走完五步后
- * 写入 done=true，之后不再弹出。五页依次是：
+ * 只在用户第一次打开软件时出现（setup.json 的 done 为 false 时），走完六步后
+ * 写入 done=true，之后不再弹出。六页依次是：
  *   1. 欢迎 + 选择语言（当前仅简体中文可用，其余语种标注「暂未开发」）
  *   2. 隐私政策 / 服务条款 / 免责声明（多文档切换 + 必须勾选同意）
  *   3. 非官方授权声明与使用风险告知（3 秒倒计时后才能确认）
  *   4. 加密保险库（设置密码；启用后登录态只以密文落盘，并下发恢复密钥）
  *   5. 个性化初始设置（液态玻璃、开机自启）
+ *   6. 指纹浏览器（可选增强，约 181MB；不启用可直接跳过，启用则需等下载完成）
  */
 
-const STEPS = ["欢迎", "协议", "声明", "加密", "个性化"];
+const STEPS = ["欢迎", "协议", "声明", "加密", "个性化", "指纹"];
 
 /** 语言选项。ready=false 的只做占位展示，标注用该语言自己写的「暂未开发」 */
 const LANGS: { key: string; name: string; sub: string; ready: boolean; tip: string }[] = [
@@ -117,6 +118,10 @@ const RISKS: string[] = [
 export function SetupWizard({ onDone }: { onDone: () => void }) {
   const [state, setState] = useState<SetupState | null>(null);
   const [page, setPage] = useState(0);
+  // 第 6 页（指纹浏览器）能否放行。状态由页内上报 —— 页脚按钮据此禁用，
+  // 避免页脚与页内流程各判各的（下载进度归页内，放行条件归页脚，必须同源）。
+  // 初值 false：启用且尚未下载完成时不允许点「开始使用」。
+  const [fpCanProceed, setFpCanProceed] = useState(false);
 
   useEffect(() => {
     api.getSetup().then(setState).catch(() => setState(null));
@@ -170,6 +175,7 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
               onChange={(p) => void patch(p)}
             />
           )}
+          {page === 5 && <PageFingerprint onCanProceed={setFpCanProceed} />}
         </div>
 
         <footer className="wizard-foot">
@@ -197,7 +203,18 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
               这里只放提示，避免页脚按钮与页内流程状态不同步 */}
           {page === 3 && <span className="wizard-note">请在上方完成加密设置</span>}
           {page === 4 && (
-            <GlassButton variant="glassProminent" controlSize="small" onClick={finish}>
+            <GlassButton variant="glassProminent" controlSize="small" onClick={() => setPage(5)}>
+              下一步 →
+            </GlassButton>
+          )}
+          {/* 末页：启用指纹浏览器时必须等下载完成（fpCanProceed 由页内上报） */}
+          {page === 5 && (
+            <GlassButton
+              variant="glassProminent"
+              controlSize="small"
+              disabled={!fpCanProceed}
+              onClick={finish}
+            >
               开始使用 ✓
             </GlassButton>
           )}
@@ -770,6 +787,209 @@ function PagePersonalize({
             若你只是偶尔用一次，建议关闭。
           </span>
         </button>
+      )}
+    </div>
+  );
+}
+
+/* ---------------- 第 6 页：指纹浏览器（可选，需下载约 181MB） ---------------- */
+
+/**
+ * 向导末页：指纹浏览器（可选增强）。
+ *
+ * 交互按用户要求重做：
+ *   1. 最上面是「跳过」复选框 —— 想省事的人一眼就能勾掉，不必在两张大卡片里做选择；
+ *   2. 勾了跳过 → 下方内容整体置灰禁用，不下载，直接放行；
+ *   3. 不跳过 → 内容可用：先选加速源（下拉里带各节点实测延迟），再点「立即下载」；
+ *   4. 下载完成（就绪）后才放行「开始使用」。
+ *
+ * 放行规则由页内计算后上报给父组件（页脚据此禁用「开始使用」），保证页内与页脚同源：
+ *   - 跳过 / 平台不支持（macOS）→ 放行，不能把人卡死在最后一页
+ *   - 未跳过 → 必须已安装就绪
+ *
+ * 下载是后台的：点按钮后由主进程跑，进度通过 install-progress 事件实时回推，界面不阻塞。
+ */
+function PageFingerprint({ onCanProceed }: { onCanProceed: (v: boolean) => void }) {
+  // enable=false 等价于「跳过」：写进全局配置后与设置页、主进程回落逻辑同一口径
+  const [enable, setEnable] = useState(true);
+  const [mirror, setMirror] = useState("auto");
+  const [st, setSt] = useState<FingerprintStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<InstallProgress | null>(null);
+  const [err, setErr] = useState("");
+
+  // 初始「是否跳过 / 加速源」跟随全局配置（默认启用 + 自动），与设置页口径一致
+  useEffect(() => {
+    api
+      .getGlobalConfig()
+      .then((c) => {
+        const fp = c?.browser?.fingerprint;
+        if (fp && typeof fp.enable === "boolean") setEnable(fp.enable);
+        if (fp && typeof fp.mirror === "string" && fp.mirror) setMirror(fp.mirror);
+      })
+      .catch(() => {
+        /* 读不到就保持默认 */
+      });
+  }, []);
+
+  useEffect(() => {
+    api
+      .fingerprintStatus()
+      .then(setSt)
+      .catch(() => setSt(null));
+  }, []);
+
+  useEffect(() => {
+    api.onFingerprintStatus((v) => setSt(v));
+    const off = api.onInstallProgress((p) => setProgress(p));
+    return () => {
+      if (off) off();
+    };
+  }, []);
+
+  const supported = st ? st.supported : true;
+  const skip = !enable;
+  // 跳过 / 平台不支持 → 放行；否则必须已安装就绪
+  const canProceed = skip || !supported || (!!st && st.ready);
+
+  useEffect(() => {
+    onCanProceed(canProceed);
+  }, [canProceed, onCanProceed]);
+
+  // 勾选/取消「跳过」：写全局配置的 enable（跳过 = 不启用），与设置页同源
+  const choose = async (v: boolean) => {
+    setEnable(v);
+    setErr("");
+    try {
+      await api.setGlobalConfig({ browser: { fingerprint: { enable: v } } });
+    } catch {
+      /* 写不进去也不影响本页放行判断 */
+    }
+  };
+
+  // 选加速源：即时写全局配置，主进程两处安装入口都读它（无需随安装请求再传一遍）
+  const pickMirror = async (v: string) => {
+    setMirror(v);
+    try {
+      await api.setGlobalConfig({ browser: { fingerprint: { mirror: v } } });
+    } catch {
+      /* 写不进去时安装仍会走 auto 镜像链 */
+    }
+  };
+
+  const onInstall = async () => {
+    setBusy(true);
+    setErr("");
+    setProgress({ pct: 0 });
+    try {
+      const r = await api.installFingerprint({ force: false });
+      if (r.ok) {
+        toast.success(r.skipped ? "指纹浏览器已是该版本" : "指纹浏览器安装完成（已校验完整性）");
+      } else {
+        setErr(r.error || "下载失败，可换个加速源重试");
+      }
+      setSt(await api.fingerprintStatus());
+    } catch (e) {
+      setErr(String((e as Error)?.message || e));
+    } finally {
+      setBusy(false);
+      setProgress(null);
+    }
+  };
+
+  const pct = progress && typeof progress.pct === "number" ? Math.min(99, progress.pct) : 0;
+
+  return (
+    <div className="wz-page wz-fp">
+      <h2>指纹浏览器（可选增强）</h2>
+      <p className="wz-lead">
+        用 patch 过源码的 Chromium 统一生成 UA / Client Hints / 插件 / CPU 等指纹，
+        能显著降低被识别为自动化的概率。需要单独下载约 181MB，
+        <strong>不想装就在下面勾选跳过</strong>，之后随时能在「软件设置 → 指纹浏览器」里下载开启。
+      </p>
+
+      {!supported ? (
+        <div className="wz-alert">
+          <strong>当前平台暂不支持</strong>
+          <span>将继续使用普通 Chromium，不影响登录与任务，可直接进入下一步。</span>
+        </div>
+      ) : (
+        <>
+          {/* 跳过开关：勾上 → 下方内容整体置灰禁用，不下载直接放行 */}
+          <button
+            type="button"
+            className={`wz-check${skip ? " on" : ""}`}
+            data-testid="fp-skip"
+            onClick={() => void choose(skip)}
+          >
+            <span className="wz-check-box">{skip ? "✓" : ""}</span>
+            <span>跳过，不下载指纹浏览器（先用普通 Chromium）</span>
+          </button>
+
+          {/* 置灰区：跳过时保留布局但不可交互，让用户知道「这里本来可以装」 */}
+          <div className={`wz-fp-body${skip ? " is-off" : ""}`} aria-disabled={skip}>
+            <div className="wz-fp-row">
+              <label className="wz-fp-label" htmlFor="fp-mirror">
+                加速源
+              </label>
+              <select
+                id="fp-mirror"
+                className="wz-fp-sel"
+                value={mirror}
+                disabled={skip || !!st?.ready}
+                onChange={(e) => void pickMirror(e.target.value)}
+              >
+                {(st?.mirrors || [{ value: "auto", label: "自动（按顺序尝试全部）" }]).map((m) => (
+                  <option key={m.value} value={m.value}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="hint wz-fp-sel-hint">
+              括号内为各节点实测往返延迟（本次启动探测，越小越快）；「自动」会按顺序尝试全部节点并自动换源。
+            </div>
+
+            {/* 立即下载（后台执行）+ 右侧实时进度 */}
+            <div className="wz-fp-act">
+              <button
+                type="button"
+                className="wz-dl"
+                onClick={() => void onInstall()}
+                disabled={skip || busy || !!st?.ready}
+              >
+                {st?.ready ? "已安装 ✓" : busy ? "下载中…" : "立即下载"}
+              </button>
+              <div className="wz-fp-prog">
+                {busy ? (
+                  <>
+                    <div className="fp-bar">
+                      <div className="fp-bar-fill" style={{ width: `${pct}%` }} />
+                    </div>
+                    <span className="hint" title={progress?.message || ""}>
+                      {progress?.message || `正在下载 ${pct}%`}
+                    </span>
+                  </>
+                ) : st?.ready ? (
+                  <span className="hint">✓ 已安装完成，可以进入下一步了</span>
+                ) : (
+                  <span className="hint">点击「立即下载」后台开始，完成后才能进入下一步</span>
+                )}
+              </div>
+            </div>
+
+            {err && <div className="wz-err">{err}</div>}
+          </div>
+
+          <div className="wz-alert" style={{ marginTop: 12 }}>
+            <strong>下载慢或失败？</strong>
+            <span>
+              国内直连 GitHub Releases 通常不可达，默认走 gh-proxy 镜像链、失败自动换节点。
+              也可以在上面手动指定加速源（按延迟挑）、或改直连；下载完成后会比对上游官方
+              sha256 校验完整性，不通过会自动换源重下。
+            </span>
+          </div>
+        </>
       )}
     </div>
   );

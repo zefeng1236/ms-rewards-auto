@@ -125,6 +125,8 @@ export interface AppConfig {
       brand: string;
       /** CPU 核数；0 = 由指纹种子生成 */
       hardwareConcurrency: number;
+      /** 下载镜像源：auto=按顺序尝试全部，也可指定单个节点或 direct 直连 GitHub */
+      mirror: string;
     };
   };
 }
@@ -282,6 +284,9 @@ export interface FingerprintStatus {
   pinned: string;
   installDir: string;
   downloadUrl: string | null;
+  /** 可选下载镜像源（供界面渲染下拉，由主进程下发，避免前后端各写一份）；
+   *  label 已带实测延迟后缀，latencyMs 供需要单独渲染延迟的界面用 */
+  mirrors?: { value: string; label: string; latencyMs?: number | null }[];
 }
 
 /** 「检查更新」的查询结果（只查不下载，0.9.4.18 起与安装动作分离） */

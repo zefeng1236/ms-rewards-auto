@@ -33,6 +33,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const { spawn } = require("child_process");
 const { once } = require("events");
 const logger = require("./logger");
@@ -63,8 +64,118 @@ const MIRROR_PREFIXES = [
   "",
 ];
 
+/**
+ * 镜像源标识 → URL 前缀。
+ *
+ * 配置文件里存可读标识（如 "gh-proxy.com"）而不是整条 URL：以后换域名或增删节点，
+ * 只要改这一张表，历史配置不会变成指向死链的脏值。
+ *   auto   → null，表示按 MIRROR_PREFIXES 的顺序依次尝试全部（默认，最稳）
+ *   direct → ""，直连 GitHub（国内多不可达，但海外/内网环境可能反而最快）
+ */
+const MIRROR_KEYS = {
+  auto: null,
+  "gh-proxy.com": "https://gh-proxy.com/",
+  "v4.gh-proxy.org": "https://v4.gh-proxy.org/",
+  "cdn.gh-proxy.org": "https://cdn.gh-proxy.org/",
+  "gh-proxy.org": "https://gh-proxy.org/",
+  "axisnow.gh-proxy.org": "https://axisnow.gh-proxy.org/",
+  "v6.gh-proxy.org": "https://v6.gh-proxy.org/",
+  direct: "",
+};
+
+/** 供界面下拉展示的镜像源选项（顺序即自动链的尝试顺序） */
+const MIRROR_OPTIONS = [
+  { value: "auto", label: "自动（按顺序尝试全部）" },
+  { value: "gh-proxy.com", label: "gh-proxy.com（实测最快）" },
+  { value: "v4.gh-proxy.org", label: "v4.gh-proxy.org（官方推荐）" },
+  { value: "cdn.gh-proxy.org", label: "cdn.gh-proxy.org（Fastly）" },
+  { value: "gh-proxy.org", label: "gh-proxy.org" },
+  { value: "axisnow.gh-proxy.org", label: "axisnow.gh-proxy.org" },
+  { value: "v6.gh-proxy.org", label: "v6.gh-proxy.org（IPv6 线路）" },
+  { value: "direct", label: "直连 GitHub" },
+];
+
+/**
+ * 各镜像节点的连通延迟（毫秒）。
+ *
+ * 用户要求加速源下拉里能看到延迟，选源不再靠猜。测法：对每个节点 HEAD 一次
+ * 真实的下载 URL，取「发出请求到拿到响应头」的往返耗时 —— 它同时涵盖了
+ * DNS / TLS / 代理转发，比 ping 一个域名更贴近真实下载体验。
+ * auto 不是节点（只是「按序尝试全部」的语义）不参与探测；全部并发发起，
+ * 总耗时 ≈ 最慢那个，不会拖慢 status()。
+ *
+ * 结果缓存 2 分钟：status() 会被面板/向导/侧栏多处调用，不能每次都打一圈网络。
+ */
+let latencyCache = { at: 0, map: {} };
+async function mirrorLatency() {
+  if (Date.now() - latencyCache.at < 2 * 60 * 1000) return latencyCache.map;
+  const probeUrl = releaseUrl();
+  if (!probeUrl) return {};
+  const targets = Object.entries(MIRROR_KEYS).filter(([, p]) => p !== null);
+  const entries = await Promise.all(
+    targets.map(async ([key, prefix]) => {
+      const t0 = Date.now();
+      try {
+        const res = await fetch(prefix + probeUrl, {
+          method: "HEAD",
+          redirect: "follow",
+          signal: AbortSignal.timeout(4000),
+        });
+        if (!res.ok) return [key, null];
+        return [key, Date.now() - t0];
+      } catch {
+        return [key, null];
+      }
+    })
+  );
+  const map = Object.fromEntries(entries);
+  latencyCache = { at: Date.now(), map };
+  return map;
+}
+
+/** 把延迟并进下拉选项：值保留纯 key，label 尾部追加「 · 123ms」或「 · 超时」 */
+async function mirrorOptionsWithLatency() {
+  const lat = await mirrorLatency();
+  return MIRROR_OPTIONS.map((o) => {
+    if (!(o.value in lat)) return { ...o, latencyMs: null };
+    const ms = lat[o.value];
+    return {
+      ...o,
+      latencyMs: ms,
+      label: ms == null ? `${o.label} · 超时` : `${o.label} · ${ms}ms`,
+    };
+  });
+}
+
+/**
+ * 把配置里的镜像标识解析成「本次要尝试的前缀数组」。
+ *
+ * 指定某个节点时就只用那一个（用户既然明确选了，就别再让自动链里的慢节点掺和）；
+ * auto / 空 / 未知值一律退回完整链 —— 未知值多半是手改配置写错的，
+ * 静默当 auto 处理比直接报错更符合「可选增强不该卡住主流程」的原则。
+ */
+function resolveMirrors(mirror) {
+  const key = String(mirror == null ? "" : mirror).trim();
+  if (key && Object.prototype.hasOwnProperty.call(MIRROR_KEYS, key)) {
+    const p = MIRROR_KEYS[key];
+    return p === null ? MIRROR_PREFIXES.slice() : [p];
+  }
+  return MIRROR_PREFIXES.slice();
+}
+
 /** 低于这个字节数视为「镜像返回了错误页」而不是真文件 */
 const MIN_ASSET_BYTES = 20 * 1024 * 1024;
+
+/**
+ * chrome.dll 的最小可信体积。
+ *
+ * 正常 Ungoogled Chromium 148 的 chrome.dll 约 294MB（308,093,440 字节），
+ * chrome.exe 只是 4MB 的加载器，真正的浏览器逻辑全在 chrome.dll 里。
+ * 取 64MB 作下限：足够低不会误伤未来正常版本，又足够高能拦下
+ * 「下载/解压截断到只剩零头」的坏文件（那种文件 chrome.exe 一启动就报
+ * 0xC1「不是有效的 Win32 应用程序」）。
+ */
+const MIN_DLL_BYTES = 64 * 1024 * 1024;
 
 /**
  * 空闲超时（毫秒）：超过这么久一个字节都没收到就判定连接已死。
@@ -152,13 +263,44 @@ function installedVersion() {
 /* ---------------- 可执行文件探测 ---------------- */
 
 /**
+ * 校验文件是不是「看起来有效」的 PE（DLL/EXE）。
+ *
+ * 两条判据，缺一不可：
+ *   1. 体积 >= minBytes：正常 chrome.dll 约 294MB，截断/残缺的文件会明显偏小。
+ *   2. 前 2 字节是 MZ（0x4D 0x5A）：DLL/EXE 的魔数。镜像返回的 HTML 错误页、
+ *      文本、0 字节文件都过不了这关。
+ *
+ * 只做廉价检查、不解析完整 PE 头：够在「就绪判定」入口挡住坏 DLL 即可，
+ * 真正的完整性由下载环节的权威总长校验兜底。
+ */
+function isValidPeFile(file, minBytes) {
+  try {
+    const st = fs.statSync(file);
+    if (!st.isFile()) return false;
+    if (minBytes && st.size < minBytes) return false;
+    const fd = fs.openSync(file, "r");
+    const head = Buffer.alloc(2);
+    const n = fs.readSync(fd, head, 0, 2, 0);
+    fs.closeSync(fd);
+    return n === 2 && head[0] === 0x4d && head[1] === 0x5a;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * 在解压目录里找浏览器可执行文件。
  *
  * 不写死目录名 —— 上游 ZIP 的内部目录名随版本变（chrome-win64 / ungoogled-chromium_x64…），
  * 硬编码会在某次升级后静默失效。改成广度优先找主程序：
- *   Windows: chrome.exe，且同级目录里有 chrome.dll（排除 setup.exe、crashpad 之类）
- *   Linux:   chrome / chromium / chrome-wrapper
- * 找不到强信号的就退回任意一个同名可执行文件。
+ *   Windows: chrome.exe，且同级 chrome.dll 必须是有效 PE（排除 setup.exe、crashpad 之类）
+ *   Linux:   chrome / chromium / headless_shell，同级有 crashpad handler 即视为就绪
+ * 找不到强信号的就退回任意一个同名可执行文件（仅 Linux，见下）。
+ *
+ * ⚠️ Windows 上 chrome.exe 只是加载器，浏览器本体在 chrome.dll。若 DLL 损坏，
+ * chrome.exe 一启动就报 0xC1「不是有效的 Win32 应用程序」（实测就是下载/解压
+ * 损坏的症状）。所以坏 DLL 时**不退回 weak**，而是直接判「未就绪」，让上层
+ * 静默回落普通 Chromium 并提示重新下载，别让用户面对晦涩的加载失败。
  */
 function findExecutable(root) {
   if (!root || !fs.existsSync(root)) return null;
@@ -188,14 +330,48 @@ function findExecutable(root) {
       } catch {
         continue;
       }
-      // 强信号：主程序与 chrome.dll / chrome_crashpad_handler 同级
-      const hasCore = fs.existsSync(path.join(dir, "chrome.dll")) ||
-        fs.existsSync(path.join(dir, "chrome_crashpad_handler"));
+      if (isWin) {
+        // 强信号：同级 chrome.dll 必须是有效 PE。坏 DLL 直接跳过（不进 weak），
+        // 否则会退回一个启动即崩的 chrome.exe。
+        if (isValidPeFile(path.join(dir, "chrome.dll"), MIN_DLL_BYTES)) return full;
+        continue;
+      }
+      // Linux 强信号：主程序与 chrome_crashpad_handler / chrome 同级
+      const hasCore = fs.existsSync(path.join(dir, "chrome_crashpad_handler")) ||
+        fs.existsSync(path.join(dir, "chrome"));
       if (hasCore) return full;
       weak.push(full);
     }
   }
   return weak.length ? weak[0] : null;
+}
+
+/**
+ * 解压目录里是否存在 chrome.exe（不校验 DLL 有效性）。
+ * 供安装失败时区分「完全没解出来」与「解出来了但 chrome.dll 坏」——后者通常是
+ * 下载损坏或杀毒软件把 DLL 隔离了，提示要更具体。
+ */
+function hasChromeExe(root) {
+  if (!root || !fs.existsSync(root)) return false;
+  const queue = [root];
+  while (queue.length) {
+    const dir = queue.shift();
+    let ents;
+    try {
+      ents = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const e of ents) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        queue.push(full);
+        continue;
+      }
+      if (e.isFile() && e.name.toLowerCase() === "chrome.exe") return true;
+    }
+  }
+  return false;
 }
 
 function executablePath() {
@@ -206,8 +382,8 @@ function isReady() {
   return !!executablePath();
 }
 
-/** 供 IPC / UI 展示的状态 */
-function status() {
+/** 供 IPC / UI 展示的状态（async：镜像下拉要带实测延迟，见 mirrorLatency） */
+async function status() {
   const exe = executablePath();
   return {
     supported: isSupported(),
@@ -218,6 +394,8 @@ function status() {
     pinned: PINNED_VERSION,
     installDir: installDir(),
     downloadUrl: releaseUrl(),
+    // 供界面渲染「下载镜像源」下拉（含各节点实测延迟），避免镜像清单在前后端各写一份
+    mirrors: await mirrorOptionsWithLatency(),
   };
 }
 
@@ -259,7 +437,7 @@ function fmtEta(sec) {
 }
 
 /**
- * 探测资源的权威总长度（不带 Range 的 HEAD）。
+ * 探测资源的权威元数据：总长度 + 官方 sha256。
  *
  * 为什么非要单独探一次：实测 gh-proxy 对 Range 请求返回的是**重新压缩过的分片**，
  * 它自报的 Content-Length / Content-Range 跟自己发的分片是一致的，
@@ -267,27 +445,44 @@ function fmtEta(sec) {
  * 「前 N 字节原文 + 一大坨 gzip 垃圾」，看着完整其实坏了。
  * 只有不带 Range 时拿到的总长度才可信，用它当唯一判据。
  *
- * @returns {number} 总字节数；取不到返回 0（调用方跳过该校验）
+ * sha256 来自 GitHub Releases API 资产的 `digest` 字段（官方对资产算的哈希），
+ * 是比「长度一致」强得多的完整性锚点：gh-proxy 重压缩 / 提前断流 / 中间人篡改，
+ * 只要内容有一个字节不对，哈希就对不上。
+ *
+ * @returns {{total: number, sha256: string|null}} total=总字节数（取不到为 0，
+ *   调用方跳过长度校验）；sha256=十六进制小写（API 不可达时为 null，退回长度校验）
  */
-async function probeTotal(rawUrl, version) {
+async function probeTotal(rawUrl, version, mirror) {
+  const mirrors = resolveMirrors(mirror);
+
   // ① HEAD：直连 GitHub 会如实返回 content-length；经 gh-proxy 时拿不到（实测为 null）
-  for (const prefix of MIRROR_PREFIXES) {
-    try {
-      const res = await fetch(prefix + rawUrl, {
-        method: "HEAD",
-        redirect: "follow",
-        signal: AbortSignal.timeout(8000),
-      });
-      if (!res.ok) continue;
-      const n = parseInt(res.headers.get("content-length") || "0", 10);
-      if (n > 0) return n;
-    } catch {}
-  }
-  // ② GitHub Releases API 里的资产 size —— HEAD 不可用时这是唯一可信的总长来源
-  const asset = assetName(version);
-  if (asset) {
+  const headTotal = async () => {
+    for (const prefix of mirrors) {
+      try {
+        const res = await fetch(prefix + rawUrl, {
+          method: "HEAD",
+          redirect: "follow",
+          signal: AbortSignal.timeout(8000),
+        });
+        if (!res.ok) continue;
+        const n = parseInt(res.headers.get("content-length") || "0", 10);
+        // 必须 >= MIN_ASSET_BYTES 才信：指纹浏览器包至少 181MB，镜像对 HEAD 返回
+        // 0 / 几 KB 的异常值不能当权威总长（否则 knownTotal 失真，校验基准就错了）
+        if (n >= MIN_ASSET_BYTES) return n;
+      } catch {}
+    }
+    return 0;
+  };
+
+  // ② Releases API：拿 size + 官方 sha256 digest。
+  // ⚠ 必须**独立于 HEAD 结果无条件尝试** —— 早期写法是「HEAD 成功就提前 return」，
+  // 结果 digest 永远是 null，完整性校验形同虚设（实测踩到：本地镜像 HEAD 通了，
+  // sha256 全是 null）。长度可以优先用 HEAD，哈希只能来自 API。
+  const apiMeta = async () => {
+    const asset = assetName(version);
+    if (!asset) return { total: 0, sha256: null };
     const api = `https://api.github.com/repos/${REPO}/releases/tags/${version || PINNED_VERSION}`;
-    for (const prefix of MIRROR_PREFIXES) {
+    for (const prefix of mirrors) {
       try {
         const res = await fetch(prefix + api, {
           headers: { Accept: "application/vnd.github+json" },
@@ -296,11 +491,33 @@ async function probeTotal(rawUrl, version) {
         if (!res.ok) continue;
         const j = await res.json();
         const hit = (j.assets || []).find((x) => x.name === asset);
-        if (hit && hit.size > 0) return hit.size;
+        if (hit && hit.size > 0) {
+          // digest 形如 "sha256:9ef3f4…"，剥掉算法前缀只留十六进制
+          const m = typeof hit.digest === "string" ? hit.digest.match(/^sha256:([0-9a-f]{64})$/i) : null;
+          return { total: hit.size, sha256: m ? m[1].toLowerCase() : null };
+        }
       } catch {}
     }
-  }
-  return 0;
+    return { total: 0, sha256: null };
+  };
+
+  // 两者并发：HEAD 快、API 慢，并行不额外增加等待时间
+  const [byHead, byApi] = await Promise.all([headTotal(), apiMeta()]);
+  return { total: byHead || byApi.total, sha256: byApi.sha256 };
+}
+
+/**
+ * 流式计算文件 sha256（十六进制小写）。
+ * 190MB 量级的包在 NVMe 上不到 1 秒，不值得为它开 worker。
+ */
+function sha256File(file) {
+  return new Promise((resolve, reject) => {
+    const h = crypto.createHash("sha256");
+    const rs = fs.createReadStream(file);
+    rs.on("data", (d) => h.update(d));
+    rs.on("error", reject);
+    rs.on("end", () => resolve(h.digest("hex")));
+  });
 }
 
 /**
@@ -468,19 +685,24 @@ async function pipeTo(res, dest, start, onProgress, knownTotal) {
 /**
  * 按镜像链下载，中途失败换下一个镜像并复用已下载的部分。
  */
-async function downloadAsset(version, onProgress) {
+async function downloadAsset(version, onProgress, mirror) {
   const asset = assetName(version);
   const raw = releaseUrl(version);
   if (!asset || !raw) throw new Error(`当前平台（${process.platform}）不提供指纹浏览器`);
+  const mirrors = resolveMirrors(mirror);
 
   const dir = downloadDir();
   fs.mkdirSync(dir, { recursive: true });
   const dest = path.join(dir, asset);
 
-  // 先探一次权威总长度：续传是否被接受、以及最终文件对不对，都靠它判定
-  const total = await probeTotal(raw, version);
+  // 先探一次权威元数据：续传是否被接受、最终文件对不对、以及官方 sha256，都靠它判定
+  const meta = await probeTotal(raw, version, mirror);
+  const total = meta.total;
   if (total > 0) {
     logger.info(`指纹浏览器包大小 ${fmtSize(total)}（HEAD / Releases API 探测）`);
+  }
+  if (meta.sha256) {
+    logger.info(`指纹浏览器官方 sha256 = ${meta.sha256}（Releases API digest）`);
   }
 
   let lastErr = null;
@@ -492,7 +714,7 @@ async function downloadAsset(version, onProgress) {
         fs.rmSync(dest, { force: true });
       } catch {}
     }
-  for (const prefix of MIRROR_PREFIXES) {
+  for (const prefix of mirrors) {
     const label = prefix ? prefix.replace(/\/$/, "") : "直连";
     try {
       if (onProgress) onProgress({ stage: "fingerprint/download", message: `下载源: ${label}`, pct: 0 });
@@ -503,6 +725,17 @@ async function downloadAsset(version, onProgress) {
       // 镜像出错时常常是 200 + 一个 HTML 错误页，按体积与长度双校验拦掉
       if (size < MIN_ASSET_BYTES) throw new Error(`文件过小（${fmtSize(size)}），疑似镜像返回了错误页`);
       if (r.total > 0 && size !== r.total) throw new Error(`文件不完整（${fmtSize(size)} / ${fmtSize(r.total)}）`);
+      // 官方 sha256 校验（最后一道、也是最硬的一道防线）：
+      // gh-proxy 对续传分片做重压缩，长度校验完全测不出来，只有哈希能抓住。
+      if (meta.sha256) {
+        if (onProgress) onProgress({ stage: "fingerprint/download", message: "校验下载完整性（sha256）…", pct: 100 });
+        const actual = await sha256File(dest);
+        if (actual !== meta.sha256) {
+          const err = new Error(`完整性校验失败：sha256 不匹配（实得 ${actual.slice(0, 12)}…，应为 ${meta.sha256.slice(0, 12)}…），文件已损坏`);
+          err.integrity = true; // 分片不可信，外层会清掉重下
+          throw err;
+        }
+      }
       return { file: dest, size, mirror: label };
     } catch (e) {
       lastErr = e;
@@ -609,11 +842,24 @@ async function install(opts) {
     report({ message: `指纹浏览器已是 ${version}，跳过下载`, pct: 100 });
     return { ok: true, skipped: true, version };
   }
+  if (o.force) {
+    // 「重新下载」语义 = 清掉旧资源从头来：解压目录 + 下载缓存都删。
+    // 缓存里的分片可能正是损坏源头（镜像重压缩 / 提前断流），留着它续传
+    // 等于把坏文件接着用，所以 force 时不走断点续传。
+    try {
+      fs.rmSync(installDir(), { recursive: true, force: true });
+    } catch {}
+    try {
+      fs.rmSync(downloadDir(), { recursive: true, force: true });
+    } catch {}
+  }
 
-  report({ message: `准备下载指纹浏览器 ${version}（约 181MB，走 gh-proxy 镜像链）`, pct: 0 });
+  const mirrorKey = String(o.mirror == null ? "" : o.mirror).trim() || "auto";
+  const mirrorLabel = mirrorKey === "auto" ? "gh-proxy 镜像链" : `指定镜像 ${mirrorKey}`;
+  report({ message: `准备下载指纹浏览器 ${version}（约 181MB，${mirrorLabel}）`, pct: 0 });
   let file;
   try {
-    const dl = await downloadAsset(version, (p) => report(p));
+    const dl = await downloadAsset(version, (p) => report(p), o.mirror);
     file = dl.file;
     report({ message: `下载完成（${fmtSize(dl.size)}，来源 ${dl.mirror}），开始解压…`, pct: 100 });
   } catch (e) {
@@ -633,7 +879,12 @@ async function install(opts) {
     } catch {}
     const exe = executablePath();
     if (!exe) {
-      return { ok: false, error: `解压完成但没找到浏览器主程序（解压方式: ${method}）` };
+      // 区分「完全没解出来」与「解出来了但 chrome.dll 坏」：后者通常是下载损坏
+      // 或杀毒软件隔离了 DLL，笼统的「没找到主程序」会把用户带偏。
+      const hint = hasChromeExe(dir)
+        ? "检测到 chrome.exe 但同级 chrome.dll 缺失或损坏（可能下载损坏，或被杀毒软件隔离，建议加白名单后重装）"
+        : "解压目录里没有浏览器主程序";
+      return { ok: false, error: `${hint}（解压方式: ${method}）` };
     }
     report({ message: `安装完成: ${exe}`, pct: 100 });
     return { ok: true, version, executable: exe, method };
@@ -753,4 +1004,11 @@ module.exports = {
   probeTotal,
   extractArchive,
   fmtSize,
+  isValidPeFile,
+  hasChromeExe,
+  MIRROR_OPTIONS,
+  MIRROR_KEYS,
+  resolveMirrors,
+  sha256File,
+  mirrorLatency,
 };

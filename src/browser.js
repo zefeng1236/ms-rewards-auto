@@ -101,7 +101,7 @@ function resolveBrowserSource(ctx) {
   if (cfg.enable) {
     const exe = fpBrowser.executablePath();
     if (exe) return { kind: "fingerprint", executable: exe, cfg };
-    logger.warn("已启用指纹浏览器但尚未安装，本轮回落到普通 Chromium（可在设置页下载）");
+    logger.warn("已启用指纹浏览器但不可用（未安装或 chrome.dll 损坏），本轮回落到普通 Chromium（可在设置页重新下载）");
   }
   return { kind: "chromium", executable: bundledChromiumPath(), cfg };
 }

@@ -2349,6 +2349,79 @@ html[data-preset="opaque"] .compat-toast {
   margin-top: 16px;
 }
 
+/* ---- 向导第 6 页：指纹浏览器下载（按钮在左、进度在右，后台执行） ---- */
+/* ── 向导末页指纹浏览器：跳过开关 + 置灰内容区 + 加速源 ── */
+/* 跳过时保留布局但整体降透明度 + 禁掉指针事件，让「这里本来可以装」依然可见 */
+.wz-fp-body {
+  margin-top: 12px;
+  transition: opacity 0.18s ease;
+}
+.wz-fp-body.is-off {
+  opacity: 0.42;
+  pointer-events: none;
+  user-select: none;
+}
+
+.wz-fp-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.wz-fp-label {
+  font-weight: 600;
+  font-size: 13px;
+  flex: 0 0 auto;
+}
+
+.wz-fp-sel {
+  flex: 1;
+  min-width: 220px;
+  max-width: 100%;
+  padding: 9px 12px;
+  font: inherit;
+  font-size: 13px;
+  color: inherit;
+  background: var(--field-bg, rgba(127, 127, 127, 0.1));
+  border: 1px solid var(--field-border, rgba(127, 127, 127, 0.28));
+  border-radius: 10px;
+  outline: none;
+  cursor: pointer;
+}
+.wz-fp-sel:disabled {
+  cursor: not-allowed;
+}
+
+.wz-fp-sel-hint {
+  margin-top: 6px;
+}
+
+.wz-fp-act {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.wz-fp-prog {
+  flex: 1;
+  min-width: 0;
+}
+
+.wz-fp-prog .fp-bar {
+  margin-bottom: 6px;
+}
+
+/* 进度文案可能很长（含镜像名、速度与 ETA），单行截断避免把左侧按钮挤下去 */
+.wz-fp-prog .hint {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ---- 设置页安全卡片 ---- */
 .vault-note {
   font-size: 13px;

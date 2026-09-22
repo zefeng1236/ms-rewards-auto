@@ -6,7 +6,7 @@ import { webLogout } from "../api/web";
 import { DISPLAY_VERSION } from "../version";
 import { useAppState } from "../hooks/useAppState";
 import type { ViewKey } from "../App";
-import type { InstallProgress } from "../types";
+import type { FingerprintStatus, InstallProgress } from "../types";
 
 /* 线性图标（24 viewBox / stroke currentColor），随文字颜色联动 */
 const ICON_PROPS = {
@@ -139,6 +139,11 @@ export function Sidebar({
   const { chromium, logOpen, setLogOpen, accounts } = useAppState();
   const [installing, setInstalling] = useState(false);
   const [progress, setProgress] = useState<InstallProgress | null>(null);
+  // 指纹浏览器（可选增强）状态：就绪与否 + 正在下载时的实时进度。
+  // 与 Chromium 的进度分开存 —— 两者共用同一条 install-progress 通道，
+  // 靠 payload.stage 区分（指纹 = "fingerprint"），混在一起会让徽章串台。
+  const [fp, setFp] = useState<FingerprintStatus | null>(null);
+  const [fpProg, setFpProg] = useState<InstallProgress | null>(null);
 
   /* 滑动高亮胶囊：量取当前项在列表里的位置，transform 过去（首帧不播动画） */
   const listRef = useRef<HTMLElement | null>(null);
@@ -215,12 +220,31 @@ export function Sidebar({
     };
   }, [measure]);
 
-  // 订阅安装进度
+  // 订阅安装进度（Chromium 与指纹浏览器共用一条通道，按 stage 分流）
   useEffect(() => {
     if (IS_WEB) return;
-    const off = (api as any).onInstallProgress?.((p: InstallProgress) => setProgress(p));
+    const off = (api as any).onInstallProgress?.((p: InstallProgress) => {
+      if (p.stage === "fingerprint" || p.stage === "fingerprint/download") setFpProg(p);
+      else setProgress(p);
+    });
     return () => { if (off) off(); };
   }, []);
+
+  // 指纹浏览器状态：首帧拉一次 + 订阅主进程推送（安装/卸载后会自动刷新）
+  useEffect(() => {
+    let alive = true;
+    (api as any).fingerprintStatus?.()
+      .then((v: FingerprintStatus) => { if (alive) setFp(v); })
+      .catch(() => { /* 读不到就不显示该徽章 */ });
+    const off = (api as any).onFingerprintStatus?.((v: FingerprintStatus) => setFp(v));
+    return () => {
+      alive = false;
+      if (typeof off === "function") off();
+    };
+  }, []);
+
+  // 下载中（stage=fingerprint 且未到 100%）才显示进度态
+  const fpDownloading = !!fpProg && !(typeof fpProg.pct === "number" && fpProg.pct >= 100);
 
   const onInstall = async () => {
     setInstalling(true);
@@ -314,6 +338,32 @@ export function Sidebar({
         <span className={`badge ${chromium?.ready ? "ok" : "warn"}`}>
           {chromium ? (chromium.ready ? "● Chromium 就绪" : "▲ 缺失 Chromium") : "检查中…"}
         </span>
+
+        {/* 指纹浏览器（可选增强）状态：下载中显示百分比 + 进度条，其余显示就绪/未安装 */}
+        {(fpDownloading || (fp && fp.supported)) && (
+          <>
+            <span className={`badge ${fpDownloading ? "warn" : fp?.ready ? "ok" : "warn"}`}>
+              {fpDownloading
+                ? `▼ 指纹浏览器 ${typeof fpProg?.pct === "number" ? Math.min(99, fpProg.pct) : 0}%`
+                : fp?.ready
+                  ? "● 指纹浏览器就绪"
+                  : "○ 指纹浏览器未安装"}
+            </span>
+            {fpDownloading && (
+              <div className="nav-install-meta" title={fpProg?.message || "指纹浏览器下载进度"}>
+                <div className="nav-install-track">
+                  <div
+                    className="nav-install-fill"
+                    style={{ width: `${typeof fpProg?.pct === "number" ? Math.min(99, fpProg.pct) : 0}%` }}
+                  />
+                </div>
+                {fpProg?.speed != null && fpProg.speed > 0 && (
+                  <span className="nav-install-speed">{formatBytes(fpProg.speed)}/s</span>
+                )}
+              </div>
+            )}
+          </>
+        )}
 
         {chromium && !chromium.ready && (
           <div className="nav-install-wrap">

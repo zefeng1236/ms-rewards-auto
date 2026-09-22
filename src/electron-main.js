@@ -435,11 +435,14 @@ function pushChromiumStatus() {
 /** 推送指纹浏览器状态（可选组件，未安装时 ready=false） */
 function pushFingerprintStatus() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  try {
-    mainWindow.webContents.send("fingerprint-status", fpBrowser.status());
-  } catch (e) {
-    logger.warn(`推送指纹浏览器状态失败: ${e.message}`);
-  }
+  // status() 现在是 async（镜像下拉要带实测延迟）；状态推送本来就是通知性质，失败忽略
+  Promise.resolve(fpBrowser.status())
+    .then((s) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("fingerprint-status", s);
+      }
+    })
+    .catch((e) => logger.warn(`推送指纹浏览器状态失败: ${e.message}`));
 }
 
 /** 启动周期性推送：任务运行中 3 秒一次，空闲时 10 秒一次 */
@@ -748,6 +751,7 @@ function startBackgroundWork() {
   if (!IS_SMOKE && globalConfig.get()?.browser?.fingerprint?.enable && !fpBrowser.isReady()) {
     logger.info("检测到指纹浏览器未安装且已默认启用，后台开始自动下载…");
     fpBrowser.install({
+      mirror: globalConfig.get()?.browser?.fingerprint?.mirror,
       onProgress: (p) => {
         try { mainWindow?.webContents?.send("install-progress", p); } catch {}
       },
@@ -1139,13 +1143,14 @@ function registerIpc() {
 
   // ---- 指纹浏览器（可选增强，见 src/fingerprint-browser.js）----
   ipcMain.handle("app:fingerprintStatus", () => fpBrowser.status());
-
   ipcMain.handle("app:installFingerprint", async (_e, opts) => {
     if (running) return { ok: false, error: "已有任务正在运行，请稍候" };
     setRunning(true);
     try {
       const result = await fpBrowser.install({
         force: !!(opts && opts.force),
+        // 镜像源由全局配置决定（设置页可改），IPC 层不单独传，避免两处口径不一致
+        mirror: globalConfig.get()?.browser?.fingerprint?.mirror,
         onProgress: (p) => {
           try {
             mainWindow?.webContents?.send("install-progress", p);

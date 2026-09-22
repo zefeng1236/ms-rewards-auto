@@ -12,7 +12,7 @@ import type {
 
 type FpCfg = AppConfig["browser"]["fingerprint"];
 
-const FALLBACK: FpCfg = { enable: false, seed: 0, brand: "Chrome", hardwareConcurrency: 0 };
+const FALLBACK: FpCfg = { enable: false, seed: 0, brand: "Chrome", hardwareConcurrency: 0, mirror: "auto" };
 
 const BRAND_OPTIONS = [
   { label: "Chrome", value: "Chrome" },
@@ -71,13 +71,24 @@ export function FingerprintBrowserPanel() {
     }
   };
 
+  /**
+   * 安装 / 重新下载。
+   *
+   * force 语义：已安装时点「重新下载」必须真的清掉旧资源重下一遍。
+   * 之前这里恒传 false，主进程命中「同版本 → skipped」分支，用户点重新下载
+   * 只会弹一句「已是最新版本」—— 想修坏掉的 chrome.dll 却修不了。
+   */
   const onInstall = async (force: boolean) => {
     setBusy(true);
     setProgress({ pct: 0 });
     try {
       const r = await api.installFingerprint({ force });
       if (r.ok) {
-        toast.success(r.skipped ? "指纹浏览器已是最新版本" : "指纹浏览器安装完成");
+        if (r.skipped) {
+          toast.info("指纹浏览器已是该版本（如需修复损坏，请点「重新下载」）");
+        } else {
+          toast.success(force ? "指纹浏览器已重新下载并校验通过" : "指纹浏览器安装完成");
+        }
       } else {
         toast.error(r.error || "指纹浏览器安装失败");
       }
@@ -101,7 +112,7 @@ export function FingerprintBrowserPanel() {
       if (!r.ok) {
         toast.error(r.error || "查询上游版本失败");
       } else if (r.reinstallAvailable) {
-        toast.info(`已安装 ${r.installed || "无"}，钉死版本 ${r.pinned}，可点「重新安装」对齐`);
+        toast.info(`已安装 ${r.installed || "无"}，钉死版本 ${r.pinned}，可点「重新下载」对齐`);
       } else if (r.updateAvailable) {
         toast.info(`上游已有新版 ${r.latest}（本项目钉死 ${r.pinned}，不自动跟进）`);
       } else {
@@ -181,6 +192,14 @@ export function FingerprintBrowserPanel() {
                 max={256}
                 onChange={(v) => void patch({ hardwareConcurrency: Math.max(0, Math.floor(v) || 0) })}
               />
+              {/* 镜像清单由主进程下发（status().mirrors），避免前后端各写一份 */}
+              <SelectField
+                label="下载镜像源"
+                hint="国内直连 GitHub Releases 通常不可达。自动=按顺序尝试全部节点、失败自动换下一个；也可钉住某一个节点，或选直连"
+                value={cfg.mirror}
+                options={st?.mirrors || []}
+                onChange={(v) => void patch({ mirror: v })}
+              />
             </div>
 
             <div className="fp-actions">
@@ -189,9 +208,9 @@ export function FingerprintBrowserPanel() {
                 controlSize="small"
                 loading={busy && !progress}
                 disabled={busy}
-                onClick={() => void onInstall(false)}
+                onClick={() => void onInstall(!!st?.ready)}
               >
-                {st?.ready ? "重新安装" : "下载并安装"}
+                {st?.ready ? "重新下载" : "下载并安装"}
               </GlassButton>
               {st?.ready && (
                 <>
@@ -242,7 +261,7 @@ export function FingerprintBrowserPanel() {
               <div className="hint fp-note">
                 检查结果：上游最新 {check.latest || "未知"} · 本项目钉死 {check.pinned} · 已安装{" "}
                 {check.installed || "无"}
-                {check.reinstallAvailable ? "（与钉死版本不一致，可点「重新安装」对齐）" : "（与钉死版本一致）"}
+                {check.reinstallAvailable ? "（与钉死版本不一致，可点「重新下载」对齐）" : "（与钉死版本一致）"}
                 {check.updateAvailable ? "；上游已发新版，本项目不自动跟进" : ""}
               </div>
             )}
@@ -251,12 +270,12 @@ export function FingerprintBrowserPanel() {
               {st?.ready ? (
                 <>
                   已安装版本 {st.version}
-                  {outdated ? `（与钉死版本 ${st.pinned} 不一致，可点「重新安装」对齐）` : "（已是本版钉死版本）"}
+                  {outdated ? `（与钉死版本 ${st.pinned} 不一致，可点「重新下载」对齐）` : "（已是本版钉死版本）"}
                 </>
               ) : (
                 <>
                   下载走 gh-proxy 镜像链（国内直连 GitHub Releases 通常不可达），支持断点续传；
-                  失败会自动换镜像并回落直连。
+                  失败会自动换镜像并回落直连；下载完成后比对上游官方 sha256 校验完整性，不通过就换源重下。
                 </>
               )}
               <br />

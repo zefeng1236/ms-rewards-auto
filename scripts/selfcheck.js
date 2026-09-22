@@ -1168,6 +1168,7 @@ const panelSrcFp = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "compo
 const typesSrcFp = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "types", "index.ts"), "utf8");
 const stealthSrcFp = fs.readFileSync(path.join(ROOT, "src", "stealth.js"), "utf8");
 const browserSrcFp = fs.readFileSync(path.join(ROOT, "src", "browser.js"), "utf8");
+const cssSrcFp = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "styles", "global.css"), "utf8");
 
 // —— 下载链路 ——
 checkTrue(
@@ -1251,6 +1252,220 @@ checkTrue(
   "反例守卫 ⑩：不得依赖 extract-zip / yauzl（lockfile 里是 dev，打包会被剪掉）",
   !/require\("extract-zip"\)/.test(fpSrc) && !/require\("yauzl"\)/.test(fpSrc)
 );
+checkTrue(
+  "就绪判定校验 chrome.dll 是有效 PE（MZ 魔数 + 体积下限），坏 DLL 判未就绪而非启动即崩 0xC1",
+  /function isValidPeFile/.test(fpSrc) &&
+    /head\[0\] === 0x4d && head\[1\] === 0x5a/.test(fpSrc) &&
+    /MIN_DLL_BYTES\s*=\s*64 \* 1024 \* 1024/.test(fpSrc) &&
+    /isValidPeFile\(path\.join\(dir, "chrome\.dll"\), MIN_DLL_BYTES\)\) return full;/.test(fpSrc)
+);
+checkTrue(
+  "反例守卫 ⑮：Windows 上坏 DLL 直接 continue（不进 weak，避免退回启动即崩的 chrome.exe）",
+  /if \(isValidPeFile\(path\.join\(dir, "chrome\.dll"\), MIN_DLL_BYTES\)\) return full;\s*\n\s*continue;/.test(fpSrc)
+);
+checkTrue(
+  "安装失败时区分「没解出主程序」与「chrome.dll 坏」并给出杀软/重装提示",
+  /function hasChromeExe/.test(fpSrc) && /chrome\.dll 缺失或损坏/.test(fpSrc)
+);
+
+// —— 下载镜像源可配置（0.10.1）——
+checkTrue(
+  "镜像源有标识→前缀映射与解析器：auto 走全链，指定则只走那一个节点",
+  /const MIRROR_KEYS = \{/.test(fpSrc) &&
+    /function resolveMirrors/.test(fpSrc) &&
+    /return p === null \? MIRROR_PREFIXES\.slice\(\) : \[p\]/.test(fpSrc)
+);
+checkTrue(
+  "镜像源穿透到下载与探测（downloadAsset / probeTotal 都按配置解析镜像链）",
+  /async function downloadAsset\(version, onProgress, mirror\)/.test(fpSrc) &&
+    /async function probeTotal\(rawUrl, version, mirror\)/.test(fpSrc) &&
+    /probeTotal\(raw, version, mirror\)/.test(fpSrc)
+);
+checkTrue(
+  "未知或空的镜像标识一律退回自动链（脏配置不能把下载卡死）",
+  /hasOwnProperty\.call\(MIRROR_KEYS, key\)/.test(fpSrc) &&
+    /return MIRROR_PREFIXES\.slice\(\);/.test(fpSrc)
+);
+checkTrue(
+  "主进程两处下载都把配置的镜像源传进去（IPC 安装 + 首次运行自动下载）",
+  (mainSrcFp.match(/mirror: globalConfig\.get\(\)\?\.browser\?\.fingerprint\?\.mirror/g) || []).length >= 2
+);
+checkTrue(
+  "Web/Docker 版安装同样传配置的镜像源（桌面与容器两处口径一致）",
+  /mirror: globalConfig\.get\(\)\?\.browser\?\.fingerprint\?\.mirror/.test(webApiSrcFp)
+);
+checkTrue(
+  "状态接口下发镜像清单（界面下拉不另写一份），且每个节点带实测延迟",
+  /mirrors: await mirrorOptionsWithLatency\(\)/.test(fpSrc) &&
+    /async function mirrorLatency/.test(fpSrc) &&
+    /latencyMs/.test(fpSrc)
+);
+checkTrue(
+  "反例守卫 ⑯：指定镜像时不得掺入自动链其他节点（否则「指定」失去意义）",
+  !/return \[p\]\.concat\(MIRROR_PREFIXES\)/.test(fpSrc)
+);
+checkTrue(
+  "渲染层 mock 的 fingerprint 默认值含 mirror（防白屏：四处必须同字段）",
+  /fingerprint: \{[^}]*mirror: "auto"/.test(mockSrcFp)
+);
+checkTrue(
+  "类型定义 browser.fingerprint 含 mirror，状态类型含可选 mirrors",
+  /mirror: string;/.test(typesSrcFp) && /mirrors\?:/.test(typesSrcFp)
+);
+checkTrue(
+  "指纹浏览器面板有「下载镜像源」下拉，选项来自主进程下发的 mirrors",
+  /下载镜像源/.test(panelSrcFp) && /options=\{st\?\.mirrors \|\| \[\]\}/.test(panelSrcFp)
+);
+
+// —— 向导末页：指纹浏览器下载（0.10.1）——
+checkTrue(
+  "向导扩为六步且末页是指纹浏览器下载页",
+  /const STEPS = \[[^\]]*"指纹"/.test(wizardSource) &&
+    /function PageFingerprint/.test(wizardSource) &&
+    /page === 5 && <PageFingerprint/.test(wizardSource)
+);
+checkTrue(
+  "跳过可直接放行、未跳过必须等下载完成，放行条件由页内上报给页脚",
+  /const canProceed = skip \|\| !supported \|\| \(!!st && st\.ready\)/.test(wizardSource) &&
+    /onCanProceed\(canProceed\)/.test(wizardSource) &&
+    /disabled=\{!fpCanProceed\}/.test(wizardSource)
+);
+checkTrue(
+  "平台不支持（macOS）时强制放行，不得把用户卡死在末页",
+  /const supported = st \? st\.supported : true/.test(wizardSource)
+);
+checkTrue(
+  "下载按钮在左、进度在右，点击后后台执行且实时回推进度",
+  /className="wz-fp-act"/.test(wizardSource) &&
+    /className="wz-fp-prog"/.test(wizardSource) &&
+    /className="wz-dl"/.test(wizardSource) &&
+    /api\.onInstallProgress/.test(wizardSource)
+);
+checkTrue(
+  "向导指纹页有左按钮右进度的布局样式（进度文案单行截断不挤按钮）",
+  /\.wz-fp-act/.test(cssSrcFp) &&
+    /\.wz-fp-prog/.test(cssSrcFp) &&
+    /text-overflow: ellipsis/.test(cssSrcFp)
+);
+checkTrue(
+  "反例守卫 ⑰：末页放行条件不得只看 enable（启用未下载完成时不能放行）",
+  !/const canProceed = !enable;/.test(wizardSource) &&
+    !/const canProceed = enable && !!st && st\.ready;/.test(wizardSource)
+);
+
+// —— 向导末页 v2：跳过开关 + 置灰内容 + 加速源（0.10.1）——
+checkTrue(
+  "向导末页为「跳过复选框 + 置灰内容区」：勾选跳过则不下载、内容禁用",
+  /data-testid="fp-skip"/.test(wizardSource) &&
+    /wz-fp-body\$\{skip \? " is-off" : ""\}/.test(wizardSource) &&
+    /\.wz-fp-body\.is-off/.test(cssSrcFp)
+);
+checkTrue(
+  "向导末页可选加速源（下拉含各节点实测延迟）并有「立即下载」按钮",
+  /id="fp-mirror"/.test(wizardSource) &&
+    /className="wz-fp-sel"/.test(wizardSource) &&
+    /pickMirror/.test(wizardSource) &&
+    /立即下载/.test(wizardSource) &&
+    /\.wz-fp-sel/.test(cssSrcFp)
+);
+checkTrue(
+  "反例守卫 ㉑：置灰态必须靠 CSS 类而非条件卸载（否则布局会跳）",
+  !/skip && \(\s*<div className="wz-fp-row"/.test(wizardSource)
+);
+
+// —— 重新下载语义（0.10.1）——
+checkTrue(
+  "设置页「重新下载」在已就绪时传 force=true（真正清除后重装）",
+  /onClick=\{\(\) => void onInstall\(!!st\?\.ready\)\}/.test(panelSrcFp) &&
+    /重新下载/.test(panelSrcFp)
+);
+checkTrue(
+  "反例守卫 ⑱：重新下载不得恒传 force=false（否则命中「已是最新版本」而无法修复）",
+  !/onClick=\{\(\) => void onInstall\(false\)\}/.test(panelSrcFp)
+);
+checkTrue(
+  "force 重装时清空解压目录与下载缓存（不复用可能已损坏的分片）",
+  /if \(o\.force\) \{/.test(fpSrc) &&
+    /fs\.rmSync\(installDir\(\), \{ recursive: true, force: true \}\)/.test(fpSrc) &&
+    /fs\.rmSync\(downloadDir\(\), \{ recursive: true, force: true \}\)/.test(fpSrc)
+);
+
+// —— 下载完整性校验（0.10.1）——
+checkTrue(
+  "下载完做完整性校验：取上游官方 sha256（Releases API digest）并流式比对",
+  /hit\.digest/.test(fpSrc) &&
+    /sha256File/.test(fpSrc) &&
+    /actual !== meta\.sha256/.test(fpSrc)
+);
+checkTrue(
+  "反例守卫 ⑲：完整性校验不通过必须 throw（不是打个日志就放行）",
+  /err\.integrity = true;[\s\S]{0,80}throw err;/.test(fpSrc)
+);
+checkTrue(
+  "反例守卫 ㉒：probeTotal 不得在 HEAD 成功后提前返回 null 哈希（digest 必须无条件取）",
+  !/return \{ total: n, sha256: null \};/.test(fpSrc) &&
+    /const \[byHead, byApi\] = await Promise\.all/.test(fpSrc) &&
+    /sha256: byApi\.sha256/.test(fpSrc)
+);
+checkTrue(
+  "镜像下拉带延迟：status 下发的 mirrors 每个节点含 latencyMs",
+  /async function mirrorLatency/.test(fpSrc) &&
+    /latencyMs: ms/.test(fpSrc) &&
+    /latencyMs\?: number \| null/.test(typesSrcFp)
+);
+
+// —— 侧边栏指纹状态（0.10.1）——
+// 自己读一份 Sidebar 源码：下方同名变量声明在更后面，用它会踩 const 的 TDZ
+const sidebarSrcFp = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "components", "Sidebar.tsx"),
+  "utf8"
+);
+checkTrue(
+  "侧边栏显示指纹浏览器状态，下载中显示百分比 + 进度条",
+  /onFingerprintStatus/.test(sidebarSrcFp) &&
+    /指纹浏览器 \$\{/.test(sidebarSrcFp) &&
+    /nav-install-fill/.test(sidebarSrcFp)
+);
+checkTrue(
+  "反例守卫 ⑳：指纹进度必须按 stage 分流，不得混入 Chromium 进度",
+  /if \(p\.stage === "fingerprint" \|\| p\.stage === "fingerprint\/download"\) setFpProg\(p\);/.test(
+    sidebarSrcFp
+  )
+);
+checkTrue(
+  "预览端指纹进度同样带 stage=fingerprint（否则侧边栏徽章串台）",
+  /emitFpProgress\(\{ stage: "fingerprint"/.test(mockSrcFp)
+);
+
+// —— CSS 结构完整性（0.10.1）——
+// liquidGlassCompat.css 的首行曾是被**截断的规则残片**（`.friend-actions` 的选择器与
+// 前半段声明在迁移时丢了，只剩尾部 49 字节 + 一个游离的 `}`）。这类损坏构建**照样成功**：
+// esbuild 只打一条 `Unexpected ";"` 警告、把顶层那条声明整条丢掉，产物里完全看不出来。
+// 用「括号配平 + 顶层不得出现分号（@import 等 at-rule 除外）」把它锁死。
+const cssStructureOk = (rel) => {
+  const src = fs.readFileSync(path.join(ROOT, ...rel.split("/")), "utf8");
+  const t = src.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "));
+  let depth = 0;
+  let stmtStart = 0;
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i];
+    if (c === "{") depth++;
+    else if (c === "}") {
+      depth--;
+      if (depth < 0) return false;
+      stmtStart = i + 1;
+    } else if (c === ";" && depth === 0) {
+      // 顶层分号只允许结束 at-rule（@import / @charset …）
+      if (!t.slice(stmtStart, i).trim().startsWith("@")) return false;
+    }
+  }
+  return depth === 0;
+};
+checkTrue(
+  "补位层 CSS 结构合法（无顶层游离分号 / 括号配平）—— 截断的规则残片会被 esbuild 静默丢弃",
+  cssStructureOk("src-renderer/src/components/liquidGlassCompat.css")
+);
+checkTrue("global.css 结构合法（无顶层游离分号 / 括号配平）", cssStructureOk("src-renderer/src/styles/global.css"));
 
 // —— 种子与启动参数 ——
 checkTrue(
@@ -1295,8 +1510,8 @@ checkTrue(
     /kind: "chromium"/.test(browserSrcFp)
 );
 checkTrue(
-  "指纹浏览器未安装时静默回落（不打断登录流程）",
-  /已启用指纹浏览器但尚未安装/.test(browserSrcFp)
+  "指纹浏览器不可用时静默回落（不打断登录流程）",
+  /已启用指纹浏览器但不可用/.test(browserSrcFp) && /本轮回落到普通 Chromium/.test(browserSrcFp)
 );
 checkTrue(
   "指纹模式下不覆盖 UA（否则回到 UA 与 CH 自相矛盾的死路）",
@@ -1317,12 +1532,13 @@ const cfgFpBlock = browserFpBlock(cfgSrcFp);
 const gcfgFpBlock = browserFpBlock(gcfgSrcFp);
 for (const [label, block] of [["config.js", cfgFpBlock], ["global-config.js", gcfgFpBlock]]) {
   checkTrue(
-    `${label} 的 browser.fingerprint 四个字段齐全（enable/seed/brand/hardwareConcurrency）`,
+    `${label} 的 browser.fingerprint 五个字段齐全（enable/seed/brand/hardwareConcurrency/mirror）`,
     block.includes("fingerprint: {") &&
       /enable:/.test(block) &&
       /seed:/.test(block) &&
       /brand:/.test(block) &&
-      /hardwareConcurrency:/.test(block)
+      /hardwareConcurrency:/.test(block) &&
+      /mirror:/.test(block)
   );
 }
 

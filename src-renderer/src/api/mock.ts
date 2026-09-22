@@ -5,6 +5,7 @@ import type {
   AccountRunStatusValue,
   AppConfig,
   Appearance,
+  InstallProgress,
   LaunchConfig,
   Overview,
   SetupState,
@@ -53,7 +54,7 @@ const DEFAULT_CONFIG: AppConfig = {
     items: [{ name: "积分目标", scope: "balance", target: 300, rewardName: "", showDashboard: true }],
   },
   browser: {
-    fingerprint: { enable: false, seed: 0, brand: "Chrome", hardwareConcurrency: 0 },
+    fingerprint: { enable: true, seed: 0, brand: "Chrome", hardwareConcurrency: 0, mirror: "auto" },
   },
 };
 
@@ -263,6 +264,18 @@ const noop = () => undefined;
 let mockRunStatus: AccountRunStatusMap = {};
 const statusCbs = new Set<(v: { id: string; status: AccountRunStatusValue; reason?: string }) => void>();
 const logCbs = new Set<(e: AccountLogEntry) => void>();
+// 指纹浏览器「下载进度」订阅者：预览模式没有真实下载，这里伪造一条进度流，
+// 好在浏览器里直接调进度条样式与文案（向导第 6 页 / 设置页面板都用它）。
+const fpProgressCbs = new Set<(p: InstallProgress) => void>();
+
+function emitFpProgress(p: InstallProgress) {
+  fpProgressCbs.forEach((cb) => {
+    try { cb(p); } catch { /* ignore */ }
+  });
+}
+
+/** 预览模式下的「指纹浏览器是否已安装」，由 installFingerprint 置真 */
+let mockFpReady = false;
 
 function emitStatus(id: string, status: AccountRunStatusValue, reason = "") {
   if (status === "idle") delete mockRunStatus[id];
@@ -475,14 +488,40 @@ export function createMockApi(): ElectronApi {
     fingerprintStatus: async () => ({
       supported: true,
       platform: "win32",
-      ready: false,
+      ready: mockFpReady,
       executable: null,
-      version: null,
+      version: mockFpReady ? "148.0.7778.215" : null,
       pinned: "148.0.7778.215",
       installDir: "<storage>/fingerprint-chromium",
       downloadUrl: null,
+      mirrors: [
+        { value: "auto", label: "自动（按顺序尝试全部）", latencyMs: null },
+        { value: "gh-proxy.com", label: "gh-proxy.com（实测最快） · 128ms", latencyMs: 128 },
+        { value: "v4.gh-proxy.org", label: "v4.gh-proxy.org（官方推荐） · 203ms", latencyMs: 203 },
+        { value: "cdn.gh-proxy.org", label: "cdn.gh-proxy.org（Fastly） · 356ms", latencyMs: 356 },
+        { value: "gh-proxy.org", label: "gh-proxy.org · 412ms", latencyMs: 412 },
+        { value: "axisnow.gh-proxy.org", label: "axisnow.gh-proxy.org · 780ms", latencyMs: 780 },
+        { value: "v6.gh-proxy.org", label: "v6.gh-proxy.org（IPv6 线路） · 超时", latencyMs: null },
+        { value: "direct", label: "直连 GitHub · 超时", latencyMs: null },
+      ],
     }),
-    installFingerprint: async () => ({ ok: true, version: "148.0.7778.215", method: "mock" }),
+    installFingerprint: async () => {
+      // 预览模式：伪造一条下载进度流（约 5 秒走完），好在浏览器里直接调进度条样式与文案
+      const steps: Array<[number, string]> = [
+        [0, "准备下载指纹浏览器 148.0.7778.215（约 181MB，走 gh-proxy 镜像链）"],
+        [9, "gh-proxy.com · 6.26 MB/s · 剩余约 28s"],
+        [31, "gh-proxy.com · 5.80 MB/s · 剩余约 21s"],
+        [58, "gh-proxy.com · 6.02 MB/s · 剩余约 13s"],
+        [82, "校验下载完整性（308,093,440 字节）"],
+      ];
+      for (const [pct, message] of steps) {
+        // stage 必须带：侧边栏靠它把指纹进度与 Chromium 进度分开显示
+        emitFpProgress({ stage: "fingerprint", pct, message });
+        await sleep(950);
+      }
+      mockFpReady = true;
+      return { ok: true, version: "148.0.7778.215", method: "mock" };
+    },
     uninstallFingerprint: async () => ({ ok: true }),
     checkFingerprintUpdate: async () => ({
       ok: true,
@@ -500,8 +539,11 @@ export function createMockApi(): ElectronApi {
     onBgProgress: () => () => {},
     onChromiumStatus: noop,
     onFingerprintStatus: noop,
-    // 模拟端没有真实下载，但保留接口以避免 Sidebar 在 mock 下崩溃。
-    onInstallProgress: () => () => {},
+    // 预览模式：安装一次后状态翻成「就绪」，方便看放行后的界面
+    onInstallProgress: (cb) => {
+      fpProgressCbs.add(cb);
+      return () => fpProgressCbs.delete(cb);
+    },
     onAccountStatus: (cb) => {
       statusCbs.add(cb);
       return () => statusCbs.delete(cb);
