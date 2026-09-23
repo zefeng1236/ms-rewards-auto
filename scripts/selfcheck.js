@@ -1754,6 +1754,12 @@ checkTrue(
     /^\s*fluxbox\s*\\/m.test(dockerfileSrc)
 );
 checkTrue(
+  "预建 Fluxbox overlay 禁用主题壁纸（避免 fbsetbg 找不到后端而弹 xmessage）",
+  /mkdir -p \/home\/node\/\.vnc \/home\/node\/\.fluxbox/.test(dockerfileSrc) &&
+    /printf 'background: none\\n' > \/home\/node\/\.fluxbox\/overlay/.test(dockerfileSrc) &&
+    /chown -R node:node \/home\/node\/\.vnc \/home\/node\/\.fluxbox/.test(dockerfileSrc)
+);
+checkTrue(
   "KasmVNC 配置启用 GPU DRI3 加速节点（NAS 上有 /dev/dri/renderD128 即可走 VAAPI）",
   /drinode:\s*\/dev\/dri\/renderD128/.test(kasmYamlSrc) &&
     /gpu:\s*\n\s*hw3d:/.test(kasmYamlSrc) &&

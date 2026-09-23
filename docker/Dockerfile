@@ -208,11 +208,12 @@ RUN usermod -aG ssl-cert node
 # 直接 shutting down server，并误报 "Xvnc seems to be deadlocked" 杀掉 Xkasmvnc。
 # 必须有常驻 WM 兜底（fluxbox）。这里预建 xstartup（exec fluxbox），并放一个
 # .de-was-selected 标记让 select-de.sh 别再去猜桌面环境。
-RUN mkdir -p /home/node/.vnc \
+RUN mkdir -p /home/node/.vnc /home/node/.fluxbox \
     && printf '#!/bin/sh\nexec fluxbox\n' > /home/node/.vnc/xstartup \
+    && printf 'background: none\n' > /home/node/.fluxbox/overlay \
     && chmod +x /home/node/.vnc/xstartup \
     && touch /home/node/.vnc/.de-was-selected \
-    && chown -R node:node /home/node/.vnc
+    && chown -R node:node /home/node/.vnc /home/node/.fluxbox
 
 RUN mkdir -p /data/storage && chown -R node:node /data /app /home/node /etc/kasmvnc
 VOLUME ["/data"]
