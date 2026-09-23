@@ -36,15 +36,17 @@ export HOME="${HOME:-/home/node}"
 #   server → 误报 "Xvnc deadlocked" 杀掉 Xkasmvnc。fluxbox 常驻后进程才稳定。
 # 6080 由 YAML 的 network.websocket_port 固定，Web UI 目录也由 YAML 指定。
 
-# 免登录开关：MS_REWARDS_KASM_NO_AUTH=1 时追加 -DisableBasicAuth，关掉 Web 层的
-# HTTP Basic Auth（浏览器打开 6080 直接进桌面，不再弹账号密码框）。
+# 免登录开关：MS_REWARDS_KASM_NO_AUTH=1 时同时追加两层参数，关掉 KasmVNC 的全部鉴权：
+#   - -DisableBasicAuth 关掉 HTTP Basic Auth（浏览器打开 6080 不再弹 401 账号密码框）
+#   - -SecurityTypes None 关掉 WebSocket 里的 VNC 协议鉴权（noVNC 连上后不再弹
+#     「密码：/ Send Password」对话框）。两层是独立的：只关 Basic Auth 不够，
+#     日志里 SConnection 仍会 "Client requests security type VncAuth(2)"。
 # ⚠️ 这会暴露图形会话：任何能访问 6080 的人都能直接操作你的账号。仅限可信内网。
 #    注意：即使免登录，KasmVNC 的 perl 包装器仍硬性要求密码文件里至少有一个用户
-#    （EnsureAtLeastOneKasmUserExists），所以 entrypoint 里的凭据生成流程照常保留，
-#    只是 Web 层不再询问——不能用「admin+空密码」代替，那反而还要填用户名。
+#    （EnsureAtLeastOneKasmUserExists），所以 entrypoint 里的凭据生成流程照常保留。
 KASM_AUTH_ARGS=""
 if [ "${MS_REWARDS_KASM_NO_AUTH:-0}" = "1" ]; then
-  KASM_AUTH_ARGS="-DisableBasicAuth"
+  KASM_AUTH_ARGS="-DisableBasicAuth -SecurityTypes None"
 fi
 
 nohup /usr/bin/kasmvncserver \
