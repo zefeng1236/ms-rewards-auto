@@ -543,19 +543,23 @@ export function createMockApi(): ElectronApi {
       updateAvailable: false,
       reinstallAvailable: true,
     }),
-    // 预览模式：伪造一个比当前版本新的正式版，方便直接看到 NEW 徽标与更新弹窗样式
-    checkAppUpdate: async () => ({
-      ok: true,
-      updateAvailable: true,
-      currentVersion: "0.11.0",
-      latestVersion: "0.12.0",
-      downloadUrl: "https://github.com/zefeng1236/ms-rewards-auto/releases/download/v0.12.0/MS-Rewards-Auto-Setup-0.12.0.exe",
-      assetName: "MS-Rewards-Auto-Setup-0.12.0.exe",
-      pageUrl: "https://github.com/zefeng1236/ms-rewards-auto/releases/tag/v0.12.0",
-      releaseNotes:
-        "- 新增应用自动检查更新（GitHub Releases，自动加速）\n- 侧边栏有新版本时显示 NEW 徽标，点击查看更新日志\n- 项目内微软/Microsoft 品牌字样统一改为 MS",
-      publishedAt: new Date().toISOString(),
-    }),
+    // 预览模式：伪造一个比当前版本新的正式版，方便直接看到 NEW 徽标与更新弹窗样式。
+    // 加 900ms 延迟模拟真实网络往返，让「检查中」转圈态在预览里也能看到（真实环境本就有时延）。
+    checkAppUpdate: async () => {
+      await sleep(900);
+      return {
+        ok: true,
+        updateAvailable: true,
+        currentVersion: "0.12.0",
+        latestVersion: "0.13.0",
+        downloadUrl: "https://github.com/zefeng1236/ms-rewards-auto/releases/download/v0.13.0/MS-Rewards-Auto-Setup-0.13.0.exe",
+        assetName: "MS-Rewards-Auto-Setup-0.13.0.exe",
+        pageUrl: "https://github.com/zefeng1236/ms-rewards-auto/releases/tag/v0.13.0",
+        releaseNotes:
+          "## What's Changed\n\n- 自动更新弹窗重做为「检查中 / 结果」两态设计（转圈检查 + 版本箭头 + 可滚动更新日志）\n- 升级 @ttqtt/liquid-glass-react 0.0.1 → 0.0.2（按钮 variant 改名等破坏性改动已适配）\n\n### Improvements\n\n- 更新日志支持 Markdown-lite 渲染（标题 / 列表 / `行内代码` / **加粗**）\n- 左下角版本号可点击直接打开自动更新弹窗",
+        publishedAt: new Date().toISOString(),
+      };
+    },
 
     onRunning: noop,
     onLog: noop,

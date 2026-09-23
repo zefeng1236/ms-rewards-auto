@@ -34,7 +34,7 @@ async function copyText(text: string): Promise<boolean> {
   }
 }
 
-const APP_VERSION = "0.11.0";
+const APP_VERSION = "0.12.0";
 
 /** 直接依赖（package.json 中声明的运行时依赖） */
 const DIRECT_DEPS: { name: string; version: string; license: string; desc: string; url: string }[] = [
@@ -68,7 +68,7 @@ const DIRECT_DEPS: { name: string; version: string; license: string; desc: strin
   },
   {
     name: "@ttqtt/liquid-glass-react",
-    version: "0.0.1",
+    version: "0.0.2",
     license: "MIT",
     desc: "液态玻璃 UI 组件库（玻璃面板、按钮、卡片、开关、滑动条等全部界面控件）",
     url: "https://github.com/Tsdsj/liquid-glass-react",

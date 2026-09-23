@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { GlassButton, GlassSurface } from "@ttqtt/liquid-glass-react";
-import { Modal, toast } from "./liquidGlassCompat";
+import { toast } from "./liquidGlassCompat";
+import { UpdateDialog } from "./UpdateDialog";
 import { api, IS_WEB } from "../api/ipc";
 import { webLogout } from "../api/web";
 import { DISPLAY_VERSION } from "../version";
@@ -507,46 +508,18 @@ export function Sidebar({
           </button>
         )}
 
-        {/* 左下角版本号（v 主版本.交付号，与安装包文件名一致） */}
-        <div className="nav-version hint" title="当前软件版本">
+        {/* 左下角版本号（v 主版本.交付号，与安装包文件名一致）；点击也可打开自动更新弹窗 */}
+        <button
+          type="button"
+          className="nav-version hint nav-version-btn"
+          title="当前软件版本 · 点击检查更新"
+          onClick={() => setUpdateOpen(true)}
+        >
           v{DISPLAY_VERSION}
-        </div>
+        </button>
       </div>
 
-      {updateInfo && (
-        <Modal
-          open={updateOpen}
-          onOpenChange={setUpdateOpen}
-          title={`发现新版本 v${updateInfo.latestVersion}`}
-          footer={
-            <>
-              <GlassButton variant="plain" controlSize="small" onClick={() => setUpdateOpen(false)}>
-                取消
-              </GlassButton>
-              <GlassButton
-                variant="glass"
-                controlSize="small"
-                onClick={() => {
-                  window.open(updateInfo.pageUrl || updateInfo.downloadUrl, "_blank", "noopener,noreferrer");
-                }}
-              >
-                立即更新
-              </GlassButton>
-            </>
-          }
-        >
-          <div className="update-modal-meta">
-            <span>当前版本 <b>v{DISPLAY_VERSION}</b></span>
-            <span>最新版本 <b>v{updateInfo.latestVersion}</b></span>
-            {updateInfo.publishedAt && (
-              <span>发布于 <b>{new Date(updateInfo.publishedAt).toLocaleString()}</b></span>
-            )}
-          </div>
-          <div className="update-modal-body">
-            {updateInfo.releaseNotes?.trim() || "本版本暂无更新说明。"}
-          </div>
-        </Modal>
-      )}
+      <UpdateDialog open={updateOpen} onOpenChange={setUpdateOpen} />
     </GlassSurface>
   );
 }

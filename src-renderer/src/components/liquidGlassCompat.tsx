@@ -1,7 +1,7 @@
 /**
  * 液态玻璃组件库补位层。
  *
- * 背景：上游 `@ttqtt/liquid-glass-react` 0.0.1（重写版）只提供玻璃/控件层组件，
+ * 背景：上游 `@ttqtt/liquid-glass-react` 0.0.2（重写版）只提供玻璃/控件层组件，
  * 没有 Input / Select / InputNumber / Table / Tag / Empty / Modal / SideNav /
  * ProgressiveBlur / Toaster / useAmbientFromImage / createTheme 这些内容层与
  * 应用级组件；项目内容卡片则基于新版 MaterialView（不是实色 Card）。本文件为缺口提供实现，命名尽量与旧版保持一致，

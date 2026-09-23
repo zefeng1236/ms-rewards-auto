@@ -2,6 +2,31 @@
 
 本文件记录各版本的重要变更。版本格式为主版本.次版本.修订号，带 `-beta` 后缀的为测试版本。带「.N」四位小版本的为内部交付号（安装包文件名与 exe FileVersion 使用），主版本段仍为 0.9.4。
 
+## 0.12.0
+
+发布日期：2026-09-23 · 安装包 `MS-Rewards-Auto-Setup-0.12.0.exe`
+
+### 自动更新弹窗重做（对齐参考设计）
+
+- 弹窗改为「自动更新」标题 + 频道 pill（正式版 / 测试版，按版本号是否带预发布后缀判定）。
+- **检查中态**：居中琥珀色转圈 + 「正在检查更新...」+ 当前版本；每次打开弹窗都重新查询。
+- **结果态**：圆形 accent 图标 + 「版本更新可用」+ 旧 → 新 版本箭头行 + 可上下滚动的更新日志卡片；日志支持 Markdown-lite 渲染（标题 / 列表 / 行内代码 / 加粗，纯 React 节点不走 innerHTML）。
+- 已是最新 / 查询失败各有对应提示态；底部「关闭」+「下载更新」（检查中或无更新时禁用）。
+- 左下角版本号改为可点击按钮，直接打开自动更新弹窗（NEW 徽标仍是主入口）。
+- 新增独立组件 `src-renderer/src/components/UpdateDialog.tsx`，替换原 Modal 版更新弹窗。
+
+### 依赖升级
+
+- `@ttqtt/liquid-glass-react` 0.0.1 → **0.0.2**（npmmirror 已有）。按官方迁移文档适配破坏性改动：
+  按钮 variant 改名（primary→glassProminent 等）、`GlassToolbarSeparator→ToolbarSpacer`、
+  `GlassNavBar→TabBar`、工具栏结构变化、内容容器换 Card/List/MaterialView。
+  本项目实际用到的组件（GlassButton/GlassSurface/GlassSwitch/GlassSlider/GlassSegmentedControl/
+  GlassProvider/MaterialView）与 12 个 `.lg-*` 覆写类在 0.0.2 全部兼容，无需改调用。
+
+### 验证
+
+- tsc 0 错误；selfcheck 全绿；build:web 通过。
+
 ## 0.11.0
 
 发布日期：2026-09-23 · 安装包 `MS-Rewards-Auto-Setup-0.11.0.exe`

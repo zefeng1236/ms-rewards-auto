@@ -321,26 +321,188 @@ body::before {
   animation: none;
 }
 
-/* 更新弹窗：更新日志正文可上下滑动，底部固定「立即更新 / 取消」 */
-.update-modal-body {
-  max-height: 46vh;
-  overflow-y: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: 13px;
-  line-height: 1.65;
-  padding-right: 4px;
+/* 「自动更新」弹窗（对齐参考设计）：头部标题+频道 pill，主体检查中/结果两态，
+   底部「关闭 / 下载更新」。更新日志正文可上下滚动。 */
+.upd-dialog {
+  width: min(620px, calc(100vw - 48px));
 }
-.update-modal-meta {
+.upd-panel {
   display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-bottom: 10px;
+  flex-direction: column;
+  max-height: min(560px, calc(100vh - 96px));
+}
+.upd-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  flex-shrink: 0;
+}
+.upd-title {
+  font-weight: 700;
+  font-size: 14px;
+}
+.upd-channel {
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--lg-text-secondary);
+  background: rgba(255, 255, 255, 0.08);
+}
+.upd-channel.is-pre {
+  color: #e8b04b;
+  background: rgba(232, 176, 75, 0.16);
+}
+.upd-close {
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  color: var(--lg-text-secondary);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+.upd-close:hover {
+  color: var(--lg-text-primary);
+  background: rgba(255, 255, 255, 0.08);
+}
+.upd-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 16px;
+}
+/* 检查中 / 已是最新 / 失败：居中三行 */
+.upd-checking {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 56px 0 64px;
+  text-align: center;
+}
+.upd-spinner {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 3px solid transparent;
+  border-top-color: #e8b04b;
+  animation: updSpin 0.9s linear infinite;
+}
+@keyframes updSpin {
+  to { transform: rotate(360deg); }
+}
+.upd-checking-text {
+  font-size: 15px;
+  font-weight: 700;
+}
+.upd-checking-ver {
   font-size: 12px;
   color: var(--lg-text-secondary);
+  font-family: "Cascadia Mono", Consolas, ui-monospace, monospace;
+  max-width: 420px;
 }
-.update-modal-meta b {
-  color: var(--lg-text-primary);
+/* 结果态：圆形 accent 图标 + 标题 + 版本箭头行 */
+.upd-hero {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+.upd-hero-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: var(--accent, #7c5cff);
+  flex-shrink: 0;
+}
+.upd-hero-icon-static.is-ok {
+  background: #34a853;
+}
+.upd-hero-icon-static.is-warn {
+  background: #d97706;
+}
+.upd-hero-title {
+  font-size: 15px;
+  font-weight: 700;
+}
+.upd-hero-ver {
+  margin-top: 4px;
+  font-size: 12px;
+  font-family: "Cascadia Mono", Consolas, ui-monospace, monospace;
+  color: var(--lg-text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.upd-ver-new {
+  color: var(--accent, #a78bfa);
+  font-weight: 700;
+}
+.upd-ver-arrow {
+  opacity: 0.6;
+}
+/* 更新日志：可滚动卡片 */
+.upd-notes {
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  border-radius: 12px;
+  padding: 14px 16px;
+  max-height: 260px;
+  overflow-y: auto;
+  font-size: 13px;
+  line-height: 1.7;
+  scrollbar-width: thin;
+}
+.upd-notes::-webkit-scrollbar {
+  width: 8px;
+}
+.upd-notes::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 4px;
+}
+.upd-note-h {
+  font-size: 13.5px;
+  font-weight: 700;
+  margin: 12px 0 6px;
+}
+.upd-note-h:first-child {
+  margin-top: 0;
+}
+.upd-note-p {
+  margin: 6px 0;
+  color: var(--lg-text-secondary);
+}
+.upd-notes ul {
+  margin: 6px 0;
+  padding-left: 20px;
+  color: var(--lg-text-secondary);
+}
+.upd-notes li {
+  margin: 3px 0;
+}
+.upd-notes code {
+  font-family: "Cascadia Mono", Consolas, ui-monospace, monospace;
+  font-size: 12px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.upd-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  flex-shrink: 0;
 }
 
 
@@ -500,6 +662,20 @@ body::before {
   padding: 0 11px;
   user-select: text;
   cursor: default;
+}
+/* 版本号改为按钮（点击检查更新）：清掉按钮默认外观，保持原 hint 观感 */
+button.nav-version-btn {
+  border: none;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  width: 100%;
+  cursor: pointer;
+  border-radius: 6px;
+}
+button.nav-version-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--lg-text-primary);
 }
 
 .nav-item:hover {

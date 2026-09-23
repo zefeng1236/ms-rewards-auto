@@ -41,7 +41,7 @@ WORKDIR /build
 #
 #    历史上踩过：package.json 写着 "@ttqtt/liquid-glass-react": "0.0.1"，
 #    而 lock 还停在 file:docker/vendor/…0.2.0.tgz，容器构建一直失败。
-#    0.2.0 上游已撤版，项目现在直接用 npm 上的 0.0.1（不再需要 vendor tarball）。
+#    0.2.0 上游已撤版；项目现在直接用 npm 镜像上的正式版（当前 0.0.2，不再需要 vendor tarball）。
 COPY package.json package-lock.json ./
 # --ignore-scripts：跳过 electron / playwright 的 postinstall 下载（构建前端用不到）
 # /root/.npm 挂 cache mount：npm 缓存跨构建复用，重复构建秒过依赖层。

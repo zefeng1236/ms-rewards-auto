@@ -6,7 +6,7 @@
 
 ## 运行时依赖（随应用分发）
 
-### @ttqtt/liquid-glass-react — 0.0.1
+### @ttqtt/liquid-glass-react — 0.0.2
 - **许可**：MIT（Copyright (c) 2026 Liquid Glass UI contributors）
 - **仓库**：https://github.com/Tsdsj/liquid-glass-react
 - **用途**：玻璃质感 UI 组件库（按钮 / 开关 / 滑块 / 分段控件 / GlassSurface 等）。
