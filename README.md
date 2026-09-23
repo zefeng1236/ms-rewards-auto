@@ -106,7 +106,7 @@ storage/
   1. 优先走 Playwright 官方源（可配 `PLAYWRIGHT_DOWNLOAD_HOST` 镜像加速）
   2. 失败则回落调用 [chocolatey.org](https://chocolatey.org) API 查询并安装 Chromium
   3. 两条链路都失败时 GUI 会给出提示，可手动点右上角「安装 Chromium」重试
-- **数据存放位置**：`%APPDATA%\MS Rewards Auto\storage\`
+- **数据存放位置**：`%APPDATA%\ms-rewards-auto\storage\`
 
   安装目录（可能位于 `Program Files`）不写入任何运行时数据，所有账户配置、登录态、浏览器 profile 都在上述 userData 路径下，卸载时**默认不删除**，重装后账户仍在。
 
@@ -114,7 +114,7 @@ storage/
 
 ### 卸载
 
-从「设置 → 应用」或开始菜单卸载。账户数据不会被删除，如需彻底清理请手动删除 `%APPDATA%\MS Rewards Auto\`。
+从「设置 → 应用」或开始菜单卸载。账户数据不会被删除，如需彻底清理请手动删除 `%APPDATA%\ms-rewards-auto\`。
 
 ## 从源码运行（开发者）
 
@@ -245,7 +245,7 @@ node src/main.js browser        # 检查 Chromium
 | 授权登录后仍显示未登录 | 检查网络是否被代理干扰，重新点「授权登录」 |
 | 修改全局设置后某些账户没生效 | 检查该账户是否关闭了「遵循全局设置」开关 |
 | 从旧版升级后配置丢失 | 旧版账户配置已自动迁移：全局文件不存在时提升为全局设置 |
-| 安装版看不到源码版的账号 | 两者存储目录隔离，安装版数据在 `%APPDATA%\MS Rewards Auto\storage\`，需重新添加账号 |
+| 安装版看不到源码版的账号 | 两者存储目录隔离，安装版数据在 `%APPDATA%\ms-rewards-auto\storage\`，需重新添加账号 |
 | 安装版首次启动卡在下载 Chromium | 约 150MB，取决于网速；也可关掉应用后手动 `choco install chromium` 再启动 |
 | 打包时报 winCodeSign 符号链接失败 | 确认 `build.win.signAndEditExecutable` 为 `false`（本仓库已配置） |
 
