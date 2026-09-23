@@ -1,6 +1,6 @@
 # 第三方声明（Third Party Notices）
 
-本文件列出 Microsoft Rewards Auto（以下简称「本软件」）在构建与分发过程中使用或随安装包分发的第三方组件及其许可。
+本文件列出 MS Rewards Auto（以下简称「本软件」）在构建与分发过程中使用或随安装包分发的第三方组件及其许可。
 
 本软件自身代码按 **MIT License** 分发（见根目录 `LICENSE`）。
 

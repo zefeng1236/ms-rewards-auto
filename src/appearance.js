@@ -141,8 +141,8 @@ function get() {
     bgRotate: clampRotate(raw.bgRotate === undefined ? DEFAULTS.bgRotate : raw.bgRotate),
     bgBlur: clampBlur(raw.bgBlur === undefined ? DEFAULTS.bgBlur : raw.bgBlur),
     bgDim: clampDim(raw.bgDim === undefined ? DEFAULTS.bgDim : raw.bgDim),
-    glass: raw.glass === true,
-    pointerHalo: raw.pointerHalo === true,
+    glass: raw.glass !== false,
+    pointerHalo: raw.pointerHalo !== false,
     autoTheme: raw.autoTheme === true,
     bgResolved:
       resolved && typeof resolved.url === "string" && typeof resolved.date === "string"

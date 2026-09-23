@@ -10,7 +10,7 @@ import type { FingerprintStatus, InstallProgress, SetupState } from "../types";
 /** 恢复密钥 txt 的内容（含使用说明，避免用户只存到一串字符不知用途） */
 function buildRecoveryText(key: string): string {
   return [
-    "Microsoft Rewards 自动化工具 - 恢复密钥",
+    "MS Rewards 自动化工具 - 恢复密钥",
     "",
     `生成时间：${new Date().toISOString()}`,
     "",
@@ -61,7 +61,7 @@ const DOC_TEXT: Record<DocKey, string[]> = {
     "## 一、我们收集什么",
     "本软件是一款运行在您本机电脑上的桌面工具。您的 Microsoft 账户登录态（Cookie）、积分数据、推送通道地址等敏感信息，一律保存在您本机的数据目录中，不会上传到任何由本软件维护的服务器——因为本软件根本没有服务器。",
     "## 二、我们如何使用这些信息",
-    "登录态仅用于在您主动触发时，代替您访问 Microsoft Rewards 页面完成签入、阅读、搜索等任务；推送通道地址仅用于在任务结束后把结果发送到您自己填写的企业微信 / 钉钉 / 飞书 / Bark 等地址。除此以外不会用于任何其他用途。",
+    "登录态仅用于在您主动触发时，代替您访问 MS Rewards 页面完成签入、阅读、搜索等任务；推送通道地址仅用于在任务结束后把结果发送到您自己填写的企业微信 / 钉钉 / 飞书 / Bark 等地址。除此以外不会用于任何其他用途。",
     "## 三、信息的存储与删除",
     "所有数据以明文 JSON 与浏览器配置文件的形式存放在本机应用数据目录。您随时可以在软件内删除账户，或卸载软件并手动删除数据目录来彻底清除。卸载软件不会自动删除数据目录，如需彻底清理请自行删除。",
     "## 四、第三方服务",
@@ -75,7 +75,7 @@ const DOC_TEXT: Record<DocKey, string[]> = {
   ],
   terms: [
     "## 一、服务说明",
-    "本软件为开源的个人效率工具，以「现状」提供，不保证功能永不中断、不出错或永远兼容。Microsoft Rewards 的页面结构、接口与风控策略随时可能变化，由此导致的任务失败本软件不承担责任。",
+    "本软件为开源的个人效率工具，以「现状」提供，不保证功能永不中断、不出错或永远兼容。MS Rewards 的页面结构、接口与风控策略随时可能变化，由此导致的任务失败本软件不承担责任。",
     "## 二、用户义务",
     "您承诺仅将本软件用于您本人拥有合法权益的账户，且遵守 Microsoft 服务协议以及您所在国家或地区的法律法规。您不得将本软件用于批量注册、刷量、牟利、转售或任何侵犯他人权益的行为。",
     "## 三、账号与登录",
@@ -172,6 +172,7 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
             <PagePersonalize
               liquidGlass={state.liquidGlass}
               autoLaunch={state.autoLaunch}
+              launchToTray={state.launchToTray}
               onChange={(p) => void patch(p)}
             />
           )}
@@ -229,9 +230,9 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
 function PageWelcome({ lang, onLang }: { lang: string; onLang: (v: string) => void }) {
   return (
     <div className="wz-page wz-welcome">
-      <h2>欢迎使用 Microsoft Rewards Auto</h2>
+      <h2>欢迎使用 MS Rewards Auto</h2>
       <p className="wz-lead">
-        一款运行在你自己电脑上的微软积分自动任务工具：多账户隔离、任务进度可视、
+        一款运行在你自己电脑上的MS积分自动任务工具：多账户隔离、任务进度可视、
         运行汇总推送。接下来几步会帮你完成必要的初始设置。
       </p>
 
@@ -325,7 +326,7 @@ function PageNotice() {
   return (
     <div className="wz-page wz-notice">
       <div className="wz-alert">
-        <strong>本软件非微软官方授权产品</strong>
+        <strong>本软件非MS官方授权产品</strong>
         <span>仅供个人学习和交流使用，与 Microsoft Corporation 无任何关联</span>
       </div>
 
@@ -565,7 +566,7 @@ function PageVault({ onNext }: { onNext: () => void }) {
     <div className="wz-page wz-vault">
       <h2>加密你的账户登录态</h2>
       <p className="wz-lead">
-        启用后，微软登录 Cookie 与令牌会用<strong>只有你才知道</strong>的密码加密后再存到本机，
+        启用后，MS登录 Cookie 与令牌会用<strong>只有你才知道</strong>的密码加密后再存到本机，
         磁盘上不再留明文。
         {IS_WEB
           ? "下一步把恢复密钥存到本机浏览器，之后打开网页点一下就登录，不用每次输密码。"
@@ -687,7 +688,7 @@ function PageVault({ onNext }: { onNext: () => void }) {
           <div className="wz-modal">
             <h3>确定不设置密码吗？</h3>
             <p className="wz-modal-lead">
-              关闭后，微软登录 Cookie 与令牌将以<strong>明文</strong>存放在本机数据目录。
+              关闭后，MS登录 Cookie 与令牌将以<strong>明文</strong>存放在本机数据目录。
               一旦电脑被他人使用、或数据目录被拷贝/同步，登录态就会<strong>直接泄露</strong>。
             </p>
             <p className="wz-modal-sug">
@@ -741,16 +742,18 @@ function PageVault({ onNext }: { onNext: () => void }) {
 function PagePersonalize({
   liquidGlass,
   autoLaunch,
+  launchToTray,
   onChange,
 }: {
   liquidGlass: boolean;
   autoLaunch: boolean;
+  launchToTray: boolean;
   onChange: (p: Partial<SetupState>) => void;
 }) {
   return (
     <div className="wz-page wz-init">
       <h2>个性化初始设置</h2>
-      <p className="wz-lead">下面两项随时可以在「个性化」和「启动与托盘」页面里再改。</p>
+      <p className="wz-lead">下面这些选项随时可以在「个性化」和「启动与托盘」页面里再改。</p>
 
       <button
         type="button"
@@ -771,22 +774,40 @@ function PagePersonalize({
 
       {/* 开机自启是桌面端语义：Docker 版由 compose 的 restart 策略负责，隐藏掉避免误导 */}
       {!IS_WEB && (
-        <button
-          type="button"
-          className={`wz-opt${autoLaunch ? " on" : ""}`}
-          onClick={() => onChange({ autoLaunch: !autoLaunch })}
-        >
-          <span className="wz-opt-main">
-            <strong>开机自动启动</strong>
-            <span className="wz-switch" data-on={autoLaunch ? "1" : "0"}>
-              <span className="wz-knob" />
+        <>
+          <button
+            type="button"
+            className={`wz-opt${autoLaunch ? " on" : ""}`}
+            onClick={() => onChange({ autoLaunch: !autoLaunch, launchToTray: autoLaunch ? false : launchToTray })}
+          >
+            <span className="wz-opt-main">
+              <strong>开机自动启动</strong>
+              <span className="wz-switch" data-on={autoLaunch ? "1" : "0"}>
+                <span className="wz-knob" />
+              </span>
             </span>
-          </span>
-          <span className="wz-opt-sub">
-            把本软件注册到系统登录项，开机后自动运行（默认最小化到托盘，不打扰你）。
-            若你只是偶尔用一次，建议关闭。
-          </span>
-        </button>
+            <span className="wz-opt-sub">
+              把本软件注册到系统登录项，开机后自动运行。若你只是偶尔用一次，建议关闭。
+            </span>
+          </button>
+
+          <button
+            type="button"
+            className={`wz-opt${launchToTray ? " on" : ""}${autoLaunch ? "" : " off"}`}
+            disabled={!autoLaunch}
+            onClick={() => autoLaunch && onChange({ launchToTray: !launchToTray })}
+          >
+            <span className="wz-opt-main">
+              <strong>开机后隐藏到托盘</strong>
+              <span className="wz-switch" data-on={launchToTray ? "1" : "0"}>
+                <span className="wz-knob" />
+              </span>
+            </span>
+            <span className="wz-opt-sub">
+              开机自启时不弹出主窗口，只在托盘后台待命；关闭开机自启后此项自动失效。
+            </span>
+          </button>
+        </>
       )}
     </div>
   );
@@ -813,7 +834,7 @@ function PageFingerprint({ onCanProceed }: { onCanProceed: (v: boolean) => void 
   // enable=false 等价于「跳过」：写进全局配置后与设置页、主进程回落逻辑同一口径
   const [enable, setEnable] = useState(true);
   // 与主进程 DEFAULT_MIRROR / config.js 默认值保持一致；真实值由下面 setGlobalConfig 读到后覆盖
-  const [mirror, setMirror] = useState("auto");
+  const [mirror, setMirror] = useState("cdn.gh-proxy.org");
   const [st, setSt] = useState<FingerprintStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<InstallProgress | null>(null);
@@ -842,7 +863,9 @@ function PageFingerprint({ onCanProceed }: { onCanProceed: (v: boolean) => void 
 
   useEffect(() => {
     api.onFingerprintStatus((v) => setSt(v));
-    const off = api.onInstallProgress((p) => setProgress(p));
+    const off = api.onInstallProgress((p) => {
+      if (p.stage === "fingerprint" || p.stage === "fingerprint/download") setProgress(p);
+    });
     return () => {
       if (off) off();
     };
@@ -878,6 +901,12 @@ function PageFingerprint({ onCanProceed }: { onCanProceed: (v: boolean) => void 
     }
   };
 
+  const onCancelInstall = async () => {
+    const r = await api.cancelFingerprintInstall();
+    if (r.ok) toast.info("正在取消指纹浏览器下载…");
+    else setErr(r.error || "取消失败");
+  };
+
   const onInstall = async () => {
     setBusy(true);
     setErr("");
@@ -886,6 +915,8 @@ function PageFingerprint({ onCanProceed }: { onCanProceed: (v: boolean) => void 
       const r = await api.installFingerprint({ force: false });
       if (r.ok) {
         toast.success(r.skipped ? "指纹浏览器已是该版本" : "指纹浏览器安装完成（已校验完整性）");
+      } else if (r.canceled) {
+        toast.info("已取消指纹浏览器下载");
       } else {
         setErr(r.error || "下载失败，可换个加速源重试");
       }
@@ -955,11 +986,11 @@ function PageFingerprint({ onCanProceed }: { onCanProceed: (v: boolean) => void 
             <div className="wz-fp-act">
               <button
                 type="button"
-                className="wz-dl"
-                onClick={() => void onInstall()}
-                disabled={skip || busy || !!st?.ready}
+                className={`wz-dl${busy ? " danger" : ""}`}
+                onClick={() => (busy ? void onCancelInstall() : void onInstall())}
+                disabled={skip || !!st?.ready}
               >
-                {st?.ready ? "已安装 ✓" : busy ? "下载中…" : "立即下载"}
+                {st?.ready ? "已安装 ✓" : busy ? "取消下载" : "立即下载"}
               </button>
               <div className="wz-fp-prog">
                 {busy ? (

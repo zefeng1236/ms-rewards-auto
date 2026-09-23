@@ -262,7 +262,7 @@ export function Dashboard({ onOpenAccount }: { onOpenAccount?: (id: string) => v
               <GlassButton variant="glassProminent" controlSize="small"
                 onClick={() => void onLogin(a)}
                 disabled={running || loggingInId === a.id}
-                title="弹出浏览器完成微软授权登录"
+                title="弹出浏览器完成MS授权登录"
               >
                 {loggingInId === a.id ? "登录中…" : "去登录"}
               </GlassButton>

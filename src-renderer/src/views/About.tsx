@@ -34,7 +34,7 @@ async function copyText(text: string): Promise<boolean> {
   }
 }
 
-const APP_VERSION = "0.10.1";
+const APP_VERSION = "0.11.0";
 
 /** 直接依赖（package.json 中声明的运行时依赖） */
 const DIRECT_DEPS: { name: string; version: string; license: string; desc: string; url: string }[] = [
@@ -124,7 +124,7 @@ const CREDITS: Credit[] = [
     name: "潘钜森",
     initial: "潘",
     role: "原始作者",
-    desc: "《微软积分商城签到》脚本原作者，本项目的接口调用方式源自他的实现",
+    desc: "《MS积分商城签到》脚本原作者，本项目的接口调用方式源自他的实现",
     links: [
       { label: "GitHub", href: "https://github.com/geosam/FuckScripts" },
       { label: "ScriptCat", href: "https://scriptcat.org/zh-CN/users/27974" },
@@ -135,7 +135,7 @@ const CREDITS: Credit[] = [
     name: "SDSmalin",
     initial: "S",
     role: "改进版",
-    desc: "维护《微软积分商城签到（改进版）》，本项目参考其中的改进实现",
+    desc: "维护《MS积分商城签到（改进版）》，本项目参考其中的改进实现",
     links: [{ label: "ScriptCat", href: "https://scriptcat.org/zh-CN/users/211564" }],
   },
   {
@@ -143,7 +143,7 @@ const CREDITS: Credit[] = [
     name: "DuskLight",
     initial: "D",
     role: "改进版",
-    desc: "发布《微软积分商城签到（改进版）》，本项目参考其活动处理逻辑",
+    desc: "发布《MS积分商城签到（改进版）》，本项目参考其活动处理逻辑",
     links: [{ label: "ScriptCat", href: "https://scriptcat.org/zh-CN/users/187483" }],
   },
   {
@@ -151,7 +151,7 @@ const CREDITS: Credit[] = [
     name: "withfeel",
     initial: "W",
     role: "分离获取授权版",
-    desc: "发布《微软积分商城签到（改进版）-分离获取授权》，「授权与任务分离」的思路被本项目采用",
+    desc: "发布《MS积分商城签到（改进版）-分离获取授权》，「授权与任务分离」的思路被本项目采用",
     links: [{ label: "ScriptCat", href: "https://scriptcat.org/zh-CN/users/207134" }],
   },
 ];
@@ -218,11 +218,11 @@ export function About() {
           <div className="about-hero">
             <img className="about-logo" src="./icon.png" alt="" draggable={false} />
             <div style={{ minWidth: 0 }}>
-              <div className="about-name">Microsoft Rewards Auto</div>
+              <div className="about-name">MS Rewards Auto</div>
               <div className="about-ver">版本 v{APP_VERSION} · MIT License</div>
               <div className="hint" style={{ marginTop: 6 }}>
                 Electron + Playwright 多账户自动任务工具。本软件为个人学习交流用途的开源项目，
-                <b>非微软官方授权产品</b>，与 Microsoft Corporation 无任何关联。
+                <b>非MS官方授权产品</b>，与 Microsoft Corporation 无任何关联。
               </div>
             </div>
           </div>
@@ -345,7 +345,7 @@ export function About() {
           </div>
 
           <div className="hint" style={{ marginTop: 14 }}>
-            以上脚本均服务于 Microsoft Rewards 场景，版权归各自作者所有。本项目仅在接口调用方式上
+            以上脚本均服务于 MS Rewards 场景，版权归各自作者所有。本项目仅在接口调用方式上
             参考其实现，未包含其源代码。
           </div>
         </AppCard>

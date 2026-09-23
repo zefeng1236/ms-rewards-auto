@@ -25,7 +25,7 @@ services:
         # （阿里云当时 10.6，原默认值，已换掉；换源只影响首次构建）
         NPM_REGISTRY: https://registry.npmmirror.com
         DEBIAN_MIRROR: https://mirror.nju.edu.cn/debian
-    image: ms-rewards-auto:0.10.1
+    image: ms-rewards-auto:0.11.0
     container_name: ms-rewards
     restart: unless-stopped
 
@@ -113,9 +113,9 @@ services:
       retries: 3
 
 # ---------------------------------------------------------------------------
-# 首次授权登录辅助（仅需要微软 OAuth 手动登录时）
+# 首次授权登录辅助（仅需要MS OAuth 手动登录时）
 #   noVNC 已内置在 ms-rewards 容器里，随服务一起启动（MS_REWARDS_ENABLE_NOVNC=1）：
-#   浏览器打开 http://<服务器IP>:6080 → 在里面完成微软登录
+#   浏览器打开 http://<服务器IP>:6080 → 在里面完成MS登录
 #   然后：docker exec -it ms-rewards node src/main.js login 1
 #   不需要就把它置 0 并删掉 6080 映射，图形栈完全不会拉起。
 #

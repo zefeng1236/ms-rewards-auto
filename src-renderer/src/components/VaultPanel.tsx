@@ -9,7 +9,7 @@ import type { VaultStatus } from "../types";
 /** 恢复密钥 txt 的内容（含用途说明，避免只存一串字符日后不知是什么） */
 function buildRecoveryText(key: string): string {
   return [
-    "Microsoft Rewards 自动化工具 - 恢复密钥",
+    "MS Rewards 自动化工具 - 恢复密钥",
     "",
     `生成时间：${new Date().toISOString()}`,
     "",

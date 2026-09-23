@@ -146,6 +146,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         libhash-merge-simple-perl \
         fluxbox \
     ; \
+    # Debian Fluxbox theme launches fbsetbg for its bundled JPEG, but no image backend is installed.
+    # Remove the theme wallpaper directives; Fluxbox remains the persistent window manager.
+    sed -i '/^background:[[:space:]]/d; /^background[.]pixmap:/d' /usr/share/fluxbox/styles/Squared_for_Debian/theme.cfg; \
     # KasmVNC deb 装在第二阶段（不在 cache mount 下，避免半成品污染 apt 缓存）。
     # 镜像里预装 + 缓存版本号 ARG，将来上游发版只改这一处。
     rm -rf /var/lib/apt/lists/*; \
@@ -208,12 +211,11 @@ RUN usermod -aG ssl-cert node
 # 直接 shutting down server，并误报 "Xvnc seems to be deadlocked" 杀掉 Xkasmvnc。
 # 必须有常驻 WM 兜底（fluxbox）。这里预建 xstartup（exec fluxbox），并放一个
 # .de-was-selected 标记让 select-de.sh 别再去猜桌面环境。
-RUN mkdir -p /home/node/.vnc /home/node/.fluxbox \
+RUN mkdir -p /home/node/.vnc \
     && printf '#!/bin/sh\nexec fluxbox\n' > /home/node/.vnc/xstartup \
-    && printf 'background: none\n' > /home/node/.fluxbox/overlay \
     && chmod +x /home/node/.vnc/xstartup \
     && touch /home/node/.vnc/.de-was-selected \
-    && chown -R node:node /home/node/.vnc /home/node/.fluxbox
+    && chown -R node:node /home/node/.vnc
 
 RUN mkdir -p /data/storage && chown -R node:node /data /app /home/node /etc/kasmvnc
 VOLUME ["/data"]

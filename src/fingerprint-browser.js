@@ -99,15 +99,13 @@ const MIRROR_OPTIONS = [
 /**
  * 默认镜像源：配置缺失/为空/写了未知值时都退回它。
  *
- * = "auto"，即**先实测各节点延迟，最快的排最前，失败自动顺着链往下回落**。
- * 不写死某个节点：每个用户的运营商/地域不同（实测过同一时刻这里 cdn 只有
- * 0.94 MB/s 而 axisnow 有 11.31，海外用户则可能直连最快），任何写死的默认值
- * 都只对写下它的那一刻那台机器成立。
+ * = "cdn.gh-proxy.org"。用户实测该节点在多数国内电脑上速度更快、延迟更低；
+ * 仍保留 auto 选项用于按延迟自动排序，并在下载失败时沿镜像链回落。
  *
  * ⚠️ 改这个值必须同步 src/config.js 与 src/global-config.js 的
  * browser.fingerprint.mirror 默认值（selfcheck 有跨文件一致性守卫）。
  */
-const DEFAULT_MIRROR = "auto";
+const DEFAULT_MIRROR = "cdn.gh-proxy.org";
 
 /**
  * 各镜像节点的连通延迟（毫秒）。
@@ -571,7 +569,16 @@ function sha256File(file) {
  * 已存在的文件用 Range 续写；服务器不支持 Range（返回 200 而非 206）时从头重写。
  * @param {number} [knownTotal] 权威总长度（见 probeTotal），用于验收
  */
-async function downloadOnce(url, dest, onProgress, knownTotal, allowResume) {
+function throwIfAborted(signal) {
+  if (signal && signal.aborted) {
+    const err = new Error("下载已取消");
+    err.canceled = true;
+    throw err;
+  }
+}
+
+async function downloadOnce(url, dest, onProgress, knownTotal, allowResume, signal) {
+  throwIfAborted(signal);
   let start = 0;
   if (allowResume !== false) {
     try {
@@ -586,12 +593,21 @@ async function downloadOnce(url, dest, onProgress, knownTotal, allowResume) {
   // 注意不能用 AbortSignal.timeout —— 它会在超时后连 body 读取一起 abort；
   // 这里只在「拿到响应头之前」计时，拿到头就撤表，body 交给空闲超时与熔断管。
   const ac = new AbortController();
+  const onAbort = () => ac.abort();
+  if (signal) {
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+  }
   const headerTimer = setTimeout(() => ac.abort(), HEADER_TIMEOUT_MS);
   let res;
   try {
     res = await fetch(url, { headers, redirect: "follow", signal: ac.signal });
+  } catch (e) {
+    throwIfAborted(signal);
+    throw e;
   } finally {
     clearTimeout(headerTimer);
+    if (signal) signal.removeEventListener("abort", onAbort);
   }
 
   // 416 = 本地已写字节超过远端长度（多半是上次下到一半换了版本）→ 重来
@@ -600,8 +616,9 @@ async function downloadOnce(url, dest, onProgress, knownTotal, allowResume) {
       fs.rmSync(dest, { force: true });
     } catch {}
     start = 0;
-    const again = await fetch(url, { redirect: "follow" });
-    return pipeTo(again, dest, 0, onProgress);
+    throwIfAborted(signal);
+    const again = await fetch(url, { redirect: "follow", signal });
+    return pipeTo(again, dest, 0, onProgress, knownTotal, signal);
   }
   if (res.status !== 200 && res.status !== 206) {
     throw new Error(`HTTP ${res.status}`);
@@ -622,7 +639,7 @@ async function downloadOnce(url, dest, onProgress, knownTotal, allowResume) {
     }
   }
   const resumed = res.status === 206 && start > 0;
-  return pipeTo(res, dest, resumed ? start : 0, onProgress, knownTotal);
+  return pipeTo(res, dest, resumed ? start : 0, onProgress, knownTotal, signal);
 }
 
 /**
@@ -641,7 +658,8 @@ function expectedTotal(res, start) {
   return 0;
 }
 
-async function pipeTo(res, dest, start, onProgress, knownTotal) {
+async function pipeTo(res, dest, start, onProgress, knownTotal, signal) {
+  throwIfAborted(signal);
   if (!res.body) throw new Error("响应没有 body");
   // 进度显示用响应自报长度，验收用权威总长度（knownTotal 优先）
   const total = expectedTotal(res, start);
@@ -658,6 +676,7 @@ async function pipeTo(res, dest, start, onProgress, knownTotal) {
 
   try {
     for (;;) {
+      throwIfAborted(signal);
       let timer = null;
       const idle = new Promise((_, reject) => {
         timer = setTimeout(() => {
@@ -667,10 +686,30 @@ async function pipeTo(res, dest, start, onProgress, knownTotal) {
         }, IDLE_TIMEOUT_MS);
       });
       let chunk;
+      let abortTimer = null;
+      const aborted = new Promise((_, reject) => {
+        if (!signal) return;
+        if (signal.aborted) {
+          try {
+            reader.cancel();
+          } catch {}
+          reject(Object.assign(new Error("下载已取消"), { canceled: true }));
+          return;
+        }
+        const onAbort = () => {
+          try {
+            reader.cancel();
+          } catch {}
+          reject(Object.assign(new Error("下载已取消"), { canceled: true }));
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+        abortTimer = () => signal.removeEventListener("abort", onAbort);
+      });
       try {
-        chunk = await Promise.race([reader.read(), idle]);
+        chunk = signal ? await Promise.race([reader.read(), idle, aborted]) : await Promise.race([reader.read(), idle]);
       } finally {
         if (timer) clearTimeout(timer);
+        if (abortTimer) abortTimer();
       }
       const { done, value } = chunk;
       if (done) break;
@@ -731,7 +770,8 @@ async function pipeTo(res, dest, start, onProgress, knownTotal) {
 /**
  * 按镜像链下载，中途失败换下一个镜像并复用已下载的部分。
  */
-async function downloadAsset(version, onProgress, mirror) {
+async function downloadAsset(version, onProgress, mirror, signal) {
+  throwIfAborted(signal);
   const asset = assetName(version);
   const raw = releaseUrl(version);
   if (!asset || !raw) throw new Error(`当前平台（${process.platform}）不提供指纹浏览器`);
@@ -755,18 +795,20 @@ async function downloadAsset(version, onProgress, mirror) {
   // 两轮：第一轮允许续传（省带宽）；一轮下来全挂过就清掉分片从头再来一次，
   // 排除「分片不可信 / 连接僵死」这类只在续传路径上出现的问题。
   for (const allowResume of [true, false]) {
+    throwIfAborted(signal);
     if (!allowResume) {
       try {
         fs.rmSync(dest, { force: true });
       } catch {}
     }
   for (const prefix of mirrors) {
+    throwIfAborted(signal);
     const label = prefix ? prefix.replace(/\/$/, "") : "直连";
     try {
       if (onProgress) onProgress({ stage: "fingerprint/download", message: `下载源: ${label}`, pct: 0 });
       const r = await downloadOnce(prefix + raw, dest, (p) =>
         onProgress({ ...p, stage: "fingerprint/download", mirror: label })
-      , total, allowResume);
+      , total, allowResume, signal);
       const size = fs.existsSync(dest) ? fs.statSync(dest).size : 0;
       // 镜像出错时常常是 200 + 一个 HTML 错误页，按体积与长度双校验拦掉
       if (size < MIN_ASSET_BYTES) throw new Error(`文件过小（${fmtSize(size)}），疑似镜像返回了错误页`);
@@ -784,6 +826,7 @@ async function downloadAsset(version, onProgress, mirror) {
       }
       return { file: dest, size, mirror: label };
     } catch (e) {
+      if (e && e.canceled) throw e;
       lastErr = e;
       logger.warn(`指纹浏览器下载失败（${label}）: ${e.message}`);
       // 两种情况本地分片都不可信，必须清掉从头再来：
@@ -875,12 +918,14 @@ function assertExtracted(dir, method) {
 async function install(opts) {
   const o = opts || {};
   const version = o.version || PINNED_VERSION;
+  const signal = o.signal;
   const report = (p) => {
     const payload = { stage: "fingerprint", ...p };
     logger.log("依赖", `[${payload.stage}] ${p.message || ""}`.trim());
     if (o.onProgress) o.onProgress(payload);
   };
 
+  throwIfAborted(signal);
   if (!isSupported()) {
     return { ok: false, error: `当前平台（${process.platform}）暂不支持指纹浏览器` };
   }
@@ -907,12 +952,13 @@ async function install(opts) {
   report({ message: `准备下载指纹浏览器 ${version}（约 181MB，${mirrorLabel}）`, pct: 0 });
   let file;
   try {
-    const dl = await downloadAsset(version, (p) => report(p), o.mirror);
+    const dl = await downloadAsset(version, (p) => report(p), mirrorKey, signal);
     file = dl.file;
     report({ message: `下载完成（${fmtSize(dl.size)}，来源 ${dl.mirror}），开始解压…`, pct: 100 });
   } catch (e) {
-    report({ message: `下载失败: ${e.message}` });
-    return { ok: false, error: e.message };
+    const canceled = !!(e && e.canceled);
+    report({ message: canceled ? "下载已取消" : `下载失败: ${e.message}` });
+    return { ok: false, canceled, error: canceled ? "下载已取消" : e.message };
   }
 
   const dir = installDir();

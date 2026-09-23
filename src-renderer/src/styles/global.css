@@ -281,7 +281,68 @@ body::before {
   align-items: center;
   gap: 10px;
   padding: 6px 8px 14px;
+  position: relative;
 }
+
+/* 有新版本时挂在 logo 右上角的 NEW 徽标：点击打开更新日志弹窗。
+   刻意做成独立按钮（可聚焦 / 有 aria-label），不靠 hover title 传达信息。 */
+.nav-update-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  border: none;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  line-height: 0;
+  z-index: 1;
+}
+.nav-update-badge > span {
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: 8px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #fff;
+  background: linear-gradient(135deg, #ff5a5f, #ff2d20);
+  box-shadow: 0 1px 4px rgba(255, 45, 32, 0.5);
+  animation: navNewPulse 1.8s ease-in-out infinite;
+}
+@keyframes navNewPulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.12); }
+}
+.nav-update-badge:hover > span,
+.nav-update-badge:focus-visible > span {
+  filter: brightness(1.15);
+  animation: none;
+}
+
+/* 更新弹窗：更新日志正文可上下滑动，底部固定「立即更新 / 取消」 */
+.update-modal-body {
+  max-height: 46vh;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 13px;
+  line-height: 1.65;
+  padding-right: 4px;
+}
+.update-modal-meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+  font-size: 12px;
+  color: var(--lg-text-secondary);
+}
+.update-modal-meta b {
+  color: var(--lg-text-primary);
+}
+
 
 .nav-logo {
   width: 32px;
@@ -1972,6 +2033,12 @@ html[data-preset="opaque"] .compat-toast {
   background: rgb(59 130 246 / 0.10);
 }
 
+.wz-opt.off,
+.wz-opt:disabled {
+  opacity: 0.58;
+  cursor: not-allowed;
+}
+
 .wz-opt-main {
   display: flex;
   align-items: center;
@@ -2210,6 +2277,16 @@ html[data-preset="opaque"] .compat-toast {
   background: rgba(82, 196, 26, 0.2);
 }
 
+.wz-dl.danger {
+  border-color: rgba(255, 77, 79, 0.42);
+  background: rgba(255, 77, 79, 0.13);
+  color: #ff9c9c;
+}
+
+.wz-dl.danger:hover:not(:disabled) {
+  background: rgba(255, 77, 79, 0.22);
+}
+
 .wz-dl:disabled {
   opacity: 0.6;
   cursor: default;
@@ -2382,7 +2459,7 @@ html[data-preset="opaque"] .compat-toast {
   padding: 9px 12px;
   font: inherit;
   font-size: 13px;
-  color: inherit;
+  color: var(--text, #e9edf5);
   background: var(--field-bg, rgba(127, 127, 127, 0.1));
   border: 1px solid var(--field-border, rgba(127, 127, 127, 0.28));
   border-radius: 10px;
@@ -2391,6 +2468,11 @@ html[data-preset="opaque"] .compat-toast {
 }
 .wz-fp-sel:disabled {
   cursor: not-allowed;
+}
+
+.wz-fp-sel option {
+  color: #111827;
+  background: #ffffff;
 }
 
 .wz-fp-sel-hint {

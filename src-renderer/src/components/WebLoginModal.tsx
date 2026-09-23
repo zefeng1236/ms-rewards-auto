@@ -48,7 +48,7 @@ export function WebLoginModal({
         <ol style={{ paddingLeft: 20, margin: "8px 0" }}>
           <li>点击下方「打开远程桌面」按钮，会在新标签页打开 noVNC</li>
           <li>在 noVNC 页面中点击 <b>「连接」</b> 按钮进入远程桌面</li>
-          <li>在远程桌面的浏览器中完成微软账号授权登录</li>
+          <li>在远程桌面的浏览器中完成MS账号授权登录</li>
           <li>登录成功后远程桌面会显示「登录已完成」，返回本页面即可</li>
         </ol>
         <p className="hint">

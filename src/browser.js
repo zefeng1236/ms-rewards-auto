@@ -176,7 +176,7 @@ async function openContext(ctx, headless, opts) {
   //   headless  → 固定 1366x768，任务流程依赖稳定的窗口尺寸。
   //   headful   → 不限制视口 + 窗口最大化，跟随虚拟桌面大小。
   // 以前 headful 也写死 1366x768，而容器虚拟桌面只有 1280x800，窗口两个维度
-  // 都超出桌面 —— noVNC 里只看得到中间一小块，微软登录页的按钮落在视口外，
+  // 都超出桌面 —— noVNC 里只看得到中间一小块，MS登录页的按钮落在视口外，
   // 表现为「输入了密码但点登录没反应」（其实是按钮根本点不到）。
   const launchOpts = {
     headless,
@@ -319,8 +319,9 @@ async function syncCookies(ctx) {
     // 同样先过 bing.com 触发 SSO，再读 rewards 页
     for (const target of ["https://cn.bing.com/", "https://rewards.bing.com/earn"]) {
       try {
-        await page.goto(target, { waitUntil: "domcontentloaded", timeout: 45000 });
-        await page.waitForTimeout(1500);
+        await page.goto(target, { waitUntil: "domcontentloaded", timeout: 60000 });
+        await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
+        await page.waitForTimeout(3000);
       } catch (e) {
         logger.warn(`打开 ${target} 失败: ${e.message}`);
       }
@@ -359,6 +360,34 @@ async function syncCookies(ctx) {
  * 并同步 rewards.bing.com 的 Cookie。
  * @returns {Promise<{code: string|null, loggedIn: boolean}>}
  */
+async function waitForRewardsSession(page, context) {
+  const targets = ["https://cn.bing.com/", "https://rewards.bing.com/earn"];
+  const deadline = Date.now() + 90 * 1000;
+  let last = { loggedIn: false, cookies: [], url: page.url(), html: "" };
+  while (Date.now() < deadline) {
+    for (const target of targets) {
+      try {
+        await page.goto(target, { waitUntil: "domcontentloaded", timeout: 60000 });
+        await page.waitForLoadState("networkidle", { timeout: 12000 }).catch(() => {});
+        await page.waitForTimeout(4500);
+      } catch (e) {
+        logger.warn(`访问 ${target} 失败: ${e.message}`);
+      }
+      const url = page.url();
+      let html = "";
+      try {
+        html = await page.content();
+      } catch {}
+      const cookies = await context.cookies();
+      const loggedIn = checkLoggedIn(url, cookies, html);
+      last = { loggedIn, cookies, url, html };
+      if (loggedIn) return last;
+    }
+    logger.info("尚未抓齐 Bing / Rewards 登录信息，等待用户确认隐私政策或页面继续跳转…");
+  }
+  return last;
+}
+
 async function loginInteractive(ctx) {
   // 登录是一次全新授权，不需要注入旧 Cookie
   const handle = await openContext(ctx, false);
@@ -404,22 +433,11 @@ async function loginInteractive(ctx) {
     // 登录成功后，依次访问 bing.com 与 rewards.bing.com 完成 SSO 并同步 Cookie。
     // 必须先过一次 bing.com：授权页所在的 login.live.com 域拿不到 bing 的 _U 票据，
     // 只有实际访问过 bing 才会通过 SSO 下发，否则会一直显示「Cookie 待同步」。
-    for (const target of ["https://cn.bing.com/", "https://rewards.bing.com/earn"]) {
-      try {
-        await page.goto(target, { waitUntil: "domcontentloaded", timeout: 45000 });
-        await page.waitForTimeout(2500);
-      } catch (e) {
-        logger.warn(`访问 ${target} 失败: ${e.message}`);
-      }
-    }
-    const url = page.url();
-    let html = "";
-    try {
-      html = await page.content();
-    } catch {}
-    const cookies = await context.cookies();
+    // Microsoft 偶尔会在这里弹隐私政策更新确认，用户点「是」之后才会继续下发必要票据；
+    // 因此关闭浏览器前必须确认认证 Cookie / Rewards 页面特征已抓到，没抓齐就继续等一会儿。
+    const session = await waitForRewardsSession(page, context);
+    const { url, cookies, html, loggedIn } = session;
     ctx.state.setCookies(cookies);
-    const loggedIn = checkLoggedIn(url, cookies, html);
     const hit = cookies.filter((c) => AUTH_COOKIE_NAMES.includes(c.name)).map((c) => c.name);
     logger.info(
       `已同步 ${cookies.length} 个 Cookie，命中认证票据: ${hit.length ? hit.join(", ") : "无"}，登录状态: ${loggedIn ? "已登录" : "未登录"}`

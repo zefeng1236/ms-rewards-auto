@@ -29,7 +29,7 @@ const TASK_LABELS: { key: keyof AppConfig["tasks"]; label: string; hint?: string
 ];
 
 const IP_PROVIDER_OPTIONS: SelectOption[] = [
-  { label: "Bing 首页判定（默认，与微软 Rewards 同源）", value: "bing" },
+  { label: "Bing 首页判定（默认，与MS Rewards 同源）", value: "bing" },
   { label: "ip.sb（备用，全球 CDN、标准国家码）", value: "ipsb" },
   { label: "太平洋 IP 库（国内）", value: "pconline" },
   { label: "ipinfo.io", value: "ipinfo" },

@@ -96,8 +96,12 @@ contextBridge.exposeInMainWorld("api", {
   installBrowser: () => ipcRenderer.invoke("app:installBrowser"),
   fingerprintStatus: () => ipcRenderer.invoke("app:fingerprintStatus"),
   installFingerprint: (opts) => ipcRenderer.invoke("app:installFingerprint", opts),
+  cancelFingerprintInstall: () => ipcRenderer.invoke("app:cancelFingerprintInstall"),
   uninstallFingerprint: () => ipcRenderer.invoke("app:uninstallFingerprint"),
   checkFingerprintUpdate: () => ipcRenderer.invoke("app:checkFingerprintUpdate"),
+
+  // 应用本身更新检查（查询 GitHub Releases 最新正式版，自动加速）
+  checkAppUpdate: () => ipcRenderer.invoke("app:checkAppUpdate"),
 
   // 实时运行状态（主进程在任务开始/结束时推送）
   onRunning: (cb) => ipcRenderer.on("running", (_e, v) => cb(v)),

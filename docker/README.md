@@ -46,7 +46,7 @@ sudo systemctl daemon-reload && sudo systemctl restart docker
    换设备 / 清了浏览器数据，就用 txt 里的密钥或密码登录。
 4. **添加账户**：进主界面后「仪表盘 → 新建账户」；登录态可选
    - 把桌面版已登录好的 `storage/` 整个拷到 `./storage/`（同一把密码即可直接解锁）；
-   - 或用 noVNC 做一次微软授权登录（见下）。
+   - 或用 noVNC 做一次MS授权登录（见下）。
 
 > 「退出登录」只销毁**当前浏览器**的会话，保险库保持解锁、后台定时任务继续跑；
 > 要真正停任务，去「全局设置 → 安全 → 立即锁定」。
@@ -69,7 +69,7 @@ docker exec -it ms-rewards node src/main.js
 
 ```bash
 docker compose -f docker/docker-compose.yml --profile login up -d
-# 浏览器打开 http://<服务器IP>:6080，在里面完成微软账号登录
+# 浏览器打开 http://<服务器IP>:6080，在里面完成MS账号登录
 docker exec -it ms-rewards node src/main.js login 1
 docker compose -f docker/docker-compose.yml --profile login stop
 ```

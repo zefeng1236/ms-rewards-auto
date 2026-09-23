@@ -15,6 +15,7 @@ const logger = require("./logger");
  *   agreed      是否已勾选「已阅读并同意」协议
  *   liquidGlass 初始是否启用液态玻璃效果
  *   autoLaunch  初始是否开机自启（由主进程同步到系统登录项）
+ *   launchToTray 开机自启时是否隐藏到托盘
  */
 
 const FILE = sp.resolve("setup.json");
@@ -31,6 +32,7 @@ const DEFAULTS = {
   agreed: false,
   liquidGlass: true,
   autoLaunch: false,
+  launchToTray: false,
 };
 
 function normLang(v) {
@@ -80,6 +82,7 @@ function get() {
     agreed: raw.agreed === true,
     liquidGlass: raw.liquidGlass !== false,
     autoLaunch: raw.autoLaunch === true,
+    launchToTray: raw.launchToTray === true,
   };
   if (!out.done) return migrateUpgradedVaultUser(out);
   return out;
@@ -95,6 +98,7 @@ function set(patch) {
     agreed: merged.agreed === true,
     liquidGlass: merged.liquidGlass !== false,
     autoLaunch: merged.autoLaunch === true,
+    launchToTray: merged.launchToTray === true,
   };
   try {
     fs.writeFileSync(FILE, JSON.stringify(out, null, 2), "utf8");

@@ -7,6 +7,7 @@ import type {
   AppConfig,
   AppearanceSetResult,
   BgSrcResult,
+  CheckAppUpdateResult,
   CheckFingerprintUpdateResult,
   ChromiumStatus,
   CloseAction,
@@ -385,8 +386,10 @@ export function createWebApi(): ElectronApi {
     installBrowser: () => rpc<InstallBrowserResult>("installBrowser"),
     fingerprintStatus: () => rpc<FingerprintStatus>("fingerprintStatus"),
     installFingerprint: (opts) => rpc<InstallFingerprintResult>("installFingerprint", opts),
+    cancelFingerprintInstall: () => rpc<{ ok: boolean; error?: string }>("cancelFingerprintInstall"),
     uninstallFingerprint: () => rpc<{ ok: boolean }>("uninstallFingerprint"),
     checkFingerprintUpdate: () => rpc<CheckFingerprintUpdateResult>("checkFingerprintUpdate"),
+    checkAppUpdate: () => rpc<CheckAppUpdateResult>("checkAppUpdate"),
 
     /* ---------------- 事件订阅 ---------------- */
     onRunning: (cb) => { subscribe("running", cb as (v: never) => void); },

@@ -8,6 +8,7 @@ import type {
   AppearanceSetResult,
   BgSrcResult,
   BgProgress,
+  CheckAppUpdateResult,
   CheckFingerprintUpdateResult,
   ChromiumStatus,
   CloseAction,
@@ -134,9 +135,13 @@ export interface ElectronApi {
   fingerprintStatus(): Promise<FingerprintStatus>;
   /** 下载并安装指纹浏览器（约 181MB，走 gh-proxy 镜像链）；force 为 true 时强制重装 */
   installFingerprint(opts?: { force?: boolean }): Promise<InstallFingerprintResult>;
+  /** 取消当前指纹浏览器下载任务 */
+  cancelFingerprintInstall(): Promise<{ ok: boolean; error?: string }>;
   uninstallFingerprint(): Promise<{ ok: boolean }>;
   /** 检查更新：只查询上游版本，不下载不安装 */
   checkFingerprintUpdate(): Promise<CheckFingerprintUpdateResult>;
+  /** 应用本身更新检查：查询 GitHub Releases 最新正式版（自动加速），只查不下载 */
+  checkAppUpdate(): Promise<CheckAppUpdateResult>;
 
   // ---- 主进程推送 ----
   onRunning(cb: (v: boolean) => void): void;

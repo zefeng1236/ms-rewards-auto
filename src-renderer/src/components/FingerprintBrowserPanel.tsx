@@ -18,7 +18,7 @@ const FALLBACK: FpCfg = {
   seed: 0,
   brand: "Chrome",
   hardwareConcurrency: 0,
-  mirror: "auto",
+  mirror: "cdn.gh-proxy.org",
 };
 
 const BRAND_OPTIONS = [
@@ -59,7 +59,9 @@ export function FingerprintBrowserPanel() {
 
   useEffect(() => {
     api.onFingerprintStatus((v) => setSt(v));
-    const off = api.onInstallProgress((p) => setProgress(p));
+    const off = api.onInstallProgress((p) => {
+      if (p.stage === "fingerprint" || p.stage === "fingerprint/download") setProgress(p);
+    });
     return () => {
       if (off) off();
     };
@@ -85,6 +87,12 @@ export function FingerprintBrowserPanel() {
    * 之前这里恒传 false，主进程命中「同版本 → skipped」分支，用户点重新下载
    * 只会弹一句「已是最新版本」—— 想修坏掉的 chrome.dll 却修不了。
    */
+  const onCancelInstall = async () => {
+    const r = await api.cancelFingerprintInstall();
+    if (r.ok) toast.info("正在取消指纹浏览器下载…");
+    else toast.error(r.error || "取消失败");
+  };
+
   const onInstall = async (force: boolean) => {
     setBusy(true);
     setProgress({ pct: 0 });
@@ -96,6 +104,8 @@ export function FingerprintBrowserPanel() {
         } else {
           toast.success(force ? "指纹浏览器已重新下载并校验通过" : "指纹浏览器安装完成");
         }
+      } else if (r.canceled) {
+        toast.info("已取消指纹浏览器下载");
       } else {
         toast.error(r.error || "指纹浏览器安装失败");
       }
@@ -214,10 +224,9 @@ export function FingerprintBrowserPanel() {
                 variant="plain"
                 controlSize="small"
                 loading={busy && !progress}
-                disabled={busy}
-                onClick={() => void onInstall(!!st?.ready)}
+                onClick={() => (busy ? void onCancelInstall() : void onInstall(!!st?.ready))}
               >
-                {st?.ready ? "重新下载" : "下载并安装"}
+                {busy ? "取消下载" : st?.ready ? "重新下载" : "下载并安装"}
               </GlassButton>
               {st?.ready && (
                 <>

@@ -12,7 +12,7 @@ function ask(q) {
 function printHeader() {
   logger.plain("");
   logger.plain("=====================================");
-  logger.plain("  Microsoft Rewards 自动任务 (CLI)");
+  logger.plain("  MS Rewards 自动任务 (CLI)");
   logger.plain("=====================================");
 }
 

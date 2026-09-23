@@ -1,8 +1,8 @@
 {
   "name": "ms-rewards-auto",
-  "version": "0.10.1",
+  "version": "0.11.0",
   "buildNumber": "0",
-  "description": "微软积分（Microsoft Rewards）自动任务独立软件 · 多账户隔离 · 加密保险库 · 密码强度校验 · 每日活动/每周领取 · Electron GUI",
+  "description": "MS 积分（MS Rewards）自动任务独立软件 · 多账户隔离 · 加密保险库 · 密码强度校验 · 每日活动/每周领取 · Electron GUI",
   "main": "src/electron-main.js",
   "scripts": {
     "start": "electron .",
@@ -42,7 +42,7 @@
   },
   "build": {
     "appId": "com.hermlt.msrewards",
-    "productName": "Microsoft Rewards Auto",
+    "productName": "MS Rewards Auto",
     "copyright": "MIT License",
     "directories": {
       "output": "dist",
@@ -83,7 +83,7 @@
         }
       ],
       "icon": "build/icon.ico",
-      "artifactName": "Microsoft-Rewards-Auto-Setup-${buildVersion}.exe",
+      "artifactName": "MS-Rewards-Auto-Setup-${buildVersion}.exe",
       "signAndEditExecutable": false,
       "verifyUpdateCodeSignature": false
     },
@@ -96,7 +96,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Microsoft Rewards Auto",
+      "shortcutName": "MS Rewards Auto",
       "perMachine": false,
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",

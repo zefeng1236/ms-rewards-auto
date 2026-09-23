@@ -23,6 +23,7 @@ const notify = require("./notify");
 const cancel = require("./cancel");
 const ensureDeps = require("./ensure-deps");
 const fpBrowser = require("./fingerprint-browser");
+const appUpdate = require("./app-update");
 const appearance = require("./appearance");
 const uapi = require("./uapi");
 const launch = require("./launch");
@@ -296,6 +297,7 @@ function setRunning(v) {
  * 空闲账号不在 Map 中（前端不显示任何标记）。
  */
 const runStatus = new Map();
+let fingerprintInstallController = null;
 /** 批次运行中、用户在排队阶段就要求「停止此账号」的 id 集合（轮到时直接跳过） */
 const batchSkip = new Set();
 
@@ -471,7 +473,7 @@ function createWindow(show = true) {
     height: Math.min(900, workHeight),
     minWidth: Math.min(940, workWidth),
     minHeight: Math.min(600, workHeight),
-    title: `Microsoft Rewards 自动任务 v${displayVersion()}`,
+    title: `MS Rewards 自动任务 v${displayVersion()}`,
     backgroundColor: "#11141a",
     show,
     webPreferences: {
@@ -748,19 +750,24 @@ function startBackgroundWork() {
   }
 
   // 首次运行自动下载指纹浏览器（默认已启用；未安装时后台下载约 181MB，不阻塞 UI）
-  if (!IS_SMOKE && globalConfig.get()?.browser?.fingerprint?.enable && !fpBrowser.isReady()) {
+  if (!IS_SMOKE && globalConfig.get()?.browser?.fingerprint?.enable && !fpBrowser.isReady() && !fingerprintInstallController) {
     logger.info("检测到指纹浏览器未安装且已默认启用，后台开始自动下载…");
+    fingerprintInstallController = new AbortController();
     fpBrowser.install({
       mirror: globalConfig.get()?.browser?.fingerprint?.mirror,
+      signal: fingerprintInstallController.signal,
       onProgress: (p) => {
         try { mainWindow?.webContents?.send("install-progress", p); } catch {}
       },
     })
       .then((r) => {
-        logger.info(`后台指纹浏览器安装结果: ok=${r.ok}, skipped=${r.skipped || false}`);
+        logger.info(`后台指纹浏览器安装结果: ok=${r.ok}, skipped=${r.skipped || false}, canceled=${r.canceled || false}`);
         pushFingerprintStatus();
       })
-      .catch((e) => logger.error(`后台指纹浏览器安装失败: ${e && e.message ? e.message : e}`));
+      .catch((e) => logger.error(`后台指纹浏览器安装失败: ${e && e.message ? e.message : e}`))
+      .finally(() => {
+        fingerprintInstallController = null;
+      });
   }
 }
 
@@ -809,7 +816,7 @@ function createTray() {
     return null;
   }
   tray = new Tray(icon);
-  tray.setToolTip("Microsoft Rewards 自动任务");
+  tray.setToolTip("MS Rewards 自动任务");
   tray.setContextMenu(buildTrayMenu());
   // 左键点击：窗口可见则收起到托盘，否则唤出（与多数桌面软件一致）
   tray.on("click", () => {
@@ -960,6 +967,7 @@ function registerIpc() {
     const acc = accounts.get(id);
     if (!acc) return { ok: false, error: "账户不存在" };
     setRunning(true);
+    setAccountStatus(id, "running");
     // 设置账号日志上下文：刷新过程的日志归属到该账号，
     // 详情页「运行日志」才会显示（环形缓冲 + account-log 实时推送）
     logger.setContext(id, acc.name);
@@ -1016,6 +1024,7 @@ function registerIpc() {
           logger.warn(`刷新积分余额失败: ${e.message}`);
         }
       }
+      setAccountStatus(id, r.loggedIn ? "idle" : "warning", r.loggedIn ? "" : "未检测到登录态");
       return {
         ok: true,
         loggedIn: r.loggedIn,
@@ -1023,8 +1032,11 @@ function registerIpc() {
       };
     } catch (e) {
       logger.error(`刷新状态失败: ${e.message}`);
+      setAccountStatus(id, "error", e.message || "刷新状态失败");
       return { ok: false, error: e.message };
     } finally {
+      const s = runStatus.get(String(id));
+      if (s && s.status === "running") setAccountStatus(id, "idle");
       logger.clearContext();
       setRunning(false);
     }
@@ -1145,12 +1157,15 @@ function registerIpc() {
   ipcMain.handle("app:fingerprintStatus", () => fpBrowser.status());
   ipcMain.handle("app:installFingerprint", async (_e, opts) => {
     if (running) return { ok: false, error: "已有任务正在运行，请稍候" };
+    if (fingerprintInstallController) return { ok: false, error: "指纹浏览器正在下载，请稍候" };
+    fingerprintInstallController = new AbortController();
     setRunning(true);
     try {
       const result = await fpBrowser.install({
         force: !!(opts && opts.force),
         // 镜像源由全局配置决定（设置页可改），IPC 层不单独传，避免两处口径不一致
         mirror: globalConfig.get()?.browser?.fingerprint?.mirror,
+        signal: fingerprintInstallController.signal,
         onProgress: (p) => {
           try {
             mainWindow?.webContents?.send("install-progress", p);
@@ -1160,12 +1175,20 @@ function registerIpc() {
       pushFingerprintStatus();
       return result;
     } catch (e) {
-      logger.error(`指纹浏览器安装失败: ${e.message}`);
+      const canceled = !!(e && e.canceled);
+      if (!canceled) logger.error(`指纹浏览器安装失败: ${e.message}`);
       pushFingerprintStatus();
-      return { ok: false, error: e.message };
+      return { ok: false, canceled, error: canceled ? "下载已取消" : e.message };
     } finally {
+      fingerprintInstallController = null;
       setRunning(false);
     }
+  });
+
+  ipcMain.handle("app:cancelFingerprintInstall", () => {
+    if (!fingerprintInstallController) return { ok: false, error: "当前没有正在下载的指纹浏览器" };
+    fingerprintInstallController.abort();
+    return { ok: true };
   });
 
   ipcMain.handle("app:uninstallFingerprint", () => {
@@ -1176,6 +1199,10 @@ function registerIpc() {
 
   // 「检查更新」只查询不下载（0.9.4.18 修：此前按钮直连 install(force) 会重下 181MB）
   ipcMain.handle("app:checkFingerprintUpdate", () => fpBrowser.checkUpdate());
+
+  // 应用本身更新检查：查询 GitHub Releases 最新正式版（自动走 gh-proxy 加速）。
+  // 「立即更新」当前只打开 Release 页，不在主进程内下载/替换本体。
+  ipcMain.handle("app:checkAppUpdate", () => appUpdate.checkAppUpdate(displayVersion()));
 
   // ---- 外观个性化 ----
   ipcMain.handle("appearance:get", () => appearance.get());
@@ -1320,15 +1347,18 @@ function registerIpc() {
     const p = patch || {};
     const next = setup.set(p);
     // 向导里的初始选择要立刻落到对应子系统，而不是只记下来：
-    // 液态玻璃写进外观（并推给渲染端重画），开机自启同步到系统登录项。
+    // 液态玻璃写进外观（并推给渲染端重画），开机自启/隐藏到托盘同步到系统登录项。
     if (p.liquidGlass !== undefined) {
       const ap = appearance.set({ glass: next.liquidGlass });
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send("appearance", ap);
       }
     }
-    if (p.autoLaunch !== undefined) {
-      launch.syncLoginItems(app, launch.set({ autoLaunch: next.autoLaunch }));
+    if (p.autoLaunch !== undefined || p.launchToTray !== undefined) {
+      launch.syncLoginItems(app, launch.set({
+        autoLaunch: next.autoLaunch,
+        launchToTray: next.launchToTray,
+      }));
     }
     return next;
   });

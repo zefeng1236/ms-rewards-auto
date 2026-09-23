@@ -38,7 +38,7 @@ Var unDeleteMyData
 Function un.UnDataPagePre
   ; 页眉（MUI2 现代界面固定控件 ID）
   GetDlgItem $R0 $HWNDPARENT 1219
-  SendMessage $R0 ${WM_SETTEXT} 0 "STR:卸载 Microsoft Rewards Auto"
+  SendMessage $R0 ${WM_SETTEXT} 0 "STR:卸载 MS Rewards Auto"
   GetDlgItem $R1 $HWNDPARENT 1220
   SendMessage $R1 ${WM_SETTEXT} 0 "STR:选择是否同时删除您的个人数据"
 
@@ -49,7 +49,7 @@ Function un.UnDataPagePre
   ${EndIf}
 
   ${NSD_CreateLabel} 0 0 100% 60u \
-    "欢迎使用 Microsoft Rewards Auto 卸载向导。$\r$\n$\r$\n点击「卸载」将从本机移除程序文件。您的账户数据（加密保险库、登录态与各项设置）默认保留在本机，以后重新安装可继续使用。"
+    "欢迎使用 MS Rewards Auto 卸载向导。$\r$\n$\r$\n点击「卸载」将从本机移除程序文件。您的账户数据（加密保险库、登录态与各项设置）默认保留在本机，以后重新安装可继续使用。"
   Pop $0
 
   ${NSD_CreateCheckbox} 0 68u 100% 14u \

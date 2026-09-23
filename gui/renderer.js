@@ -1,4 +1,4 @@
-/* Microsoft Rewards 自动任务 - 渲染进程 */
+/* MS Rewards 自动任务 - 渲染进程 */
 const bridge = window.api;
 
 let accounts = [];

@@ -103,9 +103,10 @@ function makeBar(pct) {
  * 在临时目录里找 playwright 当前下载中的 zip（>=1KB 的最新文件）。
  * 返回 { bytes, file }；没找到说明还没开始写。
  */
-function statDownloadingZip() {
+function statDownloadingZip(sinceMs) {
   try {
     const tmp = os.tmpdir();
+    const minTime = Number.isFinite(sinceMs) ? sinceMs - 2000 : 0;
     const dirs = fs.readdirSync(tmp).filter((n) => n.startsWith("playwright-download-"));
     let best = null;
     for (const d of dirs) {
@@ -121,7 +122,9 @@ function statDownloadingZip() {
         const full = path.join(dp, e);
         try {
           const st = fs.statSync(full);
-          if (!best || st.size > best.bytes) best = { bytes: st.size, file: full };
+          const touched = Math.max(st.birthtimeMs || 0, st.mtimeMs || 0, st.ctimeMs || 0);
+          if (touched < minTime) continue;
+          if (!best || touched > best.touched || (touched === best.touched && st.size > best.bytes)) best = { bytes: st.size, file: full, touched };
         } catch {}
       }
     }
@@ -142,7 +145,7 @@ function startInstallProgressPoller({ stage }) {
   const tick = () => {
     if (pollStop) return;
     const now = Date.now();
-    const stat = statDownloadingZip();
+    const stat = statDownloadingZip(startedAt);
     if (stat && stat.bytes > 0) {
       const dt = (now - lastTickMs) / 1000;
       const dBytes = stat.bytes - lastBytes;

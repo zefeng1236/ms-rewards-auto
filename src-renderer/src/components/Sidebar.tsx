@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { GlassButton, GlassSurface } from "@ttqtt/liquid-glass-react";
-import { toast } from "./liquidGlassCompat";
+import { Modal, toast } from "./liquidGlassCompat";
 import { api, IS_WEB } from "../api/ipc";
 import { webLogout } from "../api/web";
 import { DISPLAY_VERSION } from "../version";
 import { useAppState } from "../hooks/useAppState";
 import type { ViewKey } from "../App";
-import type { FingerprintStatus, InstallProgress } from "../types";
+import type { CheckAppUpdateResult, FingerprintStatus, InstallProgress } from "../types";
 
 /* 线性图标（24 viewBox / stroke currentColor），随文字颜色联动 */
 const ICON_PROPS = {
@@ -144,6 +144,26 @@ export function Sidebar({
   // 靠 payload.stage 区分（指纹 = "fingerprint"），混在一起会让徽章串台。
   const [fp, setFp] = useState<FingerprintStatus | null>(null);
   const [fpProg, setFpProg] = useState<InstallProgress | null>(null);
+
+  /* 应用更新检查：启动后查一次 GitHub Releases（主进程/Web 端自动走 gh-proxy 加速）。
+     查到更新 → logo 右上角亮 NEW 徽标；点徽标弹更新日志（可滚动）+ 立即更新/取消。
+     查询失败（离线 / 仓库未开源）一律静默，不弹错误骚扰用户。 */
+  const [updateInfo, setUpdateInfo] = useState<CheckAppUpdateResult | null>(null);
+  const [updateOpen, setUpdateOpen] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    api
+      .checkAppUpdate()
+      .then((r) => {
+        if (alive && r && r.ok && r.updateAvailable) setUpdateInfo(r);
+      })
+      .catch(() => {
+        /* 静默：检查更新失败不影响主功能 */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   // Web 版的「退出登录」只在真的存在登录态时才有意义。
   // 保险库没设密码时服务端 needLogin=false、根本不下发会话，此时点按钮
@@ -287,8 +307,19 @@ export function Sidebar({
         <img className="nav-logo-img" src="./icon.png" alt="" draggable={false} />
         <div style={{ minWidth: 0 }}>
           <div className="nav-title">Rewards Auto</div>
-          <div className="nav-sub">Microsoft Rewards</div>
+          <div className="nav-sub">MS Rewards</div>
         </div>
+        {updateInfo && (
+          <button
+            type="button"
+            className="nav-update-badge"
+            aria-label={`发现新版本 ${updateInfo.latestVersion}，点击查看更新日志`}
+            title={`发现新版本 v${updateInfo.latestVersion}`}
+            onClick={() => setUpdateOpen(true)}
+          >
+            <span>NEW</span>
+          </button>
+        )}
       </div>
 
       <nav
@@ -481,6 +512,41 @@ export function Sidebar({
           v{DISPLAY_VERSION}
         </div>
       </div>
+
+      {updateInfo && (
+        <Modal
+          open={updateOpen}
+          onOpenChange={setUpdateOpen}
+          title={`发现新版本 v${updateInfo.latestVersion}`}
+          footer={
+            <>
+              <GlassButton variant="plain" controlSize="small" onClick={() => setUpdateOpen(false)}>
+                取消
+              </GlassButton>
+              <GlassButton
+                variant="glass"
+                controlSize="small"
+                onClick={() => {
+                  window.open(updateInfo.pageUrl || updateInfo.downloadUrl, "_blank", "noopener,noreferrer");
+                }}
+              >
+                立即更新
+              </GlassButton>
+            </>
+          }
+        >
+          <div className="update-modal-meta">
+            <span>当前版本 <b>v{DISPLAY_VERSION}</b></span>
+            <span>最新版本 <b>v{updateInfo.latestVersion}</b></span>
+            {updateInfo.publishedAt && (
+              <span>发布于 <b>{new Date(updateInfo.publishedAt).toLocaleString()}</b></span>
+            )}
+          </div>
+          <div className="update-modal-body">
+            {updateInfo.releaseNotes?.trim() || "本版本暂无更新说明。"}
+          </div>
+        </Modal>
+      )}
     </GlassSurface>
   );
 }

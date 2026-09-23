@@ -23,7 +23,7 @@ const DEFAULTS = {
   // 区域设置
   region: {
     lock: true, // 锁定国区（IP 非中国大陆则停止）
-    // 出口 IP / 归属地查询服务：bing（默认，用 Bing 首页 RevIpCC，与微软 Rewards 同源）| ipsb | pconline | ipinfo | ipapi | auto
+    // 出口 IP / 归属地查询服务：bing（默认，用 Bing 首页 RevIpCC，与MS Rewards 同源）| ipsb | pconline | ipinfo | ipapi | auto
     // 设为 auto 时按 ip.sb → 太平洋 → ipinfo → ip-api 依次降级，全挂再由 Bing 兜底
     ipProvider: "bing",
   },
@@ -89,7 +89,7 @@ const DEFAULTS = {
       seed: 0,         // 指纹种子（32 位整数）；0 = 按账户 ID 自动派生，保证同账号长期稳定
       brand: "Chrome", // UA / Client Hints 声明的品牌：Chrome | Edge | Opera | Vivaldi
       hardwareConcurrency: 0, // CPU 核数；0 = 由指纹种子生成
-      mirror: "auto", // 下载镜像源：auto=实测各节点延迟选最快的（推荐）；也可指定单个节点或 direct 直连
+      mirror: "cdn.gh-proxy.org", // 下载镜像源：默认 cdn.gh-proxy.org；也可指定单个节点、auto 自动测速或 direct 直连
     },
   },
   // 积分目标。可配多个，按账户总积分余额判断，可选设置奖品与详情页显示。

@@ -9,7 +9,7 @@
  */
 const fs = require("fs");
 const path = require("path");
-const { execFileSync } = require("child_process");
+const esbuild = require("esbuild");
 
 const ROOT = path.join(__dirname, "..");
 let pass = 0;
@@ -32,13 +32,14 @@ function checkTrue(name, cond, extra = "") {
 console.log("\n【1】密码强度 evaluatePassword");
 const os = require("os");
 const outFile = path.join(os.tmpdir(), "ms-rewards-pw-selfcheck.cjs");
-execFileSync(process.execPath, [
-  path.join(ROOT, "node_modules", "esbuild", "bin", "esbuild"),
-  path.join(ROOT, "src-renderer", "src", "utils", "passwordStrength.ts"),
-  "--format=cjs",
-  "--platform=node",
-  `--outfile=${outFile}`,
-]);
+esbuild.buildSync({
+  entryPoints: [path.join(ROOT, "src-renderer", "src", "utils", "passwordStrength.ts")],
+  bundle: true,
+  format: "cjs",
+  platform: "node",
+  outfile: outFile,
+  logLevel: "silent",
+});
 const { evaluatePassword } = require(outFile);
 
 // [密码, 期望 pass, 说明]
@@ -622,7 +623,7 @@ checkTrue(
 const mainSrcVer = fs.readFileSync(path.join(ROOT, "src", "electron-main.js"), "utf8");
 checkTrue(
   "窗口标题走 displayVersion()（标题栏能看出小版本号）",
-  /title: `Microsoft Rewards 自动任务 v\$\{displayVersion\(\)\}`/.test(mainSrcVer)
+  /title: `MS Rewards 自动任务 v\$\{displayVersion\(\)\}`/.test(mainSrcVer)
 );
 const serverSrcVer = fs.readFileSync(path.join(ROOT, "src", "server.js"), "utf8");
 checkTrue(
@@ -1277,7 +1278,7 @@ checkTrue(
 );
 checkTrue(
   "镜像源穿透到下载与探测（downloadAsset / probeTotal 都按配置解析镜像链）",
-  /async function downloadAsset\(version, onProgress, mirror\)/.test(fpSrc) &&
+  /async function downloadAsset\(version, onProgress, mirror(?:, signal)?\)/.test(fpSrc) &&
     /async function probeTotal\(rawUrl, version, mirror\)/.test(fpSrc) &&
     /probeTotal\(raw, version, mirror\)/.test(fpSrc)
 );
@@ -1424,7 +1425,8 @@ checkTrue(
 // —— 重新下载语义（0.10.1）——
 checkTrue(
   "设置页「重新下载」在已就绪时传 force=true（真正清除后重装）",
-  /onClick=\{\(\) => void onInstall\(!!st\?\.ready\)\}/.test(panelSrcFp) &&
+  /onClick=\{\(\) => \(busy \? void onCancelInstall\(\) : void onInstall\(!!st\?\.ready\)\)\}/.test(panelSrcFp) &&
+    /取消下载/.test(panelSrcFp) &&
     /重新下载/.test(panelSrcFp)
 );
 checkTrue(
@@ -1754,10 +1756,8 @@ checkTrue(
     /^\s*fluxbox\s*\\/m.test(dockerfileSrc)
 );
 checkTrue(
-  "预建 Fluxbox overlay 禁用主题壁纸（避免 fbsetbg 找不到后端而弹 xmessage）",
-  /mkdir -p \/home\/node\/\.vnc \/home\/node\/\.fluxbox/.test(dockerfileSrc) &&
-    /printf 'background: none\\n' > \/home\/node\/\.fluxbox\/overlay/.test(dockerfileSrc) &&
-    /chown -R node:node \/home\/node\/\.vnc \/home\/node\/\.fluxbox/.test(dockerfileSrc)
+  "Dockerfile 移除 Debian Fluxbox 主题的壁纸声明（避免 fbsetbg 弹 xmessage）",
+  /sed -i '\/\^background:\[\[:space:\]\]\/d; \/\^background\[\.\]pixmap:\/d' \/usr\/share\/fluxbox\/styles\/Squared_for_Debian\/theme\.cfg/.test(dockerfileSrc)
 );
 checkTrue(
   "KasmVNC 配置启用 GPU DRI3 加速节点（NAS 上有 /dev/dri/renderD128 即可走 VAAPI）",

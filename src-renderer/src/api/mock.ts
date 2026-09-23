@@ -55,7 +55,7 @@ const DEFAULT_CONFIG: AppConfig = {
   },
   browser: {
     // mirror 默认值必须与 src/config.js / src/global-config.js 一致（selfcheck 有跨文件守卫）
-    fingerprint: { enable: true, seed: 0, brand: "Chrome", hardwareConcurrency: 0, mirror: "auto" },
+    fingerprint: { enable: true, seed: 0, brand: "Chrome", hardwareConcurrency: 0, mirror: "cdn.gh-proxy.org" },
   },
 };
 
@@ -237,6 +237,7 @@ let mockSetup: SetupState = {
   agreed: false,
   liquidGlass: true,
   autoLaunch: false,
+  launchToTray: false,
 };
 
 // 保险库：预览模式只模拟状态流转，不做任何真实加密
@@ -277,6 +278,7 @@ function emitFpProgress(p: InstallProgress) {
 
 /** 预览模式下的「指纹浏览器是否已安装」，由 installFingerprint 置真 */
 let mockFpReady = false;
+let mockFpCancel = false;
 
 function emitStatus(id: string, status: AccountRunStatusValue, reason = "") {
   if (status === "idle") delete mockRunStatus[id];
@@ -507,6 +509,7 @@ export function createMockApi(): ElectronApi {
       ],
     }),
     installFingerprint: async () => {
+      mockFpCancel = false;
       // 预览模式：伪造一条下载进度流（约 5 秒走完），好在浏览器里直接调进度条样式与文案
       const steps: Array<[number, string]> = [
         [0, "准备下载指纹浏览器 148.0.7778.215（约 181MB，走 gh-proxy 镜像链）"],
@@ -516,12 +519,20 @@ export function createMockApi(): ElectronApi {
         [82, "校验下载完整性（308,093,440 字节）"],
       ];
       for (const [pct, message] of steps) {
+        if (mockFpCancel) {
+          emitFpProgress({ stage: "fingerprint", pct, message: "下载已取消" });
+          return { ok: false, canceled: true, error: "下载已取消" };
+        }
         // stage 必须带：侧边栏靠它把指纹进度与 Chromium 进度分开显示
         emitFpProgress({ stage: "fingerprint", pct, message });
         await sleep(950);
       }
       mockFpReady = true;
       return { ok: true, version: "148.0.7778.215", method: "mock" };
+    },
+    cancelFingerprintInstall: async () => {
+      mockFpCancel = true;
+      return { ok: true };
     },
     uninstallFingerprint: async () => ({ ok: true }),
     checkFingerprintUpdate: async () => ({
@@ -531,6 +542,19 @@ export function createMockApi(): ElectronApi {
       pinned: "148.0.7778.215",
       updateAvailable: false,
       reinstallAvailable: true,
+    }),
+    // 预览模式：伪造一个比当前版本新的正式版，方便直接看到 NEW 徽标与更新弹窗样式
+    checkAppUpdate: async () => ({
+      ok: true,
+      updateAvailable: true,
+      currentVersion: "0.11.0",
+      latestVersion: "0.12.0",
+      downloadUrl: "https://github.com/zefeng1236/ms-rewards-auto/releases/download/v0.12.0/MS-Rewards-Auto-Setup-0.12.0.exe",
+      assetName: "MS-Rewards-Auto-Setup-0.12.0.exe",
+      pageUrl: "https://github.com/zefeng1236/ms-rewards-auto/releases/tag/v0.12.0",
+      releaseNotes:
+        "- 新增应用自动检查更新（GitHub Releases，自动加速）\n- 侧边栏有新版本时显示 NEW 徽标，点击查看更新日志\n- 项目内微软/Microsoft 品牌字样统一改为 MS",
+      publishedAt: new Date().toISOString(),
     }),
 
     onRunning: noop,

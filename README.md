@@ -1,10 +1,10 @@
-# Microsoft Rewards 自动任务（多账户 · GUI）
+# MS Rewards 自动任务（多账户 · GUI）
 
-独立于浏览器油猴插件的微软积分（Microsoft Rewards）自动任务软件。基于 Electron + Playwright，提供多账户隔离、干净浏览器、图形界面与定时自动运行。
+独立于浏览器油猴插件的MS积分（MS Rewards）自动任务软件。基于 Electron + Playwright，提供多账户隔离、干净浏览器、图形界面与定时自动运行。
 
-> **当前版本：V0.10.1（正式版）** · [下载安装包](https://github.com/zefeng1236/ms-rewards-auto/releases)
+> **当前版本：V0.11.0（正式版）** · [下载安装包](https://github.com/zefeng1236/ms-rewards-auto/releases)
 >
-> ⚠️ 本软件为个人学习交流用途的开源工具，**非微软官方授权产品**，与 Microsoft Corporation 无任何关联。使用产生的风险请阅读文末免责声明。
+> ⚠️ 本软件为个人学习交流用途的开源工具，**非MS官方授权产品**，与 Microsoft Corporation 无任何关联。使用产生的风险请阅读文末免责声明。
 
 ## 核心特性
 
@@ -59,7 +59,7 @@
 │   ├── storage-path.js     # 存储目录统一解析（开发=项目根 / 打包=userData）
 │   ├── ensure-deps.js      # 运行时依赖自动补全（Playwright → chocolatey 回落）
 │   ├── state.js            # 账户状态（cookies/token/任务进度）
-│   ├── auth.js             # 微软登录授权码捕获
+│   ├── auth.js             # MS登录授权码捕获
 │   ├── browser.js          # Playwright Chromium 管理
 │   ├── tasks.js            # 任务执行（签入/阅读/活动/搜索）
 │   ├── rewards.js          # 积分查询
@@ -98,7 +98,7 @@ storage/
 
 ## 安装使用（推荐：下载安装包）
 
-前往 [Releases](https://github.com/zefeng1236/ms-rewards-auto/releases) 下载最新的 `Microsoft-Rewards-Auto-Setup-<版本>.exe`，双击运行即可。
+前往 [Releases](https://github.com/zefeng1236/ms-rewards-auto/releases) 下载最新的 `MS-Rewards-Auto-Setup-<版本>.exe`，双击运行即可。
 
 - **可自选安装目录**：安装向导非一键式，可自定义路径，默认安装到当前用户目录（无需管理员权限）
 - **自动创建快捷方式**：桌面 + 开始菜单
@@ -106,7 +106,7 @@ storage/
   1. 优先走 Playwright 官方源（可配 `PLAYWRIGHT_DOWNLOAD_HOST` 镜像加速）
   2. 失败则回落调用 [chocolatey.org](https://chocolatey.org) API 查询并安装 Chromium
   3. 两条链路都失败时 GUI 会给出提示，可手动点右上角「安装 Chromium」重试
-- **数据存放位置**：`%APPDATA%\Microsoft Rewards Auto\storage\`
+- **数据存放位置**：`%APPDATA%\MS Rewards Auto\storage\`
 
   安装目录（可能位于 `Program Files`）不写入任何运行时数据，所有账户配置、登录态、浏览器 profile 都在上述 userData 路径下，卸载时**默认不删除**，重装后账户仍在。
 
@@ -114,7 +114,7 @@ storage/
 
 ### 卸载
 
-从「设置 → 应用」或开始菜单卸载。账户数据不会被删除，如需彻底清理请手动删除 `%APPDATA%\Microsoft Rewards Auto\`。
+从「设置 → 应用」或开始菜单卸载。账户数据不会被删除，如需彻底清理请手动删除 `%APPDATA%\MS Rewards Auto\`。
 
 ## 从源码运行（开发者）
 
@@ -144,7 +144,7 @@ npm start
 ### 3. 使用步骤
 
 1. 点击「＋ 添加」创建账户（每个账户独立登录态）
-2. 选中账户 → 点击「授权登录」→ 在弹出的干净 Chromium 中完成微软登录，自动捕获授权码
+2. 选中账户 → 点击「授权登录」→ 在弹出的干净 Chromium 中完成MS登录，自动捕获授权码
 3. 勾选需要的任务（签入/阅读/活动/搜索），可调整搜索间隔与词源
 4. 点击「立即运行」或「运行全部账户」；可设置每日定时自动运行
 5. 底部为实时日志，可筛选查看，支持拖拽调整高度（快捷键 Ctrl+\` 切换显隐）
@@ -181,7 +181,7 @@ GUI 运行期间由主进程守护（每 30 秒巡检），也可纯后台运行
 ## 自行打包安装程序
 
 ```bash
-npm run pack        # 完整打包，产出 dist/Microsoft-Rewards-Auto-Setup-<版本>.exe
+npm run pack        # 完整打包，产出 dist/MS-Rewards-Auto-Setup-<版本>.exe
 npm run pack:dir    # 只产出 dist/win-unpacked/（免安装，调试用，快得多）
 ```
 
@@ -245,7 +245,7 @@ node src/main.js browser        # 检查 Chromium
 | 授权登录后仍显示未登录 | 检查网络是否被代理干扰，重新点「授权登录」 |
 | 修改全局设置后某些账户没生效 | 检查该账户是否关闭了「遵循全局设置」开关 |
 | 从旧版升级后配置丢失 | 旧版账户配置已自动迁移：全局文件不存在时提升为全局设置 |
-| 安装版看不到源码版的账号 | 两者存储目录隔离，安装版数据在 `%APPDATA%\Microsoft Rewards Auto\storage\`，需重新添加账号 |
+| 安装版看不到源码版的账号 | 两者存储目录隔离，安装版数据在 `%APPDATA%\MS Rewards Auto\storage\`，需重新添加账号 |
 | 安装版首次启动卡在下载 Chromium | 约 150MB，取决于网速；也可关掉应用后手动 `choco install chromium` 再启动 |
 | 打包时报 winCodeSign 符号链接失败 | 确认 `build.win.signAndEditExecutable` 为 `false`（本仓库已配置） |
 

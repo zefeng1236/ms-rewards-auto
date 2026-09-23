@@ -305,6 +305,28 @@ export interface CheckFingerprintUpdateResult {
   error?: string;
 }
 
+/** 应用本身的更新检查结果（查询 GitHub Releases 最新正式版，只查不下载） */
+export interface CheckAppUpdateResult {
+  ok: boolean;
+  /** 有比当前版本更新的正式版可用 */
+  updateAvailable: boolean;
+  /** 当前运行版本 */
+  currentVersion: string;
+  /** 上游最新正式版 tag（不含 v 前缀，如 "0.11.0"） */
+  latestVersion: string;
+  /** Release 资产直链（走 gh-proxy 加速的原始 GitHub URL，实际下载在浏览器里由用户完成） */
+  downloadUrl: string;
+  /** 资产文件名，如 MS-Rewards-Auto-Setup-0.11.0.exe */
+  assetName: string;
+  /** Release 页面地址（立即更新按钮默认打开这里） */
+  pageUrl: string;
+  /** Release 正文（Markdown 原文，界面自行按纯文本渲染） */
+  releaseNotes: string;
+  /** ISO 时间戳 */
+  publishedAt: string;
+  error?: string;
+}
+
 export interface InstallFingerprintResult {
   ok: boolean;
   error?: string;
@@ -314,6 +336,8 @@ export interface InstallFingerprintResult {
   method?: string;
   /** 已是目标版本、跳过下载 */
   skipped?: boolean;
+  /** 用户主动取消下载 */
+  canceled?: boolean;
 }
 
 export interface BgSrcResult {
@@ -393,6 +417,8 @@ export interface SetupState {
   liquidGlass: boolean;
   /** 初始是否开机自启 */
   autoLaunch: boolean;
+  /** 开机自启时是否隐藏到托盘 */
+  launchToTray: boolean;
 }
 
 /**
@@ -454,6 +480,7 @@ export interface InstallBrowserResult {
   ok: boolean;
   method?: string;
   error?: string;
+  canceled?: boolean;
 }
 
 /** Chromium 自动安装进度（主进程 ensureDeps.onProgress 通过 ipc "install-progress" 推送） */

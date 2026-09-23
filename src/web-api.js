@@ -30,6 +30,8 @@ const vault = require("./vault");
 const wipe = require("./wipe");
 const browser = require("./browser");
 const fpBrowser = require("./fingerprint-browser");
+const appUpdate = require("./app-update");
+const { displayVersion } = require("./version");
 const logger = require("./logger");
 const notify = require("./notify");
 const uapi = require("./uapi");
@@ -154,6 +156,7 @@ async function bgSrc(opts = {}, emitFn) {
  * @param {(type:string, payload:any)=>void} deps.emit  事件出口（SSE 广播）
  */
 function createApi({ emit }) {
+  let fingerprintInstallController = null;
   const pushAccounts = () => core.pushAccounts();
   const pushChromiumStatus = () => core.pushChromiumStatus();
 
@@ -387,7 +390,7 @@ function createApi({ emit }) {
     async login(id) {
       const r = await core.loginInteractive(id);
       if (r && !r.ok && /x server|display|cannot open/i.test(r.error || "")) {
-        r.error += "；服务器无图形环境时请先启动 noVNC：docker compose -f docker/docker-compose.yml --profile login up -d，再打开 http://<服务器IP>:6080 完成微软授权";
+        r.error += "；服务器无图形环境时请先启动 noVNC：docker compose -f docker/docker-compose.yml --profile login up -d，再打开 http://<服务器IP>:6080 完成MS授权";
       }
       return r;
     },
@@ -438,16 +441,28 @@ function createApi({ emit }) {
       return fpBrowser.status();
     },
     async installFingerprint(opts) {
-      const r = await fpBrowser.install({
-        force: !!(opts && opts.force),
-        // 与桌面端一致：镜像源由全局配置决定
-        mirror: globalConfig.get()?.browser?.fingerprint?.mirror,
-        // 进度必须转发到 SSE：侧边栏徽章靠 install-progress 显示下载百分比与速度，
-        // 不转发的话 Web 端下载 130MB 期间界面毫无反馈（桌面版见 electron-main.js）
-        onProgress: (p) => emit("install-progress", p),
-      });
-      emit("fingerprint-status", await fpBrowser.status());
-      return r;
+      if (fingerprintInstallController) return { ok: false, error: "指纹浏览器正在下载，请稍候" };
+      fingerprintInstallController = new AbortController();
+      try {
+        const r = await fpBrowser.install({
+          force: !!(opts && opts.force),
+          // 与桌面端一致：镜像源由全局配置决定
+          mirror: globalConfig.get()?.browser?.fingerprint?.mirror,
+          signal: fingerprintInstallController.signal,
+          // 进度必须转发到 SSE：侧边栏徽章靠 install-progress 显示下载百分比与速度，
+          // 不转发的话 Web 端下载 130MB 期间界面毫无反馈（桌面版见 electron-main.js）
+          onProgress: (p) => emit("install-progress", p),
+        });
+        emit("fingerprint-status", await fpBrowser.status());
+        return r;
+      } finally {
+        fingerprintInstallController = null;
+      }
+    },
+    cancelFingerprintInstall() {
+      if (!fingerprintInstallController) return { ok: false, error: "当前没有正在下载的指纹浏览器" };
+      fingerprintInstallController.abort();
+      return { ok: true };
     },
     async uninstallFingerprint() {
       const r = fpBrowser.uninstall();
@@ -457,6 +472,10 @@ function createApi({ emit }) {
     // 「检查更新」只查询不下载（0.9.4.18 修：此前按钮直连 install(force) 会重下 181MB）
     checkFingerprintUpdate() {
       return fpBrowser.checkUpdate();
+    },
+    // 应用本身更新检查：查询 GitHub Releases 最新正式版（自动走 gh-proxy 加速）。
+    checkAppUpdate() {
+      return appUpdate.checkAppUpdate(displayVersion());
     },
 
     /* --------------------------- Web 专属 --------------------------- */

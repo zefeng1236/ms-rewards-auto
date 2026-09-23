@@ -77,7 +77,7 @@ function Shell() {
       .then(setSetup)
       // 取不到向导状态时不该把用户锁在门外，直接当作已完成
       .catch(() =>
-        setSetup({ done: true, lang: "zh-CN", agreed: true, liquidGlass: true, autoLaunch: false })
+        setSetup({ done: true, lang: "zh-CN", agreed: true, liquidGlass: true, autoLaunch: false, launchToTray: false })
       );
   }, []);
 

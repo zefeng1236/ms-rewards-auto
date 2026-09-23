@@ -1,4 +1,4 @@
-// 抓取 Microsoft Rewards 官网真实积分页面（含原始 HTML，便于离线核对字段）
+// 抓取 MS Rewards 官网真实积分页面（含原始 HTML，便于离线核对字段）
 // 用法: node scripts/scrape-rewards.js
 const { chromium } = require("playwright-core");
 const fs = require("fs");
@@ -103,7 +103,7 @@ async function main() {
     saveErr(e, "initial-save");
   }
 
-  log("[wait] 请在弹出的浏览器窗口登录微软账号。页面顶部出现积分后，保持 10 秒即可（最多等 10 分钟）。");
+  log("[wait] 请在弹出的浏览器窗口登录MS账号。页面顶部出现积分后，保持 10 秒即可（最多等 10 分钟）。");
   const deadline = Date.now() + 10 * 60 * 1000;
   let loggedIn = false;
   let lastHtml = "";

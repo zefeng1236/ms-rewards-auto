@@ -83,7 +83,7 @@ async function taskSign(ctx, token) {
     state.setTaskDone("sign", state.getDateNum());
     const msg = `📅签入任务已完成！\n${state.get().signPoint > 0 ? `✨今日签入奖励：${state.get().signPoint}` : "🍵今日已签入，无法二次签入"}`;
     logger.info(msg);
-    await notify.sendText(ctx, "微软积分任务-签入", msg);
+    await notify.sendText(ctx, "MS积分任务-签入", msg);
     return { status: "done", point: state.get().signPoint };
   }
   try {
@@ -122,7 +122,7 @@ async function taskSign(ctx, token) {
       state.setTaskDone("sign", state.getDateNum());
       const msg = `📅签入任务已完成！\n${point > 0 ? `✨今日签入奖励：${point}` : "🍵今日已签入，无法二次签入"}`;
       logger.success(msg);
-      await notify.sendText(ctx, "微软积分任务-签入", msg);
+      await notify.sendText(ctx, "MS积分任务-签入", msg);
       return { status: "done", point: point || 0 };
     }
     logger.warn("签入接口返回异常，稍后重试");
@@ -220,7 +220,7 @@ async function taskRead(ctx, token) {
       state.save();
       const msg = `📖阅读任务已完成！\n✨今日阅读：${articlesTotal}/${articlesTotal} 篇`;
       logger.success(msg);
-      await notify.sendText(ctx, "微软积分任务-阅读", msg);
+      await notify.sendText(ctx, "MS积分任务-阅读", msg);
       return { status: "done", point: finalCur, articles: articlesTotal, articlesTotal };
     }
     state.get().readArticles = { done: articlesDone, total: articlesTotal };
@@ -571,7 +571,7 @@ async function taskDaily(ctx) {
     state.setTaskDone("daily", state.getDateNum());
     const msg = `📆每日活动已完成！\n✨活动积分：${donePoints}/${maxPoints || donePoints}`;
     logger.success(msg);
-    await notify.sendText(ctx, "微软积分任务-每日活动", msg);
+    await notify.sendText(ctx, "MS积分任务-每日活动", msg);
     return { status: "done", points: donePoints };
   }
 
@@ -633,7 +633,7 @@ async function taskDaily(ctx) {
     state.setTaskDone("daily", state.getDateNum());
     const msg = `📆每日活动已完成！\n✨活动积分：${donePoints}/${maxPoints || donePoints}`;
     logger.success(msg);
-    await notify.sendText(ctx, "微软积分任务-每日活动", msg);
+    await notify.sendText(ctx, "MS积分任务-每日活动", msg);
     return { status: "done", points: donePoints };
   } catch (e) {
     if (e && e.isAbort) throw e;
@@ -699,7 +699,7 @@ async function taskPromos(ctx) {
     const earnReport = earnMax > 0 ? `\n💻积分活动：${earnPoints}/${earnMax}` : "";
     const msg = `🧩积分活动任务已完成！${earnReport}`;
     logger.success(msg);
-    await notify.sendText(ctx, "微软积分任务-积分活动", msg);
+    await notify.sendText(ctx, "MS积分任务-积分活动", msg);
     return { status: "done", points: earnPoints };
   }
 
@@ -760,7 +760,7 @@ async function taskPromos(ctx) {
       state.setTaskDone("promos", state.getDateNum());
       const msg = `🧩积分活动任务已完成！${earnReport}`;
       logger.success(msg);
-      await notify.sendText(ctx, "微软积分任务-积分活动", msg);
+      await notify.sendText(ctx, "MS积分任务-积分活动", msg);
       return { status: "done", points: earnPoints };
     }
 
@@ -842,7 +842,7 @@ async function taskSearch(ctx) {
       state.save();
       const msg = "⚠️积分收入受限或账号异常，已中断今日搜索！";
       logger.error(msg);
-      await notify.sendText(ctx, "微软积分任务-搜索", msg);
+      await notify.sendText(ctx, "MS积分任务-搜索", msg);
       return { status: "restricted", progress: searchProgressSnapshot(state) };
     }
     search.pc = { progress: pcPro, max: pcMax };
@@ -938,7 +938,7 @@ async function taskSearch(ctx) {
       const mReport = search.m.max > 0 ? `\n📱手机端搜索：${realM}/${search.m.max}` : "";
       const msg = `🔍搜索任务已完成！${pcReport}${mReport}`;
       logger.success(msg);
-      await notify.sendText(ctx, "微软积分任务-搜索", msg);
+      await notify.sendText(ctx, "MS积分任务-搜索", msg);
       return { status: "done", pc: realPc, m: realM, searched, progress: searchProgressSnapshot(state) };
     }
     search.pc.progress = realPc;
