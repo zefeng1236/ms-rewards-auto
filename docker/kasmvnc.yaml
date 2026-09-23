@@ -54,6 +54,18 @@ encoding:
   max_frame_rate: 60
   rect_encoding_mode:
     rectangle_compress_threads: auto
+  # 修复「页面白块」：默认 video_encoding_mode 在画面变化面积 ≥45%（area_threshold）
+  # 且持续 5s（time_threshold）时切进 H.264/WebP 有损视频流。容器里没有 /dev/dri，
+  # openh264 软编码跟不上 60fps，浏览器端就会留下白块/花块；页面静止后服务端不再
+  # 发全量刷新，白块就一直卡在屏幕上。按官方 Extreme 预设把视频模式「有效禁用」
+  # （area 100% + time 100s，只有整屏剧烈变化才会进入），始终走无损分块编码（Tight/
+  # WebP/QOI/ZRLE）。代价：远端浏览器里看视频流量变大——控制页面场景下正确性优先。
+  video_encoding_mode:
+    enter_video_encoding_mode:
+      area_threshold: 100%
+      time_threshold: 100
+    exit_video_encoding_mode:
+      time_threshold: 3
 
 server:
   http:
