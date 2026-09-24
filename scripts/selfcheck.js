@@ -1765,15 +1765,21 @@ checkTrue(
     /gpu:\s*\n\s*hw3d:/.test(kasmYamlSrc) &&
     !/^\s*intel-media-va-driver-non-free\b/m.test(dockerfileSrc)
 );
-// 「页面白块」根因：默认视频编码模式（变化面积≥45%持续5s → H.264/WebP 有损视频流）
-// 在无 /dev/dri 的容器里软编码跟不上，浏览器端残留白块且页面静止后不再发全量刷新。
-// 按官方 Extreme 预设把 enter 阈值拉到 100%/100s「有效禁用」视频模式，始终走无损分块。
-// 注意两个键必须都在：只改 area 不改 time，视频模式仍会在整屏变化时被触发。
+// 「页面白块」历史：默认视频编码模式（变化面积≥45%持续5s → H.264/WebP 有损视频流）
+// 在无真实 VAAPI 的 VM 容器里软编码跟不上，浏览器端残留白块且页面静止后不再发全量刷新，
+// 曾按官方 Extreme 预设「有效禁用」（100%/100s）。
+// 但无损分块链路依赖 WebP/QOI（WASM 解码器受 COEP 头影响），部分浏览器渲染异常；
+// 视频模式走 H.264/WebCodecs 是兼容性最好的路径。2026-09-24 折中重新启用：
+//   enter 70%/8s（只有整屏剧烈变化才进视频模式）+ 30fps 上限 + codec 显式 h264。
+// 守卫锁死这四个值：任何一个漂移（比如又回 45%/5s 或 60fps）都会让白块或卡顿回归。
 checkTrue(
-  "kasmvnc.yaml 禁用视频编码模式（enter 阈值 100%/100s，防止软编码白块卡屏）",
-  /enter_video_encoding_mode:\s*\n\s*area_threshold:\s*100%/.test(kasmYamlSrc) &&
-    /enter_video_encoding_mode:\s*\n\s*area_threshold:\s*100%\s*\n\s*time_threshold:\s*100/.test(kasmYamlSrc) &&
-    !/area_threshold:\s*45%/.test(kasmYamlSrc)
+  "kasmvnc.yaml 视频编码模式为折中配置（enter 70%/8s + 30fps + codec h264，防白块且保浏览器兼容）",
+  /enter_video_encoding_mode:\s*\n\s*area_threshold:\s*70%/.test(kasmYamlSrc) &&
+    /enter_video_encoding_mode:\s*\n\s*area_threshold:\s*70%\s*\n\s*time_threshold:\s*8/.test(kasmYamlSrc) &&
+    /max_frame_rate:\s*30/.test(kasmYamlSrc) &&
+    /video_streaming_mode:\s*\n\s*codec:\s*h264/.test(kasmYamlSrc) &&
+    !/area_threshold:\s*45%/.test(kasmYamlSrc) &&
+    !/max_frame_rate:\s*60/.test(kasmYamlSrc)
 );
 checkTrue(
   "镜像预建 /tmp/.X11-unix（Xkasmvnc 以 node 身份跑时不会自建，日志会报 euid != 0）",

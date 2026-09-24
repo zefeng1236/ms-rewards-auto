@@ -51,21 +51,27 @@ logging:
   level: 30
 
 encoding:
-  max_frame_rate: 60
+  # 软编码缓解（2026-09-24 重新启用视频模式时同步下调）：服务器是 VM（Virtio GPU，
+  # 无真实 VAAPI 硬编），容器 6 核 CPU 跑 openh264。60fps 1080p 软编必然掉帧，
+  # 降到 30fps 把编码负载减半；无损分块模式（日常控制页面）30fps 也完全够用。
+  max_frame_rate: 30
   rect_encoding_mode:
     rectangle_compress_threads: auto
-  # 修复「页面白块」：默认 video_encoding_mode 在画面变化面积 ≥45%（area_threshold）
-  # 且持续 5s（time_threshold）时切进 H.264/WebP 有损视频流。容器里没有 /dev/dri，
-  # openh264 软编码跟不上 60fps，浏览器端就会留下白块/花块；页面静止后服务端不再
-  # 发全量刷新，白块就一直卡在屏幕上。按官方 Extreme 预设把视频模式「有效禁用」
-  # （area 100% + time 100s，只有整屏剧烈变化才会进入），始终走无损分块编码（Tight/
-  # WebP/QOI/ZRLE）。代价：远端浏览器里看视频流量变大——控制页面场景下正确性优先。
+  # 历史：默认视频编码模式（面积≥45% 持续 5s 触发）曾导致软编码白块卡屏，
+  # 一度按 Extreme 预设「有效禁用」（100%/100s）。但部分浏览器对无损分块链路的
+  # WebP/QOI（WASM 解码器受 COEP 头影响）渲染异常，而视频模式走 H.264/WebCodecs
+  # 是浏览器兼容性最好的路径（Chrome/Edge 94+、Safari 16.4+、Firefox 130+）。
+  # 折中：重新启用但**收紧触发**——面积 70% + 持续 8s，只有整屏剧烈变化（视频播放、
+  # 大面积滚动）才进视频模式，日常控制页面仍走无损分块；配合上面 30fps 上限与
+  # 显式 h264（h265/av1 软编更慢且浏览器支持面窄，不用）。
   video_encoding_mode:
     enter_video_encoding_mode:
-      area_threshold: 100%
-      time_threshold: 100
+      area_threshold: 70%
+      time_threshold: 8
     exit_video_encoding_mode:
       time_threshold: 3
+  video_streaming_mode:
+    codec: h264
 
 server:
   http:
