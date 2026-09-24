@@ -1769,13 +1769,15 @@ checkTrue(
 // 在无真实 VAAPI 的 VM 容器里软编码跟不上，浏览器端残留白块且页面静止后不再发全量刷新，
 // 曾按官方 Extreme 预设「有效禁用」（100%/100s）。
 // 但无损分块链路依赖 WebP/QOI（WASM 解码器受 COEP 头影响），部分浏览器渲染异常；
-// 视频模式走 H.264/WebCodecs 是兼容性最好的路径。2026-09-24 折中重新启用：
-//   enter 70%/8s（只有整屏剧烈变化才进视频模式）+ 30fps 上限 + codec 显式 h264。
-// 守卫锁死这四个值：任何一个漂移（比如又回 45%/5s 或 60fps）都会让白块或卡顿回归。
+// 折中阈值（70%/8s）又会在静止 3s 后退出回图像模式，问题依旧。
+// 2026-09-24 改为**常驻视频模式**：enter 1%/1s + exit 3600s（实际不退出）+ 30fps + h264。
+// 守卫锁死这五个值：任何一个漂移（比如又回 45%/5s、60fps 或 exit 3s）都会让
+// 白块/卡顿/部分浏览器显示异常回归。
 checkTrue(
-  "kasmvnc.yaml 视频编码模式为折中配置（enter 70%/8s + 30fps + codec h264，防白块且保浏览器兼容）",
-  /enter_video_encoding_mode:\s*\n\s*area_threshold:\s*70%/.test(kasmYamlSrc) &&
-    /enter_video_encoding_mode:\s*\n\s*area_threshold:\s*70%\s*\n\s*time_threshold:\s*8/.test(kasmYamlSrc) &&
+  "kasmvnc.yaml 常驻视频编码模式（enter 1%/1s + exit 3600s + 30fps + codec h264）",
+  /enter_video_encoding_mode:\s*\n\s*area_threshold:\s*1%/.test(kasmYamlSrc) &&
+    /enter_video_encoding_mode:\s*\n\s*area_threshold:\s*1%\s*\n\s*time_threshold:\s*1/.test(kasmYamlSrc) &&
+    /exit_video_encoding_mode:\s*\n\s*time_threshold:\s*3600/.test(kasmYamlSrc) &&
     /max_frame_rate:\s*30/.test(kasmYamlSrc) &&
     /video_streaming_mode:\s*\n\s*codec:\s*h264/.test(kasmYamlSrc) &&
     !/area_threshold:\s*45%/.test(kasmYamlSrc) &&
