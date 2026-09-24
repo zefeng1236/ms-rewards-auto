@@ -67,6 +67,8 @@ contextBridge.exposeInMainWorld("api", {
     ipcRenderer.invoke("vault:resetPasswordWithRecovery", key, next, hint),
   // 忘记密码且密钥也丢失：清空账号数据（含保险库），保留个性化设置
   wipeAccountData: () => ipcRenderer.invoke("app:wipeAccountData"),
+  // Passkey 仅 Web/Docker 实现；桌面版走系统钥匙串免密，这里明确返回不支持
+  passkeyRemove: async () => ({ ok: false, error: "桌面版不支持通行密钥（使用系统钥匙串免密）" }),
 
   // 推送通知测试：把当前表单填的通道试发一遍，日志输出具体（脱敏）地址
   testPush: (notice) => ipcRenderer.invoke("notify:test", notice),

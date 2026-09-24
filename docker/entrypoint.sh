@@ -10,6 +10,26 @@ set -eu
 mkdir -p "${MS_REWARDS_STORAGE_DIR:-/data/storage}"
 chown -R node:node /data 2>/dev/null || true
 
+# 自签 TLS 证书（Passkey/WebAuthn 要求安全上下文，浏览器在纯 HTTP 下拒绝调用）。
+# MS_REWARDS_TLS=auto 且证书不存在时生成一次（10 年有效期，SAN 覆盖常见访问方式）；
+# 已存在则复用，容器重建不换证书（否则浏览器每次都要重新信任）。
+# 浏览器首次访问会弹证书警告，点「继续前往」即可；之后记住。
+if [ "${MS_REWARDS_TLS:-auto}" = "auto" ]; then
+  TLS_DIR="${MS_REWARDS_STORAGE_DIR:-/data/storage}/tls"
+  if [ ! -f "$TLS_DIR/server.crt" ] || [ ! -f "$TLS_DIR/server.key" ]; then
+    mkdir -p "$TLS_DIR"
+    openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+      -keyout "$TLS_DIR/server.key" -out "$TLS_DIR/server.crt" \
+      -subj "/CN=ms-rewards-auto" \
+      -addext "subjectAltName=DNS:localhost,DNS:ms-rewards,IP:127.0.0.1" 2>/dev/null
+    chown -R node:node "$TLS_DIR"
+    chmod 600 "$TLS_DIR/server.key"
+    echo "[entrypoint] 已生成自签 TLS 证书: $TLS_DIR"
+  fi
+  export MS_REWARDS_TLS_CERT="$TLS_DIR/server.crt"
+  export MS_REWARDS_TLS_KEY="$TLS_DIR/server.key"
+fi
+
 # 内置 KasmVNC（替代早期的独立 novnc 容器）：默认关，MS_REWARDS_ENABLE_NOVNC=1 启用。
 # 必须在主进程前起来：
 #   - 以 node 身份拉起（root 起的 X server，Chromium attach 不了它的 SHM 段）

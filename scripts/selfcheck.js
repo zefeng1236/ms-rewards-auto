@@ -1789,6 +1789,45 @@ checkTrue(
   "镜像预建 /tmp/.X11-unix（Xkasmvnc 以 node 身份跑时不会自建，日志会报 euid != 0）",
   /mkdir -p \/tmp\/\.X11-unix/.test(dockerfileSrc) && /chmod 1777 \/tmp\/\.X11-unix/.test(dockerfileSrc)
 );
+// ---- Passkey / TLS / 自动解锁（2026-09-24）----
+// ① entrypoint 在 MS_REWARDS_TLS=auto 且证书缺失时自签（openssl 必须在镜像里）；
+//    证书放 storage/tls（容器重建不换，否则浏览器每次重新信任）。
+checkTrue(
+  "entrypoint 自签 TLS 证书（auto + openssl + storage/tls + 导出 CERT/KEY）",
+  /MS_REWARDS_TLS:-auto/.test(entrySrc) &&
+    /openssl req -x509/.test(entrySrc) &&
+    /TLS_DIR=.*\/tls/.test(entrySrc) &&
+    /export MS_REWARDS_TLS_CERT/.test(entrySrc) &&
+    /openssl/.test(dockerfileSrc)
+);
+// ② 健康检查必须走 https（自签后 http 会 400/失败，healthcheck 红了容器被判不健康）
+checkTrue(
+  "Dockerfile 与 compose 健康检查走 https + rejectUnauthorized:false",
+  /require\('https'\)\.get\('https:\/\/127\.0\.0\.1:25560\/api\/health',\{rejectUnauthorized:false\}/.test(dockerfileSrc) &&
+    /require\('https'\)\.get\('https:\/\/127\.0\.0\.1:25560\/api\/health',\{rejectUnauthorized:false\}/.test(composeSrc)
+);
+// ③ 自动解锁：env 开关 + 凭据文件 + 解锁后写回。
+//    语义：重启后凭据文件在 → 启动即解锁 → 守护照常跑（无人值守）；
+//    凭据文件不在（从未解锁过）→ 解不出登录态，任务本就无法读密文，守护不跑是对的。
+checkTrue(
+  "自动解锁凭据链路（env 开关 + vault-autounlock.key + 解锁后写回）",
+  /MS_REWARDS_VAULT_AUTOUNLOCK_FILE/.test(composeSrc) &&
+    /vault-autounlock\.key/.test(serverSrc) &&
+    /unlockWithVkB64/.test(serverSrc) &&
+    /writeAutoUnlockFile\(\)/.test(serverSrc) &&
+    /tryFileAutoUnlock\(\)/.test(serverSrc)
+);
+// ④ Passkey 端点齐备且注册要会话、登录不要；WebAuthn 校验三要素都在
+checkTrue(
+  "Passkey 端点与校验（register 要会话 / auth 不要 / rpIdHash+flags+签名）",
+  /\/api\/passkey\/register-options/.test(serverSrc) &&
+    /\/api\/passkey\/auth-options/.test(serverSrc) &&
+    /\/api\/passkey\/auth/.test(serverSrc) &&
+    /needLogin\(req\)/.test(serverSrc) &&
+    /rpIdHash\.equals/.test(fs.readFileSync(path.join(ROOT, "src", "passkey.js"), "utf8")) &&
+    /flags & 0x01/.test(fs.readFileSync(path.join(ROOT, "src", "passkey.js"), "utf8")) &&
+    /p1363ToDer/.test(fs.readFileSync(path.join(ROOT, "src", "passkey.js"), "utf8"))
+);
 checkTrue(
   "图形栈以 node 身份拉起（root 起的 X server，Chromium attach 不了它的 SHM 段，会静默回退 TCP）",
   /gosu node \/usr\/local\/bin\/novnc-stack\.sh/.test(entrySrc) &&

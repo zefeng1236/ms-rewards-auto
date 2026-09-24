@@ -420,6 +420,7 @@ export function createMockApi(): ElectronApi {
       mockVaultPw = "";
       return { ok: true, accounts: n, logs: n, vault: true, wallpaperKey: true, wizardReset: true };
     },
+    passkeyRemove: async () => ({ ok: false, error: "浏览器预览模式不支持通行密钥" }),
 
     testPush: async () => ({ ok: false, error: "浏览器预览模式不支持推送" }),
 
@@ -550,13 +551,13 @@ export function createMockApi(): ElectronApi {
       return {
         ok: true,
         updateAvailable: true,
-        currentVersion: "0.12.0",
-        latestVersion: "0.13.0",
-        downloadUrl: "https://github.com/zefeng1236/ms-rewards-auto/releases/download/v0.13.0/MS-Rewards-Auto-Setup-0.13.0.exe",
-        assetName: "MS-Rewards-Auto-Setup-0.13.0.exe",
-        pageUrl: "https://github.com/zefeng1236/ms-rewards-auto/releases/tag/v0.13.0",
+        currentVersion: "0.13.0",
+        latestVersion: "0.14.0",
+        downloadUrl: "https://github.com/zefeng1236/ms-rewards-auto/releases/download/v0.14.0/MS-Rewards-Auto-Setup-0.14.0.exe",
+        assetName: "MS-Rewards-Auto-Setup-0.14.0.exe",
+        pageUrl: "https://github.com/zefeng1236/ms-rewards-auto/releases/tag/v0.14.0",
         releaseNotes:
-          "## What's Changed\n\n- 自动更新弹窗重做为「检查中 / 结果」两态设计（转圈检查 + 版本箭头 + 可滚动更新日志）\n- 升级 @ttqtt/liquid-glass-react 0.0.1 → 0.0.2（按钮 variant 改名等破坏性改动已适配）\n\n### Improvements\n\n- 更新日志支持 Markdown-lite 渲染（标题 / 列表 / `行内代码` / **加粗**）\n- 左下角版本号可点击直接打开自动更新弹窗",
+          "## What's Changed\n\n- Web/Docker 登录页重做为 1Panel 风格：左侧品牌插画 + 右侧表单，主登录方式为 Passkey（WebAuthn）\n- 容器自签 HTTPS：入口自动生成证书（SAN 含 localhost），Passkey 所需安全上下文开箱即用\n- 保险库自动解锁：重启后守护自动解锁并照常执行定时任务\n\n### Improvements\n\n- /api/health 新增 tls 与 passkey 状态字段\n- 设置页新增 Passkey 注册/删除与「重启后自动解锁」开关",
         publishedAt: new Date().toISOString(),
       };
     },

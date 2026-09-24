@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { GlassButton } from "@ttqtt/liquid-glass-react";
 import { AppCard, Tag, toast } from "./liquidGlassCompat";
 import { api, IS_WEB } from "../api/ipc";
+import { passkeyStatus, passkeySupported, registerPasskey } from "../api/passkeyClient";
 import { VaultRescue } from "./VaultRescue";
 import { evaluatePassword, STRENGTH_COLORS } from "../utils/passwordStrength";
 import type { VaultStatus } from "../types";
@@ -45,6 +46,51 @@ export function VaultPanel() {
   const [nxt, setNxt] = useState("");
   const [nxt2, setNxt2] = useState("");
 
+  // Passkey 管理
+  const [pk, setPk] = useState<{ enabled: boolean; count: number; labels: string[]; ids: string[] }>({
+    enabled: false,
+    count: 0,
+    labels: [],
+    ids: [],
+  });
+  const [pkBusy, setPkBusy] = useState(false);
+  const pkSupported = passkeySupported();
+
+  const loadPk = async () => {
+    if (!IS_WEB) return;
+    try {
+      setPk(await passkeyStatus());
+    } catch {
+      /* 静默 */
+    }
+  };
+
+  const doRegisterPk = async () => {
+    setPkBusy(true);
+    try {
+      const r = await registerPasskey(navigator.userAgent.includes("Windows") ? "此 Windows 设备" : "此设备");
+      if (!r.ok) {
+        toast.error(r.error || "注册失败");
+      } else {
+        toast.success("通行密钥已注册");
+        await loadPk();
+      }
+    } finally {
+      setPkBusy(false);
+    }
+  };
+
+  const doRemovePk = async () => {
+    setPkBusy(true);
+    try {
+      for (const id of pk.ids) await api.passkeyRemove(id);
+      toast.success("已删除全部通行密钥");
+      await loadPk();
+    } finally {
+      setPkBusy(false);
+    }
+  };
+
   const load = async () => {
     try {
       setStatus(await api.getVaultStatus());
@@ -55,6 +101,7 @@ export function VaultPanel() {
 
   useEffect(() => {
     void load();
+    void loadPk();
   }, []);
 
   if (!status) return null;
@@ -198,6 +245,41 @@ export function VaultPanel() {
             <GlassButton variant="glass" controlSize="small" onClick={() => setRecovery(null)}>
               我已保存，收起
             </GlassButton>
+          </div>
+        )}
+
+        {/* Passkey 管理：注册/查看/删除通行密钥（仅 Web 且安全上下文） */}
+        {status.configured && IS_WEB && (
+          <div className="vault-passkey">
+            <div className="vault-note-title">Passkey（通行密钥）</div>
+            <div className="hint">
+              {pkSupported
+                ? pk.enabled
+                  ? `已注册 ${pk.count} 枚：${pk.labels.join("、")}。登录页可一键登录。`
+                  : "注册后可在登录页用浏览器通行密钥一键登录（替代输密码）。"
+                : "当前非安全上下文（需 HTTPS），无法使用通行密钥。"}
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+              <GlassButton
+                variant="glassProminent"
+                controlSize="small"
+                disabled={!pkSupported || pkBusy}
+                loading={pkBusy}
+                onClick={() => void doRegisterPk()}
+              >
+                注册通行密钥
+              </GlassButton>
+              {pk.enabled && (
+                <GlassButton
+                  variant="glass"
+                  controlSize="small"
+                  disabled={pkBusy}
+                  onClick={() => void doRemovePk()}
+                >
+                  删除全部通行密钥
+                </GlassButton>
+              )}
+            </div>
           </div>
         )}
 

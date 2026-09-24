@@ -2,6 +2,18 @@
 
 本文件记录各版本的重要变更。版本格式为主版本.次版本.修订号，带 `-beta` 后缀的为测试版本。带「.N」四位小版本的为内部交付号（安装包文件名与 exe FileVersion 使用），主版本段仍为 0.9.4。
 
+## 0.13.0
+
+发布日期：2026-09-24 · 安装包 `MS-Rewards-Auto-Setup-0.13.0.exe`
+
+### Web/Docker 登录与无人值守（对齐参考设计）
+
+- **登录页重做**：改为 1Panel 风格布局 —— 左侧品牌插画 + 右侧登录表单；主登录方式为 **Passkey（WebAuthn 通行密钥）**，密码 / 恢复密钥保留为备选页签；非安全上下文（HTTP）下 Passkey 按钮禁用并提示需 HTTPS。
+- **容器自签 HTTPS**：`MS_REWARDS_TLS=auto`（默认）时 entrypoint 用 openssl 自动生成 10 年自签证书（SAN 含 `DNS:localhost`、`IP:127.0.0.1`）到 `storage/tls/`，服务以 `https.createServer` 启动；WebAuthn 所需安全上下文开箱即用。healthcheck 同步改为 https（`rejectUnauthorized:false`）。
+- **保险库自动解锁**：启用后 setup/unlock/reset 时把恢复密钥写回 `storage/vault-autounlock.key`（0600），重启后服务端守护自动解锁并照常执行定时任务——**不登录也能自动跑任务**；锁定仅拦截管理 API。设置页新增「重启后自动解锁」开关。
+- **Passkey 服务端**：`/api/passkey/{register-options,register,auth-options,auth}`，纯 Node crypto 校验（challenge / origin / rpIdHash / UP 位），签名算法支持 ES256（-7，P1363→DER）与 RS256 回退；凭据存 `storage/vault-passkey.json`（0600）。设置页支持注册 / 删除通行密钥。
+- `/api/health` 新增 `tls` 与 `passkey` 状态字段；`getVaultStatus` 增加 Passkey 状态。
+
 ## 0.12.0
 
 发布日期：2026-09-23 · 安装包 `MS-Rewards-Auto-Setup-0.12.0.exe`

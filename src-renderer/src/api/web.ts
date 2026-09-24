@@ -362,6 +362,7 @@ export function createWebApi(): ElectronApi {
       return r;
     },
     wipeAccountData: () => postJSON<WipeResult>("/api/vault/wipe", {}),
+    passkeyRemove: (id) => rpc<{ ok: boolean; error?: string }>("passkeyRemove", id),
 
     /* ---------------- 推送测试 ---------------- */
     testPush: (notice) => rpc<PushTestResult>("testPush", notice),

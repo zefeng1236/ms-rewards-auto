@@ -102,6 +102,8 @@ export interface ElectronApi {
    * 个性化设置与启动设置保留（壁纸 API 密钥作为凭据一并清除）。
    */
   wipeAccountData(): Promise<WipeResult>;
+  /** 删除一枚通行密钥（仅 Web/Docker 有实现；桌面版返回不支持） */
+  passkeyRemove(id: string): Promise<{ ok: boolean; error?: string }>;
 
   // ---- 推送测试 ----
   testPush(notice: AppConfig["notice"]): Promise<PushTestResult>;

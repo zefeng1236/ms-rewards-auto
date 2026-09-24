@@ -118,6 +118,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get install -y --no-install-recommends \
         chromium \
         xz-utils \
+        openssl \
         tzdata \
         gosu \
         fonts-noto-cjk \
@@ -225,7 +226,7 @@ EXPOSE 25560
 EXPOSE 6080
 
 HEALTHCHECK --interval=60s --timeout=10s --start-period=20s --retries=3 \
-  CMD node -e "require('http').get('http://127.0.0.1:25560/api/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
+  CMD node -e "require('https').get('https://127.0.0.1:25560/api/health',{rejectUnauthorized:false},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"
 
 # 以 root 启动（entrypoint 修完属主后自动降权到 node）
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

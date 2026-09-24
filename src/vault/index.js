@@ -122,6 +122,28 @@ function unlockWithRecovery(recoveryKey) {
   }
 }
 
+/** 导出当前解锁密钥（b64），供 Docker 自动解锁凭据文件使用 */
+function exportVkB64() {
+  if (!vk) return null;
+  return crypto.toB64(vk);
+}
+
+/** 用导出的 vk 解锁（自动解锁凭据文件路径） */
+function unlockWithVkB64(b64) {
+  const meta = readMeta();
+  if (!meta) return { ok: false, error: "尚未配置保险库" };
+  try {
+    const nextVk = crypto.fromB64(b64);
+    if (!crypto.verifyVk(meta, nextVk)) throw new Error("校验失败");
+    adoptVk(nextVk);
+    unlockedByEnv = false;
+    logger.ok("已通过本地凭据文件解锁保险库");
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "本地凭据无效" };
+  }
+}
+
 /** 尝试系统钥匙串免密解锁 */
 function tryKeychainUnlock() {
   if (!isConfigured()) return false;
@@ -287,6 +309,8 @@ module.exports = {
   unlock,
   unlockWithRecovery,
   tryAutoUnlock,
+  exportVkB64,
+  unlockWithVkB64,
   changePassword,
   resetPasswordWithRecovery,
   getRecoveryKey,

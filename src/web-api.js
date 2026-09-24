@@ -31,6 +31,7 @@ const wipe = require("./wipe");
 const browser = require("./browser");
 const fpBrowser = require("./fingerprint-browser");
 const appUpdate = require("./app-update");
+const passkey = require("./passkey");
 const { displayVersion } = require("./version");
 const logger = require("./logger");
 const notify = require("./notify");
@@ -359,6 +360,13 @@ function createApi({ emit }) {
     },
     vaultRecoveryKey() {
       return vault.getRecoveryKey();
+    },
+    // Passkey 管理（设置页展示与删除；注册走 REST /api/passkey/register，需会话）
+    passkeyStatus() {
+      return passkey.status();
+    },
+    passkeyRemove(id) {
+      return passkey.removeCredential(id);
     },
     // 忘记密码：用恢复密钥重置密码（无需原密码）
     vaultResetPasswordWithRecovery(key, next, hint) {

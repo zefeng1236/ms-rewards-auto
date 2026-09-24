@@ -32,6 +32,7 @@ if (!process.env.MS_REWARDS_STORAGE_DIR) {
 }
 
 const http = require("http");
+const https = require("https");
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
@@ -41,6 +42,7 @@ const cancel = require("./cancel");
 const setup = require("./setup");
 const vault = require("./vault");
 const vaultMigrate = require("./vault/migrate");
+const passkey = require("./passkey");
 const wipe = require("./wipe");
 const logger = require("./logger");
 const core = require("./app-core");
@@ -99,6 +101,52 @@ function clearSession(req, res) {
 function needLogin(req) {
   if (!vault.isConfigured()) return false;
   return !hasSession(req);
+}
+
+/**
+ * 本地凭据文件自动解锁（Docker 无人值守场景）。
+ *
+ * 语义（用户确认）：Docker 版的意义是常年不断电自动跑任务，锁定的价值在于
+ * 「防止他人改设置 / 加账号」，而不是「防重启后任务停摆」。所以重启后守护
+ * 进程用 storage/vault-autounlock.key（600 权限，存恢复密钥）自己解锁开跑；
+ * 管理面（设置/账号增删）仍受会话保护。
+ *
+ * 安全边界：该文件与 vault.json 同目录 —— 能偷到数据目录的攻击者本来就能
+ * 拿到恢复密钥，所以这不新增攻击面，只是把「重启即停摆」换成「重启即续跑」。
+ * 文件只在 MS_REWARDS_VAULT_AUTOUNLOCK_FILE=1 时读取（compose 显式开启），
+ * 桌面版不 require server.js，天然不受影响。
+ */
+const AUTOUNLOCK_FILE = () => path.join(process.env.MS_REWARDS_STORAGE_DIR || path.join(__dirname, "..", "storage"), "vault-autounlock.key");
+
+function tryFileAutoUnlock() {
+  if (process.env.MS_REWARDS_VAULT_AUTOUNLOCK_FILE !== "1") return false;
+  const f = AUTOUNLOCK_FILE();
+  if (!fs.existsSync(f)) return false;
+  try {
+    const b64 = fs.readFileSync(f, "utf8").trim();
+    if (!b64) return false;
+    const r = vault.unlockWithVkB64(b64);
+    return !!(r && r.ok);
+  } catch (e) {
+    logger.warn(`本地凭据文件自动解锁失败: ${e.message}`);
+    return false;
+  }
+}
+
+/** 解锁成功后写回自动解锁凭据（仅 Docker 显式开启时）。
+ *  存的是 vk（解锁密钥）而非恢复密钥：任何解锁路径（密码/恢复密钥/Passkey）
+ *  之后都能写回，不必依赖建库时的一次性恢复密钥。权限 600，与 vault.json 同信任级。 */
+function writeAutoUnlockFile() {
+  if (process.env.MS_REWARDS_VAULT_AUTOUNLOCK_FILE !== "1") return;
+  try {
+    const b64 = vault.exportVkB64();
+    if (!b64) return;
+    const f = AUTOUNLOCK_FILE();
+    fs.writeFileSync(f, b64 + "\n", { mode: 0o600 });
+    try { fs.chmodSync(f, 0o600); } catch {}
+  } catch (e) {
+    logger.warn(`写入自动解锁凭据失败: ${e.message}`);
+  }
 }
 
 /* ============================== 事件总线 ============================== */
@@ -281,6 +329,8 @@ async function handle(req, res) {
         vaultConfigured: vault.isConfigured(),
         vaultUnlocked: vault.isUnlocked(),
         daemon: backgroundStarted,
+        tls: !!(process.env.MS_REWARDS_TLS_CERT && fs.existsSync(process.env.MS_REWARDS_TLS_CERT)),
+        passkey: passkey.hasCredentials(),
         spa: fs.existsSync(path.join(SPA_DIR, "index.html")),
         tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
         time: new Date().toISOString(),
@@ -334,6 +384,7 @@ async function handle(req, res) {
       const r = vault.setup(password, hint);
       if (r.ok) {
         vaultMigrate.migrateAll();
+        writeAutoUnlockFile();
         newSession(res);          // 建库即登录
         startBackgroundWork();
         core.pushAccounts();
@@ -346,6 +397,7 @@ async function handle(req, res) {
       const r = recoveryKey ? vault.unlockWithRecovery(recoveryKey) : vault.unlock(password);
       if (r.ok) {
         vaultMigrate.migrateAll();
+        writeAutoUnlockFile();
         newSession(res);
         startBackgroundWork();
         core.pushAccounts();
@@ -362,6 +414,7 @@ async function handle(req, res) {
       const r = vault.resetPasswordWithRecovery(recoveryKey, next, hint);
       if (r.ok) {
         vaultMigrate.migrateAll();
+        writeAutoUnlockFile();
         newSession(res);
         startBackgroundWork();
         core.pushAccounts();
@@ -375,9 +428,41 @@ async function handle(req, res) {
       const r = wipe.wipeAccountData();
       if (r.ok) {
         clearSession(req, res);
+        try { fs.rmSync(AUTOUNLOCK_FILE(), { force: true }); } catch {}
         core.pushAccounts();
       }
       return json(res, r.ok ? 200 : 400, r);
+    }
+
+    /* ---------- Passkey（WebAuthn）：注册要会话，登录不要 ---------- */
+    if (p === "/api/passkey/status") {
+      return json(res, 200, { ok: true, data: passkey.status() });
+    }
+    if (p === "/api/passkey/auth-options" && method === "POST") {
+      return json(res, 200, passkey.authOptions(req));
+    }
+    if (p === "/api/passkey/auth" && method === "POST") {
+      const r = passkey.auth(req, await readBody(req));
+      if (r.ok) {
+        newSession(res);
+        startBackgroundWork();
+        writeAutoUnlockFile();
+        core.pushAccounts();
+      }
+      return json(res, r.ok ? 200 : 400, r);
+    }
+    if (p === "/api/passkey/register-options" && method === "POST") {
+      if (needLogin(req)) return json(res, 401, { ok: false, error: "未登录", needLogin: true });
+      return json(res, 200, passkey.registerOptions(req));
+    }
+    if (p === "/api/passkey/register" && method === "POST") {
+      if (needLogin(req)) return json(res, 401, { ok: false, error: "未登录", needLogin: true });
+      return json(res, 200, passkey.register(req, await readBody(req)));
+    }
+    if (p === "/api/passkey/remove" && method === "POST") {
+      if (needLogin(req)) return json(res, 401, { ok: false, error: "未登录", needLogin: true });
+      const { id } = await readBody(req);
+      return json(res, 200, passkey.removeCredential(id));
     }
 
     /* ---------- 统一 RPC ---------- */
@@ -404,7 +489,12 @@ async function handle(req, res) {
         // 所以「已解锁」= 进程已解锁 且 本浏览器持有会话。
         return json(res, 200, {
           ok: true,
-          data: { ...st, unlocked: st.configured ? hasSession(req) : st.unlocked },
+          data: {
+            ...st,
+            unlocked: st.configured ? hasSession(req) : st.unlocked,
+            passkey: passkey.status(),
+            tls: !!(process.env.MS_REWARDS_TLS_CERT && fs.existsSync(process.env.MS_REWARDS_TLS_CERT)),
+          },
         });
       }
       if (m === "logout") {
@@ -443,6 +533,9 @@ function main() {
     if (vault.tryAutoUnlock()) {
       logger.ok("保险库已通过环境变量自动解锁");
       try { vaultMigrate.migrateAll(); } catch (e) { logger.warn(`明文迁移失败: ${e.message}`); }
+    } else if (tryFileAutoUnlock()) {
+      logger.ok("保险库已通过本地凭据文件自动解锁（重启后任务照常运行）");
+      try { vaultMigrate.migrateAll(); } catch (e) { logger.warn(`明文迁移失败: ${e.message}`); }
     } else {
       logger.info("保险库已配置但未解锁，等待用户在 Web 界面输入密码");
     }
@@ -458,13 +551,27 @@ function main() {
   api.startAutoPush();
   cancel.reset();
 
-  const server = http.createServer(handle);
+  // TLS：MS_REWARDS_TLS_CERT/KEY 指向证书与私钥时走 https（Docker 自签场景，
+  // Passkey/WebAuthn 要求安全上下文）。两者缺一或未设置 → 明文 http（本地开发）。
+  const tlsCert = process.env.MS_REWARDS_TLS_CERT || "";
+  const tlsKey = process.env.MS_REWARDS_TLS_KEY || "";
+  let server;
+  if (tlsCert && tlsKey && fs.existsSync(tlsCert) && fs.existsSync(tlsKey)) {
+    server = https.createServer(
+      { cert: fs.readFileSync(tlsCert), key: fs.readFileSync(tlsKey) },
+      handle
+    );
+  } else {
+    if (tlsCert || tlsKey) logger.warn("TLS 证书/私钥路径不完整或文件缺失，回退明文 HTTP");
+    server = http.createServer(handle);
+  }
+  const scheme = server instanceof https.Server ? "https" : "http";
   server.listen(PORT, "0.0.0.0", () => {
     // 监听成功后打 sentinel，供 browser.js 判别「这个进程是不是 Web/Docker server」——
     // 桌面版（electron-main）不 require ./server，25560 不会起，goto /login-done 必 ECONNREFUSED，
     // 跳过即可。
     process.env.MS_REWARDS_HTTP_LISTENING = String(PORT);
-    logger.ok(`服务已启动: http://0.0.0.0:${PORT}`);
+    logger.ok(`服务已启动: ${scheme}://0.0.0.0:${PORT}`);
   });
 
   const shutdown = () => {
