@@ -1770,14 +1770,16 @@ checkTrue(
 // 曾按官方 Extreme 预设「有效禁用」（100%/100s）。
 // 但无损分块链路依赖 WebP/QOI（WASM 解码器受 COEP 头影响），部分浏览器渲染异常；
 // 折中阈值（70%/8s）又会在静止 3s 后退出回图像模式，问题依旧。
-// 2026-09-24 改为**常驻视频模式**：enter 1%/1s + exit 3600s（实际不退出）+ 30fps + h264。
-// 守卫锁死这五个值：任何一个漂移（比如又回 45%/5s、60fps 或 exit 3s）都会让
-// 白块/卡顿/部分浏览器显示异常回归。
+// 2026-09-24 改为**常驻视频模式**：enter 1%/1s + exit 100s + 30fps + h264。
+// ⚠️ exit 值域上限实测 = 100：Xvnc 1.5.0 对 VideoOutTime 做值域校验，110 起拒绝，
+//    且报错是误导性的 "Unrecognized option: -VideoOutTime"（实测 3600/600/120 全中），
+//    图形栈会启动即死、6080 无监听。曾写 3600 踩中，真机日志定位。
+// 守卫锁死这五个值：任何一个漂移（45%/5s、60fps、exit 3 或超 100）都会回归。
 checkTrue(
-  "kasmvnc.yaml 常驻视频编码模式（enter 1%/1s + exit 3600s + 30fps + codec h264）",
+  "kasmvnc.yaml 常驻视频编码模式（enter 1%/1s + exit 100s + 30fps + codec h264）",
   /enter_video_encoding_mode:\s*\n\s*area_threshold:\s*1%/.test(kasmYamlSrc) &&
     /enter_video_encoding_mode:\s*\n\s*area_threshold:\s*1%\s*\n\s*time_threshold:\s*1/.test(kasmYamlSrc) &&
-    /exit_video_encoding_mode:\s*\n\s*time_threshold:\s*3600/.test(kasmYamlSrc) &&
+    /exit_video_encoding_mode:\s*\n\s*time_threshold:\s*100(\s|$)/.test(kasmYamlSrc) &&
     /max_frame_rate:\s*30/.test(kasmYamlSrc) &&
     /video_streaming_mode:\s*\n\s*codec:\s*h264/.test(kasmYamlSrc) &&
     !/area_threshold:\s*45%/.test(kasmYamlSrc) &&
