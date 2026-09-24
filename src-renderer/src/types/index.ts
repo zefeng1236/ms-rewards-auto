@@ -225,7 +225,7 @@ export type AppearancePreset = "normal" | "opaque";
 
 export type ThemeMode = "dark" | "light" | "system";
 
-export type BgType = "none" | "bing" | "url" | "file" | "uapi" | "qy98" | "unsplash";
+export type BgType = "none" | "bing" | "url" | "file" | "uapi" | "qy98" | "unsplash" | "flow";
 
 export type BgCategory =
   | "acg"

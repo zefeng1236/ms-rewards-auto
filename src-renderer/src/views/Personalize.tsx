@@ -49,6 +49,8 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
       ? "none"
       : appearance.bgType === "bing"
       ? "bing"
+      : appearance.bgType === "flow"
+      ? "flow"
       : isRandom
       ? "random"
       : "custom";
@@ -63,6 +65,7 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
     setGroupOverride(null);
     if (v === "none") await patchAppearance({ bgType: "none" });
     else if (v === "bing") await patchAppearance({ bgType: "bing" });
+    else if (v === "flow") await patchAppearance({ bgType: "flow" });
     else if (v === "custom") {
       // 进入自定义分组时，根据已有输入决定默认类型；否则默认 URL
       const nextType = appearance.bgFile ? "file" : "url";
@@ -118,7 +121,7 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
       opacity: 1,
       accent: "#3b82f6",
       glow: true,
-      bgType: "none",
+      bgType: "flow",
       bgUrl: "",
       bgFile: "",
       bgCategory: "acg",
@@ -232,7 +235,7 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
           <div>
             <div className="block-title">背景图片</div>
             <div className="block-sub">
-              支持内置必应每日一图、图片直链/API 或本地图片；开启后表面呈液态玻璃效果
+              支持内置流场粒子动画、必应每日一图、图片直链/API 或本地图片；开启后表面呈液态玻璃效果
             </div>
           </div>
         </div>
@@ -240,12 +243,21 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
         <GlassSegmentedControl
           value={bgGroup} items={[
             { label: "关闭", value: "none" },
+            { label: "流场动态", value: "flow" },
             { label: "Bing 每日一图", value: "bing" },
             { label: "随机美图", value: "random" },
             { label: "自定义", value: "custom" },
           ]} onValueChange={onBgGroup}
           aria-label="背景图来源"
         />
+
+        {/* 流场：纯本地粒子动画，零网络请求 */}
+        {bgGroup === "flow" && (
+          <p className="bg-note" style={{ marginTop: 12 }}>
+            流场动态是一段内置的粒子动画（Perlin 噪声流场，鼠标划过会搅起尾流），
+            纯本地渲染、不联网、也不消费显卡纹理。切到流场时界面会固定为深色主题，保证文字可读。
+          </p>
+        )}
 
         {/* 随机美图二级：第三方接口，切换前弹免责声明 */}
         {bgGroup === "random" && (
@@ -322,8 +334,8 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
           </div>
         )}
 
-        {/* 预览 / 下载 / 轮换 */}
-        {bgGroup !== "none" && (
+        {/* 预览 / 下载 / 轮换（流场是本地动画、无图片地址，不显示这组） */}
+        {bgGroup !== "none" && bgGroup !== "flow" && (
           <div className="bg-ctrl">
             <div className="bg-preview-row">
               <button

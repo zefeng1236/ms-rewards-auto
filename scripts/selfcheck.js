@@ -742,9 +742,11 @@ checkTrue(
 
 /* ============ 17. 光晕覆盖卡片/开关 + 默认深色必应 + 浅色关反射 + 氛围光可见 ============ */
 console.log("\n【17】指针光晕覆盖卡片与开关、默认外观、浅色反射与氛围光层级");
-// 默认外观：深色 + 必应每日一图（安装即体验，而非跟随系统/内置壁纸）
+// 默认外观：深色 + 流场动态背景（安装即体验，而非跟随系统/内置壁纸）
 checkTrue("默认深浅模式为 dark", appearance.DEFAULTS.mode === "dark");
-checkTrue("默认背景为必应每日一图 bing", appearance.DEFAULTS.bgType === "bing");
+// 0.13.1 起默认背景换成 Canvas 流场粒子动画（登录页/向导/主界面统一），
+// Bing 每日一图保留为设置页可切选项——守卫同步跟着改，否则会假红。
+checkTrue("默认背景为流场动态 flow", appearance.DEFAULTS.bgType === "flow");
 
 // 光晕此前只绑 .lg-surface，内容卡片是 .lg-material-view、开关是 .lg-switch，
 // 导致「大部分卡片」「开关」都没有跟随光斑（用户反馈）。现在统一三类。
@@ -1888,6 +1890,63 @@ checkTrue(
   lockDrift.length
     ? `漂移: ${lockDrift.map((k) => `${k} lock=${lockDeps[k]} vs pkg=${pkgRaw.dependencies[k]}`).join("; ")}`
     : ""
+);
+
+/* ============ 20. 同端口 HTTP→HTTPS 302 + 流场动态背景 ============ */
+console.log("\n【20】HTTPS 端口兼容明文 HTTP（302 跳转）与流场动态背景接入");
+// 0.13.0 把 Web 服务切成 https（Passkey 要安全上下文），用户旧的 http:// 书签
+// 直接变成 ERR_EMPTY_RESPONSE（"未发送任何数据"）。实测踩过。修法：同一个端口
+// 上按首字节分流——0x16（TLS 握手记录头）交给 https.Server，其余交给只回 302
+// 的 http.Server。守卫必须钉住这套分流骨架，缺任一环就退回"打不开"。
+const serverTlsSrc = fs.readFileSync(path.join(ROOT, "src", "server.js"), "utf8");
+checkTrue(
+  "TLS 端口同端口分流：net 层按首字节 0x16 判 TLS，明文请求走 302",
+  /net\.createServer/.test(serverTlsSrc) &&
+    /socket\.read\(1\)/.test(serverTlsSrc) &&
+    /0x16/.test(serverTlsSrc) &&
+    /writeHead\(302/.test(serverTlsSrc) &&
+    /Location: `https:\/\//.test(serverTlsSrc),
+  "缺 net 分流 / 首字节判定 / 302 Location 任一环，http 访问会报 ERR_EMPTY_RESPONSE"
+);
+// 流场背景：登录页 / 向导 / 主界面三处 early-return 分支都要渲染背景层，
+// 漏一个就是"切了流场但登录页还是纯色"。
+const flowSrc = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "components", "FlowFieldBg.tsx"),
+  "utf8"
+);
+const appBgSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "App.tsx"), "utf8");
+const typesBgSrc = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "types", "index.ts"),
+  "utf8"
+);
+const persBgSrc = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "views", "Personalize.tsx"),
+  "utf8"
+);
+const bgLayerUses = (appBgSrc.match(/\{bgLayer\}/g) || []).length;
+checkTrue(
+  "流场背景组件存在且是纯装饰层（pointer-events none + 卸载解绑 RAF）",
+  /className="flow-bg"/.test(flowSrc) &&
+    /requestAnimationFrame/.test(flowSrc) &&
+    /cancelAnimationFrame/.test(flowSrc) &&
+    /\.flow-bg[\s\S]{0,220}pointer-events:\s*none/.test(
+      fs.readFileSync(
+        path.join(ROOT, "src-renderer", "src", "styles", "global.css"),
+        "utf8"
+      )
+    )
+);
+checkTrue(
+  "bgType 支持 flow（types + appearance 白名单 + 设置页可切，且 Bing 仍在）",
+  /"flow"/.test(typesBgSrc) &&
+    /"flow"/.test(fs.readFileSync(path.join(ROOT, "src", "appearance.js"), "utf8")) &&
+    /value: "flow"/.test(persBgSrc) &&
+    /value: "bing"/.test(persBgSrc)
+);
+checkTrue(
+  `流场背景在向导 / 锁屏 / 主界面三处都渲染（当前 ${bgLayerUses} 处）`,
+  bgLayerUses === 3 && /isFlow/.test(appBgSrc) && /<FlowFieldBg/.test(appBgSrc),
+  bgLayerUses !== 3 ? "三处 early-return 分支必须都挂 {bgLayer}" : ""
 );
 
 /* ============ 汇总 ============ */

@@ -34,8 +34,9 @@ const DEFAULTS = {
   glow: true,
   // 自定义背景：none | bing（必应每日一图）| url（图片直链/API）| file（本地图片）
   //           | uapi（UAPI 随机图，配 bgCategory）| qy98（98qy 随机壁纸）| unsplash
-  // 默认必应每日一图：首次启动即有壁纸氛围，且随日期自动更新，无需用户手动找图。
-  bgType: "bing",
+  //           | flow（内置流场粒子动画，无网络请求，纯本地渲染）
+  // 默认流场：首次启动即有动态氛围、不吃网络、也不依赖第三方图源。
+  bgType: "flow",
   bgUrl: "",
   bgFile: "",
   // UAPI 随机图分类（仅 bgType=uapi 时生效）：acg/furry/landscape/pc_wallpaper/anime/ai_drawing
@@ -61,7 +62,7 @@ const DEFAULTS = {
   bgResolved: null,
 };
 
-const BG_TYPES = ["none", "bing", "url", "file", "uapi", "qy98", "unsplash"];
+const BG_TYPES = ["none", "bing", "url", "file", "uapi", "qy98", "unsplash", "flow"];
 
 /** UAPI 随机图可用分类（已排除表情包 bq 与竖屏 mb/mobile_wallpaper） */
 const BG_CATEGORIES = ["acg", "furry", "landscape", "pc_wallpaper", "anime", "ai_drawing"];

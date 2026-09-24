@@ -65,7 +65,7 @@ const DEFAULT_APPEARANCE: Appearance = {
   opacity: 1,
   accent: "#3b82f6",
   glow: true,
-  bgType: "bing",
+  bgType: "flow",
   bgUrl: "",
   bgFile: "",
   bgCategory: "landscape",
@@ -353,7 +353,7 @@ export function createMockApi(): ElectronApi {
       mockAppearance = { ...mockAppearance, ...patch };
       return { ok: true, appearance: mockAppearance, restartNeeded: false };
     },
-    getBgSrc: async () => ({ src: mockAppearance.bgType === "none" ? "" : MOCK_WALLPAPER, luma: null }),
+    getBgSrc: async () => ({ src: mockAppearance.bgType === "none" || mockAppearance.bgType === "flow" ? "" : MOCK_WALLPAPER, luma: null }),
     pickImage: async () => null,
     testBgUrl: async () => ({ ok: false, error: "浏览器预览模式不支持探测" }),
     downloadWallpaper: async () => ({ ok: false, error: "浏览器预览模式不支持下载" }),
@@ -551,7 +551,7 @@ export function createMockApi(): ElectronApi {
       return {
         ok: true,
         updateAvailable: true,
-        currentVersion: "0.13.0",
+        currentVersion: "0.13.1",
         latestVersion: "0.14.0",
         downloadUrl: "https://github.com/zefeng1236/ms-rewards-auto/releases/download/v0.14.0/MS-Rewards-Auto-Setup-0.14.0.exe",
         assetName: "MS-Rewards-Auto-Setup-0.14.0.exe",

@@ -30,7 +30,8 @@ export function useBackground() {
   // ---- 解析当前背景地址 ----
   const lastNonce = useRef<number>(-1);
   useEffect(() => {
-    if (bgType === "none") {
+    // 「流场」是纯本地粒子动画，没有图片地址；此处直接清空并返回
+    if (bgType === "none" || bgType === "flow") {
       setSrc("");
       lastNonce.current = nonce;
       return;

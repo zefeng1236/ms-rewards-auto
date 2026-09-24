@@ -8,6 +8,7 @@ import { useTheme } from "./hooks/useTheme";
 import { useLiquidGlassHalo } from "./hooks/useLiquidGlassHalo";
 import { Sidebar } from "./components/Sidebar";
 import { LogConsole } from "./components/LogConsole";
+import { FlowFieldBg } from "./components/FlowFieldBg";
 import { Dashboard } from "./views/Dashboard";
 import { AccountDetail } from "./views/AccountDetail";
 import { SettingsView } from "./views/SettingsView";
@@ -43,12 +44,11 @@ function Shell() {
   // 修复玻璃库指针光晕不跟手的 bug（详见 hook 注释）
   // 指针光晕独立开关：与玻璃表面解耦（玻璃 fallback 面板同样带 .lg-surface，光晕仍可见）
   useLiquidGlassHalo(appearance?.pointerHalo === true);
-  // 解析深浅主题并写入 <html data-theme>；autoTheme 打开时由壁纸亮度 +
-  // 两套主题色的合成对比度决定（亮壁纸→深色主题白字，暗壁纸→浅色主题黑字），
-  // 花色壁纸按「哪套主题的文字真的看得清」来选，而不是简单看平均亮度。
+  // 流场背景是深紫黑底，只有配深色主题（白字）才读得清；flow 模式下强制深色
+  const isFlow = appearance?.bgType === "flow";
   const resolvedTheme = useTheme(
-    appearance?.mode,
-    appearance?.autoTheme === true,
+    isFlow ? "dark" : appearance?.mode,
+    isFlow ? false : appearance?.autoTheme === true,
     luma,
     appearance?.bgDim
   );
@@ -172,6 +172,29 @@ function Shell() {
     [appearance?.bgDim, appearance?.opacity]
   );
 
+  // 全屏背景层：流场（flow）播粒子动画；有壁纸时铺模糊图 + 暗化 + 主题衬底。
+  // 向导 / 锁屏 / 主界面三个分支共用，保证「登录前的每一页」也都是流场效果。
+  const bgLayer = isFlow ? (
+    <>
+      <FlowFieldBg />
+      <div className="flow-scrim" />
+    </>
+  ) : bgSrc ? (
+    <>
+      <div className="bg-layer">
+        <div
+          className="bg-image"
+          style={{
+            backgroundImage: `url("${bgSrc}")`,
+            filter: `blur(${appearance?.bgBlur ?? 4}px)`,
+          }}
+        />
+        <div className="bg-tint" />
+      </div>
+      <div className="shell-scrim" />
+    </>
+  ) : null;
+
   if (loading || !setup || !vault) {
     return (
       <div className="empty" style={{ height: "100vh" }}>
@@ -190,6 +213,7 @@ function Shell() {
   if (!setup.done) {
     return (
       <LiquidGlassConfig appearance={resolvedTheme} forceFallback={!appearance?.glass} theme={glassTheme}>
+        {bgLayer}
         <SetupWizard onDone={() => setSetup({ ...setup, done: true })} />
         {/* 向导是独立 early-return 分支，不经过主界面的 <Toaster/>；
             保存数字密钥 / 下载 txt 等操作的 toast 必须在这里单独挂一个，
@@ -205,6 +229,7 @@ function Shell() {
   if (vault.configured && !vault.unlocked) {
     return (
       <LiquidGlassConfig appearance={resolvedTheme} forceFallback={!appearance?.glass} theme={glassTheme}>
+        {bgLayer}
         <VaultLock onUnlocked={() => setVault({ ...vault, unlocked: true })} />
         <Toaster position="bottom-right" max={3} />
         <BgProgressBubble />
@@ -224,21 +249,7 @@ function Shell() {
       theme={glassTheme}
     >
       <div style={shellStyle}>
-        {bgSrc && (
-          <div className="bg-layer">
-            <div
-              className="bg-image"
-              style={{
-                backgroundImage: `url("${bgSrc}")`,
-                filter: `blur(${appearance?.bgBlur ?? 4}px)`,
-              }}
-            />
-            <div className="bg-tint" />
-          </div>
-        )}
-
-        {/* 主题衬底：有壁纸时给整屏文字垫一层可控底色（见 global.css） */}
-        {bgSrc && <div className="shell-scrim" />}
+        {bgLayer}
 
         <div className="shell">
           <Sidebar

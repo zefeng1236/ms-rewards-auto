@@ -31,6 +31,7 @@ if (!process.env.MS_REWARDS_STORAGE_DIR) {
   process.env.MS_REWARDS_STORAGE_DIR = "/data/storage";
 }
 
+const net = require("net");
 const http = require("http");
 const https = require("https");
 const fs = require("fs");
@@ -553,26 +554,57 @@ function main() {
 
   // TLS：MS_REWARDS_TLS_CERT/KEY 指向证书与私钥时走 https（Docker 自签场景，
   // Passkey/WebAuthn 要求安全上下文）。两者缺一或未设置 → 明文 http（本地开发）。
+  //
+  // 同端口协议分流：TLS 打开时，同一个 25560 端口既要服务 HTTPS，又要把误用
+  // http:// 访问的旧链接 302 跳转到 https —— 否则浏览器会看到 ERR_EMPTY_RESPONSE。
+  // 做法：起一个裸 net.Server 先窥探每个连接的首字节（TLS 握手记录头恒为 0x16），
+  // 是 TLS 就交给 https.Server，否则交给一个只回 302 的 http.Server。
   const tlsCert = process.env.MS_REWARDS_TLS_CERT || "";
   const tlsKey = process.env.MS_REWARDS_TLS_KEY || "";
+  const tlsReady = !!(tlsCert && tlsKey && fs.existsSync(tlsCert) && fs.existsSync(tlsKey));
   let server;
-  if (tlsCert && tlsKey && fs.existsSync(tlsCert) && fs.existsSync(tlsKey)) {
-    server = https.createServer(
+  if (tlsReady) {
+    // 明文 HTTP 重定向：302 到同主机同路径的 https 地址
+    const redirectApp = http.createServer((req, res) => {
+      const host = req.headers.host || "localhost";
+      res.writeHead(302, { Location: `https://${host}${req.url}` });
+      res.end();
+    });
+    const httpsApp = https.createServer(
       { cert: fs.readFileSync(tlsCert), key: fs.readFileSync(tlsKey) },
       handle
     );
+    const tcp = net.createServer((socket) => {
+      const route = () => {
+        const first = socket.read(1);
+        if (!first) {
+          socket.once("readable", route);
+          return;
+        }
+        socket.unshift(first);
+        // TLS 握手记录 ContentType 固定为 0x16；明文 HTTP 首字节是 GET/POST 等 ASCII
+        if (first[0] === 0x16) httpsApp.emit("connection", socket);
+        else redirectApp.emit("connection", socket);
+      };
+      socket.once("readable", route);
+      socket.on("error", () => {});
+    });
+    tcp.listen(PORT, "0.0.0.0", () => {
+      process.env.MS_REWARDS_HTTP_LISTENING = String(PORT);
+      logger.ok(`服务已启动: https://0.0.0.0:${PORT}（http 访问自动 302 跳转 https）`);
+    });
+    server = tcp;
   } else {
     if (tlsCert || tlsKey) logger.warn("TLS 证书/私钥路径不完整或文件缺失，回退明文 HTTP");
     server = http.createServer(handle);
+    server.listen(PORT, "0.0.0.0", () => {
+      // 监听成功后打 sentinel，供 browser.js 判别「这个进程是不是 Web/Docker server」——
+      // 桌面版（electron-main）不 require ./server，25560 不会起，goto /login-done 必 ECONNREFUSED，
+      // 跳过即可。
+      process.env.MS_REWARDS_HTTP_LISTENING = String(PORT);
+      logger.ok(`服务已启动: http://0.0.0.0:${PORT}`);
+    });
   }
-  const scheme = server instanceof https.Server ? "https" : "http";
-  server.listen(PORT, "0.0.0.0", () => {
-    // 监听成功后打 sentinel，供 browser.js 判别「这个进程是不是 Web/Docker server」——
-    // 桌面版（electron-main）不 require ./server，25560 不会起，goto /login-done 必 ECONNREFUSED，
-    // 跳过即可。
-    process.env.MS_REWARDS_HTTP_LISTENING = String(PORT);
-    logger.ok(`服务已启动: ${scheme}://0.0.0.0:${PORT}`);
-  });
 
   const shutdown = () => {
     logger.info("收到退出信号，正在停止…");
