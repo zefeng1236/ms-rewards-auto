@@ -4,6 +4,7 @@ import { toast } from "../components/liquidGlassCompat";
 import { api, IS_WEB } from "../api/ipc";
 import { saveRecoveryKeyToBrowser } from "../api/web";
 import { PasswordInput } from "../components/PasswordInput";
+import { AuthBackground } from "../components/AuthBackground";
 import { evaluatePassword, STRENGTH_COLORS } from "../utils/passwordStrength";
 import type { FingerprintStatus, InstallProgress, SetupState } from "../types";
 
@@ -142,6 +143,8 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
 
   return (
     <div className="wizard">
+      {/* 向导背景（authBg）：默认流场粒子动画，可在设置切 Bing 每日一图 */}
+      <AuthBackground />
       <div className="wizard-card">
         <header className="wizard-head">
           <img className="wizard-logo" src="./icon.png" alt="" />

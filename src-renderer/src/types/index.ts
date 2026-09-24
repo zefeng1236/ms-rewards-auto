@@ -227,6 +227,14 @@ export type ThemeMode = "dark" | "light" | "system";
 
 export type BgType = "none" | "bing" | "url" | "file" | "uapi" | "qy98" | "unsplash" | "flow";
 
+/**
+ * 登录页 / 初始化向导的背景（独立于主界面的 bgType）：
+ *   - flow：内置 Canvas 流场粒子动画（默认，无网络请求）
+ *   - bing：必应每日一图
+ * 主界面软件里不渲染流场——这是用户明确要求的分工。
+ */
+export type AuthBgType = "flow" | "bing";
+
 export type BgCategory =
   | "acg"
   | "furry"
@@ -243,6 +251,8 @@ export interface Appearance {
   accent: string;
   glow: boolean;
   bgType: BgType;
+  /** 登录页 / 向导背景（与主界面 bgType 相互独立） */
+  authBg: AuthBgType;
   bgUrl: string;
   bgFile: string;
   bgCategory: BgCategory;

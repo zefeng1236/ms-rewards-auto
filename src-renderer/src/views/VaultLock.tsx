@@ -5,6 +5,7 @@ import { api, IS_WEB } from "../api/ipc";
 import { clearSavedRecoveryKey, getSavedRecoveryKey, saveRecoveryKeyToBrowser } from "../api/web";
 import { loginWithPasskey, passkeyStatus, passkeySupported, registerPasskey } from "../api/passkeyClient";
 import { VaultRescue, extractRecoveryKey } from "../components/VaultRescue";
+import { AuthBackground } from "../components/AuthBackground";
 import type { VaultStatus } from "../types";
 
 /**
@@ -141,6 +142,8 @@ export function VaultLock({ onUnlocked }: { onUnlocked: () => void }) {
 
   return (
     <div className="login-page">
+      {/* 登录页背景（authBg）：默认流场粒子动画，可在设置切 Bing 每日一图 */}
+      <AuthBackground />
       <div className="login-card">
         {/* 左：品牌图区 */}
         <div className="login-art">

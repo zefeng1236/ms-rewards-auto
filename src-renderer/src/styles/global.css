@@ -1774,6 +1774,8 @@ html[data-preset="opaque"] .compat-toast {
 }
 
 .wizard-card {
+  position: relative;
+  z-index: 1; /* 浮在 AuthBackground（AuthBackground 的 fixed 层在 .wizard 层叠上下文内 z-0）之上 */
   display: flex;
   flex-direction: column;
   width: min(760px, 100%);
@@ -3218,6 +3220,8 @@ html[data-preset="opaque"] .compat-toast {
   background: var(--lg-bg, #0e1116);
 }
 .login-card {
+  position: relative;
+  z-index: 1; /* 浮在 AuthBackground（fixed z-0 流场/壁纸层）之上 */
   display: grid;
   grid-template-columns: minmax(300px, 46%) 1fr;
   width: min(880px, 100%);

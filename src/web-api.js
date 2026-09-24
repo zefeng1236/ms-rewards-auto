@@ -116,8 +116,14 @@ function localPathFromSrc(src) {
  * emitFn 可选：传入时下载过程会推送 bg-progress 事件给 SSE。
  */
 async function bgSrc(opts = {}, emitFn) {
-  const { fresh = false } = opts || {};
-  const cfg = appearance.get();
+  const { fresh = false, auth = false } = opts || {};
+  const cfg0 = appearance.get();
+  // auth=true：登录页/向导背景解析（与主界面 bgType 无关）——
+  //   authBg=flow 返回空地址（渲染端播 Canvas 流场动画）；
+  //   authBg=bing 临时按 bing 类型解析必应每日一图（复用下方缓存链路）。
+  const cfg = auth
+    ? { ...cfg0, bgType: cfg0.authBg === "bing" ? "bing" : "none" }
+    : cfg0;
   const url = await rawBackgroundSrc(cfg);
   if (!url) return "";
   if (/^data:/i.test(url)) return url;

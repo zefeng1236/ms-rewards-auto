@@ -8,7 +8,6 @@ import { useTheme } from "./hooks/useTheme";
 import { useLiquidGlassHalo } from "./hooks/useLiquidGlassHalo";
 import { Sidebar } from "./components/Sidebar";
 import { LogConsole } from "./components/LogConsole";
-import { FlowFieldBg } from "./components/FlowFieldBg";
 import { Dashboard } from "./views/Dashboard";
 import { AccountDetail } from "./views/AccountDetail";
 import { SettingsView } from "./views/SettingsView";
@@ -44,11 +43,18 @@ function Shell() {
   // 修复玻璃库指针光晕不跟手的 bug（详见 hook 注释）
   // 指针光晕独立开关：与玻璃表面解耦（玻璃 fallback 面板同样带 .lg-surface，光晕仍可见）
   useLiquidGlassHalo(appearance?.pointerHalo === true);
-  // 流场背景是深紫黑底，只有配深色主题（白字）才读得清；flow 模式下强制深色
-  const isFlow = appearance?.bgType === "flow";
+  // 首次启动向导：setup.done 为 false 时挡在最前面，走完写入 done=true
+  const [setup, setSetup] = useState<SetupState | null>(null);
+  // 保险库状态：已启用加密但未解锁时，用锁屏挡住主界面
+  const [vault, setVault] = useState<VaultStatus | null>(null);
+  // 流场背景是深紫黑底，只有配深色主题（白字）才读得清。流场只出现在
+  // 登录页/向导（authBg，见 AuthBackground），因此仅在「未走完向导或未解锁」
+  // 的登录前分支强制深色；解锁进主界面后主题交还给用户设置。
+  const preAuthFlow =
+    appearance?.authBg !== "bing" && !(setup?.done === true && vault?.unlocked === true);
   const resolvedTheme = useTheme(
-    isFlow ? "dark" : appearance?.mode,
-    isFlow ? false : appearance?.autoTheme === true,
+    preAuthFlow ? "dark" : appearance?.mode,
+    preAuthFlow ? false : appearance?.autoTheme === true,
     luma,
     appearance?.bgDim
   );
@@ -59,10 +65,6 @@ function Shell() {
   // 否则途经的分区会把胶囊来回拽（点击定位 → spy 抢高亮 → 视觉抖动）
   const swScrollLockRef = useRef(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  // 首次启动向导：setup.done 为 false 时挡在最前面，走完写入 done=true
-  const [setup, setSetup] = useState<SetupState | null>(null);
-  // 保险库状态：已启用加密但未解锁时，用锁屏挡住主界面
-  const [vault, setVault] = useState<VaultStatus | null>(null);
   // 点 × 关闭且关闭行为为「每次询问」时，主进程推事件要求弹选项卡
   const [closePromptOpen, setClosePromptOpen] = useState(false);
 
@@ -172,14 +174,10 @@ function Shell() {
     [appearance?.bgDim, appearance?.opacity]
   );
 
-  // 全屏背景层：流场（flow）播粒子动画；有壁纸时铺模糊图 + 暗化 + 主题衬底。
-  // 向导 / 锁屏 / 主界面三个分支共用，保证「登录前的每一页」也都是流场效果。
-  const bgLayer = isFlow ? (
-    <>
-      <FlowFieldBg />
-      <div className="flow-scrim" />
-    </>
-  ) : bgSrc ? (
+  // 主界面壁纸层：只跟随主界面 bgType。流场动画不在这里——它只属于登录页/
+  // 向导的 AuthBackground（0.13.1 曾全局默认流场，用户纠正后拆分）。
+  // 向导 / 锁屏分支不再挂这层，由各视图自带 AuthBackground。
+  const bgLayer = bgSrc ? (
     <>
       <div className="bg-layer">
         <div
@@ -213,7 +211,6 @@ function Shell() {
   if (!setup.done) {
     return (
       <LiquidGlassConfig appearance={resolvedTheme} forceFallback={!appearance?.glass} theme={glassTheme}>
-        {bgLayer}
         <SetupWizard onDone={() => setSetup({ ...setup, done: true })} />
         {/* 向导是独立 early-return 分支，不经过主界面的 <Toaster/>；
             保存数字密钥 / 下载 txt 等操作的 toast 必须在这里单独挂一个，
@@ -229,7 +226,6 @@ function Shell() {
   if (vault.configured && !vault.unlocked) {
     return (
       <LiquidGlassConfig appearance={resolvedTheme} forceFallback={!appearance?.glass} theme={glassTheme}>
-        {bgLayer}
         <VaultLock onUnlocked={() => setVault({ ...vault, unlocked: true })} />
         <Toaster position="bottom-right" max={3} />
         <BgProgressBubble />

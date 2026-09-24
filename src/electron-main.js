@@ -194,8 +194,14 @@ const BG_CACHE_DIR = path.join(path.dirname(appearance.FILE), "cache");
  * 只有明确要求 fresh（换一张 / 自动轮换到期）时才重新下载。
  */
 async function backgroundSrc(opts = {}) {
-  const { fresh = false } = opts || {};
-  const cfg = appearance.get();
+  const { fresh = false, auth = false } = opts || {};
+  const cfg0 = appearance.get();
+  // auth=true：登录页/向导背景解析（与主界面 bgType 无关）——
+  //   authBg=flow 返回空地址（渲染端播 Canvas 流场动画）；
+  //   authBg=bing 临时按 bing 类型解析必应每日一图（复用下方缓存链路）。
+  const cfg = auth
+    ? { ...cfg0, bgType: cfg0.authBg === "bing" ? "bing" : "none" }
+    : cfg0;
   const url = await rawBackgroundSrc(cfg);
   if (!url) return "";
   // 本地文件 / data: 本身就是稳定的，原样返回

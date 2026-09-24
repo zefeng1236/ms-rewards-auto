@@ -742,11 +742,11 @@ checkTrue(
 
 /* ============ 17. 光晕覆盖卡片/开关 + 默认深色必应 + 浅色关反射 + 氛围光可见 ============ */
 console.log("\n【17】指针光晕覆盖卡片与开关、默认外观、浅色反射与氛围光层级");
-// 默认外观：深色 + 流场动态背景（安装即体验，而非跟随系统/内置壁纸）
+// 默认外观：深色 + 主界面必应每日一图。流场只属于登录页/向导背景（authBg，
+// 见【20】守卫），0.13.1 曾误把 flow 当主界面默认，0.13.2 依用户纠正改回。
 checkTrue("默认深浅模式为 dark", appearance.DEFAULTS.mode === "dark");
-// 0.13.1 起默认背景换成 Canvas 流场粒子动画（登录页/向导/主界面统一），
-// Bing 每日一图保留为设置页可切选项——守卫同步跟着改，否则会假红。
-checkTrue("默认背景为流场动态 flow", appearance.DEFAULTS.bgType === "flow");
+checkTrue("默认背景为必应每日一图 bing", appearance.DEFAULTS.bgType === "bing");
+checkTrue("默认登录页/向导背景为流场 flow", appearance.DEFAULTS.authBg === "flow");
 
 // 光晕此前只绑 .lg-surface，内容卡片是 .lg-material-view、开关是 .lg-switch，
 // 导致「大部分卡片」「开关」都没有跟随光斑（用户反馈）。现在统一三类。
@@ -1923,7 +1923,6 @@ const persBgSrc = fs.readFileSync(
   path.join(ROOT, "src-renderer", "src", "views", "Personalize.tsx"),
   "utf8"
 );
-const bgLayerUses = (appBgSrc.match(/\{bgLayer\}/g) || []).length;
 checkTrue(
   "流场背景组件存在且是纯装饰层（pointer-events none + 卸载解绑 RAF）",
   /className="flow-bg"/.test(flowSrc) &&
@@ -1936,17 +1935,41 @@ checkTrue(
       )
     )
 );
+// 0.13.2 用户纠正：流场只属于登录页/向导背景（authBg），主界面软件不渲染。
+// 守卫钉住这套分工：主 bgType 回归 bing 且白名单不含 flow；authBg 默认 flow
+// 可切 bing；登录页与向导各自挂 AuthBackground；App.tsx 不再出现 FlowFieldBg。
+const authAppearSrc = fs.readFileSync(path.join(ROOT, "src", "appearance.js"), "utf8");
+const vaultLockSrc = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "views", "VaultLock.tsx"),
+  "utf8"
+);
+const wizardSrc = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "views", "SetupWizard.tsx"),
+  "utf8"
+);
+const authBgM = authAppearSrc.match(/const AUTH_BG_TYPES = \[([^\]]*)\]/);
 checkTrue(
-  "bgType 支持 flow（types + appearance 白名单 + 设置页可切，且 Bing 仍在）",
-  /"flow"/.test(typesBgSrc) &&
-    /"flow"/.test(fs.readFileSync(path.join(ROOT, "src", "appearance.js"), "utf8")) &&
-    /value: "flow"/.test(persBgSrc) &&
-    /value: "bing"/.test(persBgSrc)
+  "authBg 与主 bgType 分工：主壁纸默认 bing（白名单无 flow），authBg 默认 flow 可切 bing",
+  /bgType: "bing",/.test(authAppearSrc) &&
+    authBgM !== null &&
+    /"flow"/.test(authBgM[1]) &&
+    /"bing"/.test(authBgM[1]) &&
+    /authBg: "flow",/.test(authAppearSrc) &&
+    /AUTH_BG_TYPES\.includes\(raw\.authBg\)/.test(authAppearSrc) &&
+    /AUTH_BG_TYPES\.includes\(next\.authBg\)/.test(authAppearSrc) &&
+    /AuthBgType/.test(typesBgSrc) &&
+    /authBg: AuthBgType/.test(typesBgSrc),
+  "authBg 字段/白名单/默认值任一缺失，流场背景就无法持久化或错误落入主界面"
 );
 checkTrue(
-  `流场背景在向导 / 锁屏 / 主界面三处都渲染（当前 ${bgLayerUses} 处）`,
-  bgLayerUses === 3 && /isFlow/.test(appBgSrc) && /<FlowFieldBg/.test(appBgSrc),
-  bgLayerUses !== 3 ? "三处 early-return 分支必须都挂 {bgLayer}" : ""
+  "登录页与向导各自渲染 AuthBackground，主界面 App 不再出现流场组件",
+  /<AuthBackground/.test(vaultLockSrc) &&
+    /<AuthBackground/.test(wizardSrc) &&
+    !/FlowFieldBg/.test(appBgSrc) &&
+    /aria-label="登录页背景"/.test(persBgSrc) &&
+    /label: "流场动态", value: "flow"/.test(persBgSrc) &&
+    !/bgType: "flow"/.test(persBgSrc),
+  "缺 AuthBackground 挂载 → 登录页纯色；App 出现 FlowFieldBg → 流场错误回到主界面"
 );
 
 /* ============ 汇总 ============ */

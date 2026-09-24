@@ -32,11 +32,14 @@ const DEFAULTS = {
   accent: "#3b82f6",
   // 背景氛围光开关
   glow: true,
-  // 自定义背景：none | bing（必应每日一图）| url（图片直链/API）| file（本地图片）
-  //           | uapi（UAPI 随机图，配 bgCategory）| qy98（98qy 随机壁纸）| unsplash
-  //           | flow（内置流场粒子动画，无网络请求，纯本地渲染）
-  // 默认流场：首次启动即有动态氛围、不吃网络、也不依赖第三方图源。
-  bgType: "flow",
+  // 自定义背景（主界面软件壁纸）：none | bing（必应每日一图）| url（图片直链/API）
+  //           | file（本地图片）| uapi（UAPI 随机图，配 bgCategory）| qy98 | unsplash
+  // 默认必应每日一图：主界面壁纸氛围，随日期自动更新。
+  // 注意：流场粒子动画不在这里——它只用于登录页/向导背景，见下方 authBg。
+  bgType: "bing",
+  // 登录页 / 初始化向导的背景（与主界面 bgType 相互独立）：
+  //   flow = 内置 Canvas 流场粒子动画（默认）；bing = 必应每日一图
+  authBg: "flow",
   bgUrl: "",
   bgFile: "",
   // UAPI 随机图分类（仅 bgType=uapi 时生效）：acg/furry/landscape/pc_wallpaper/anime/ai_drawing
@@ -62,7 +65,13 @@ const DEFAULTS = {
   bgResolved: null,
 };
 
-const BG_TYPES = ["none", "bing", "url", "file", "uapi", "qy98", "unsplash", "flow"];
+// 主界面壁纸白名单。0.13.1 曾把 "flow" 放进来当全局默认，用户纠正：
+// 流场只属于登录页/向导背景（authBg），主界面不渲染 → 已移除。
+// 旧配置里存了 flow 的会被规范化拒绝、回退到默认值，无需迁移脚本。
+const BG_TYPES = ["none", "bing", "url", "file", "uapi", "qy98", "unsplash"];
+
+/** 登录页/向导背景白名单 */
+const AUTH_BG_TYPES = ["flow", "bing"];
 
 /** UAPI 随机图可用分类（已排除表情包 bq 与竖屏 mb/mobile_wallpaper） */
 const BG_CATEGORIES = ["acg", "furry", "landscape", "pc_wallpaper", "anime", "ai_drawing"];
@@ -123,6 +132,7 @@ function get() {
   }
   const resolved = raw.bgResolved && typeof raw.bgResolved === "object" ? raw.bgResolved : null;
   const bgType = BG_TYPES.includes(raw.bgType) ? raw.bgType : DEFAULTS.bgType;
+  const authBg = AUTH_BG_TYPES.includes(raw.authBg) ? raw.authBg : DEFAULTS.authBg;
   // bgType 为 file 但未指定文件时，自动指向内置默认壁纸
   let bgFile = String(raw.bgFile || "").trim();
   if (bgType === "file" && !bgFile) {
@@ -135,6 +145,7 @@ function get() {
     accent: normalizeHex(raw.accent, DEFAULTS.accent),
     glow: raw.glow !== false,
     bgType,
+    authBg,
     bgUrl: String(raw.bgUrl || "").trim(),
     bgFile,
     bgCategory: BG_CATEGORIES.includes(raw.bgCategory) ? raw.bgCategory : DEFAULTS.bgCategory,
@@ -163,6 +174,7 @@ function set(patch) {
     accent: normalizeHex(next.accent, cur.accent),
     glow: next.glow !== false,
     bgType: BG_TYPES.includes(next.bgType) ? next.bgType : cur.bgType,
+    authBg: AUTH_BG_TYPES.includes(next.authBg) ? next.authBg : cur.authBg,
     bgUrl: String(next.bgUrl || "").trim(),
     // bgType=file 但未指定文件时，自动指向内置默认壁纸
     bgFile:
@@ -201,4 +213,4 @@ function backgroundSrc() {
   return "";
 }
 
-module.exports = { get, set, needsRestart, backgroundSrc, defaultWallpaperPath, PRESETS, DEFAULTS, BG_TYPES, BG_CATEGORIES, FILE };
+module.exports = { get, set, needsRestart, backgroundSrc, defaultWallpaperPath, PRESETS, DEFAULTS, BG_TYPES, AUTH_BG_TYPES, BG_CATEGORIES, FILE };

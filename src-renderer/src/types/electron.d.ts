@@ -61,7 +61,8 @@ export interface ElectronApi {
   // ---- 外观 ----
   getAppearance(): Promise<Appearance>;
   setAppearance(patch: Partial<Appearance>): Promise<AppearanceSetResult>;
-  getBgSrc(opts?: { fresh?: boolean }): Promise<BgSrcResult>;
+  /** auth=true 时按登录页/向导背景（authBg）解析，与主界面 bgType 无关 */
+  getBgSrc(opts?: { fresh?: boolean; auth?: boolean }): Promise<BgSrcResult>;
   pickImage(): Promise<string | null>;
   testBgUrl(url: string): Promise<TestUrlResult>;
   downloadWallpaper(url: string): Promise<DownloadResult>;
