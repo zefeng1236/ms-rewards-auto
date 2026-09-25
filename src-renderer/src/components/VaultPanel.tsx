@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { GlassButton } from "@ttqtt/liquid-glass-react";
 import { AppCard, Tag, toast } from "./liquidGlassCompat";
 import { api, IS_WEB } from "../api/ipc";
-import { passkeyStatus, passkeySupported, registerPasskey } from "../api/passkeyClient";
+import { passkeyStatus, passkeySupported, passkeyBlockedByIp, registerPasskey } from "../api/passkeyClient";
 import { VaultRescue } from "./VaultRescue";
 import { evaluatePassword, STRENGTH_COLORS } from "../utils/passwordStrength";
 import type { VaultStatus } from "../types";
@@ -55,6 +55,7 @@ export function VaultPanel() {
   });
   const [pkBusy, setPkBusy] = useState(false);
   const pkSupported = passkeySupported();
+  const pkBlockedByIp = passkeyBlockedByIp();
 
   const loadPk = async () => {
     if (!IS_WEB) return;
@@ -254,16 +255,18 @@ export function VaultPanel() {
             <div className="vault-note-title">Passkey（通行密钥）</div>
             <div className="hint">
               {pkSupported
-                ? pk.enabled
-                  ? `已注册 ${pk.count} 枚：${pk.labels.join("、")}。登录页可一键登录。`
-                  : "注册后可在登录页用浏览器通行密钥一键登录（替代输密码）。"
+                ? pkBlockedByIp
+                  ? "当前通过 IP 地址访问，浏览器不会保存通行密钥。请改用域名（或 localhost）访问本服务后再注册。"
+                  : pk.enabled
+                    ? `已注册 ${pk.count} 枚：${pk.labels.join("、")}。登录页可一键登录。`
+                    : "注册后可在登录页用浏览器通行密钥一键登录（替代输密码）。"
                 : "当前非安全上下文（需 HTTPS），无法使用通行密钥。"}
             </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
               <GlassButton
                 variant="glassProminent"
                 controlSize="small"
-                disabled={!pkSupported || pkBusy}
+                disabled={!pkSupported || pkBlockedByIp || pkBusy}
                 loading={pkBusy}
                 onClick={() => void doRegisterPk()}
               >

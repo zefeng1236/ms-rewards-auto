@@ -2098,6 +2098,27 @@ checkTrue(
   "点按钮兜底只写没接 → 实际跑不到，等于没兜底"
 );
 
+// 0.13.7 Passkey「无法保存到浏览器」修复：residentKey 强制 required（可发现凭据），
+// 注册/登录异常不再静默吞掉，内网 IP 访问给出明确阻断提示。
+const passkeySrvSrc = fs.readFileSync(path.join(ROOT, "src", "passkey.js"), "utf8");
+checkTrue(
+  "Passkey 注册 residentKey 强制 required（而非 preferred，避免降级成浏览器里找不到）",
+  /residentKey:\s*"required"/.test(passkeySrvSrc) && !/residentKey:\s*"preferred"/.test(passkeySrvSrc),
+  "residentKey 退回 preferred → 通行密钥降级，注册成功但浏览器/系统里保存不到"
+);
+checkTrue(
+  "Passkey 注册与登录的 browser 端异常被捕获并带信息返回（不再静默无反应）",
+  /注册被浏览器拒绝/.test(passkeyClientSrc) &&
+    /通行密钥登录被拒绝/.test(passkeyClientSrc),
+  "异常未捕获 → 内网 IP 被浏览器拒绝时界面「点了没反应」，用户无从排查"
+);
+checkTrue(
+  "内网 IP 访问识别 passkeyBlockedByIp，并在 Passkey 面板提示改用域名/localhost、禁用注册按钮",
+  /function passkeyBlockedByIp/.test(passkeyClientSrc) &&
+    /当前通过 IP 地址访问，浏览器不会保存通行密钥/.test(fs.readFileSync(path.join(ROOT, "src-renderer", "src", "components", "VaultPanel.tsx"), "utf8")),
+  "IP 访问不提示 → 用户在内网 IP 下反复注册却保存不到，问题依旧"
+);
+
 /* ============ 汇总 ============ */
 console.log(`\n${"=".repeat(46)}`);
 console.log(`结果: ${pass} 通过 / ${fail} 失败`);

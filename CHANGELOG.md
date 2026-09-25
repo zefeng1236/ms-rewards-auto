@@ -2,6 +2,16 @@
 
 本文件记录各版本的重要变更。版本格式为主版本.次版本.修订号，带 `-beta` 后缀的为测试版本。带「.N」四位小版本的为内部交付号（安装包文件名与 exe FileVersion 使用），主版本段仍为 0.9.4。
 
+## 0.13.7
+
+发布日期：2026-09-25 · 安装包 `MS-Rewards-Auto-Setup-0.13.7.exe`
+
+### 修复 Passkey 无法保存到浏览器
+
+- **`residentKey` 由 `preferred` 改为 `required`**：`preferred` 允许浏览器降级成「非可发现凭据」——注册能成功、也能登录，但通行密钥不会出现在浏览器/系统密码管理器里，观感就是「没保存到浏览器」。改为 `required` 强制存成可发现的 passkey。
+- **注册/登录异常不再静默吞掉**：`navigator.credentials.create/get` 被浏览器拒绝（如 rpId 是裸 IP）时，之前只走 `finally`、界面「点了没反应」；现在捕获异常并带出真实原因。
+- **内网 IP 访问明确提示**：可发现通行密钥要求 rpId 是域名或 localhost，裸 IP 会被浏览器拒绝。现在检测到 IP 访问时，设置页 Passkey 区会提示「改用域名（或 localhost）访问」，并禁用注册按钮，避免反复注册无果。
+
 ## 0.13.6
 
 发布日期：2026-09-25 · 安装包 `MS-Rewards-Auto-Setup-0.13.6.exe`

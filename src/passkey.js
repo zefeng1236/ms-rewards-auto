@@ -137,7 +137,11 @@ function registerOptions(req) {
         { type: "public-key", alg: -257 }, // RS256
       ],
       attestation: "none",
-      authenticatorSelection: { residentKey: "preferred", userVerification: "required" },
+      // residentKey 必须 required：preferred 允许浏览器降级成「非可发现凭据」——
+      // 那会导致注册成功、能登录，但通行密钥不会出现在浏览器/系统密码管理器里，
+      // 观感就是「没保存到浏览器」。required 强制存成可发现的 passkey。
+      // ⚠️ 可发现凭据要求 rpId 是域名或 localhost，裸 IP 会被浏览器拒绝。
+      authenticatorSelection: { residentKey: "required", userVerification: "required" },
       timeout: 60000,
       excludeCredentials: store.credentials.map((c) => ({ type: "public-key", id: c.id })),
     },
