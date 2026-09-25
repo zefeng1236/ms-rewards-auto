@@ -355,6 +355,113 @@ async function ensureBingSSO(page, context) {
 }
 
 /**
+ * 点按钮兜底：Bing 首页点击「登录」按钮，并自动走完微软确认流程。
+ *
+ * 这是静默 SSO 之后的更「强」兜底：静默授权在部分账号会卡在「选择账户 /
+ * 隐私政策确认 / 需要点『是』继续」等中间态，此时像真人一样点一下 Bing
+ * 右上角登录按钮，进入 login.live.com 后自动点确认、选择已登录账户，
+ * 从而真正把 _U 票据补上。
+ *
+ * 按钮标识采用微软账号登录页多年不变的稳定 ID：
+ *   - Bing 首页登录入口：#id_l（或 aria-label 含「登录」）
+ *   - 确认/下一步主按钮：#idSIButton9
+ *   - 已登录账户瓦片：#tilesHolder .tile（另有 .tile-container 兜底）
+ *
+ * @returns {Promise<{cookies: object[], url: string, html: string, done: boolean}>}
+ */
+async function ensureBingLoginByClick(page, context) {
+  const out = { cookies: [], url: "", html: "", done: false };
+  try {
+    await page.goto("https://www.bing.com/", { waitUntil: "domcontentloaded", timeout: 60000 });
+    await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
+    await page.waitForTimeout(2500);
+  } catch (e) {
+    logger.warn(`点按钮兜底：打开 Bing 首页失败: ${e.message}`);
+    return out;
+  }
+
+  // 点登录入口（Bing 首页右上角）
+  let clicked = false;
+  for (const sel of ["#id_l", 'a[aria-label="登录"]', "#id_a", "a#id_l"]) {
+    try {
+      const el = page.locator(sel).first();
+      if (await el.count() > 0 && await el.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await el.click({ timeout: 5000 }).catch(() => el.click({ force: true, timeout: 5000 }).catch(() => {}));
+        clicked = true;
+        logger.info(`点按钮兜底：已点击 Bing 登录入口（${sel}）`);
+        break;
+      }
+    } catch {}
+  }
+  if (!clicked) {
+    logger.warn("点按钮兜底：未找到 Bing 登录按钮，跳过。");
+    return out;
+  }
+
+  // 等待弹窗/跳转到 login.live.com，并循环处理确认页 / 账户选择（最多 ~30s）
+  const deadline = Date.now() + 30 * 1000;
+  while (Date.now() < deadline) {
+    await page.waitForTimeout(2500);
+    const url = page.url();
+    const cookies = await context.cookies();
+    // 补上票就收工
+    if (hasBingAuthCookies(cookies)) {
+      out.cookies = cookies;
+      out.url = url;
+      out.html = await page.content().catch(() => "");
+      out.done = true;
+      break;
+    }
+    if (/login\.live\.com|login\.microsoftonline\.com|account\.microsoft\.com/.test(url) || /login\.live\.com/.test(url)) {
+      // 若停在 login.live.com，尝试点确认主按钮（「是 / 下一步 / 登录」）
+      const confirmed = await clickFirst(page, [
+        "#idSIButton9",
+        'input[type="submit"]#idSIButton9',
+        "button[type=submit]",
+      ]);
+      if (confirmed) continue;
+      // 账户选择：点第一个已登录账户瓦片
+      const tile = await clickFirst(page, [
+        "#tilesHolder .tile",
+        ".tile-container .tile",
+        "[data-testid='tile']",
+      ]);
+      if (tile) continue;
+    }
+    // 弹窗可能关掉回到 bing，再点一次登录入口
+    if (/bing\.com/.test(url) && !hasBingAuthCookies(cookies)) {
+      for (const sel of ["#id_l", 'a[aria-label="登录"]', "#id_a"]) {
+        try {
+          const el = page.locator(sel).first();
+          if (await el.count() > 0 && await el.isVisible({ timeout: 1500 }).catch(() => false)) {
+            await el.click({ timeout: 4000 }).catch(() => {});
+            break;
+          }
+        } catch {}
+      }
+    }
+  }
+  if (!out.done) {
+    try { out.cookies = await context.cookies(); out.url = page.url(); out.html = await page.content(); } catch {}
+  }
+  return out;
+}
+
+/** 依次尝试多个选择器，点中第一个可见元素；返回是否点到了 */
+async function clickFirst(page, selectors) {
+  for (const sel of selectors) {
+    try {
+      const el = page.locator(sel).first();
+      if (await el.count() > 0 && await el.isVisible({ timeout: 1500 }).catch(() => false)) {
+        await el.click({ timeout: 4000 }).catch(() => el.click({ force: true, timeout: 4000 }).catch(() => {}));
+        return true;
+      }
+    } catch {}
+  }
+  return false;
+}
+
+/**
  * 无头模式打开 rewards.bing.com 刷新会话 Cookie 并快照到该账户 state
  * 如果未登录，返回 loggedIn=false
  */
@@ -404,8 +511,27 @@ async function syncCookies(ctx) {
         loggedIn = checkLoggedIn(page.url(), cookies, html2);
         if (sso.cookies.some((c) => BING_AUTH_COOKIE_NAMES.includes(c.name))) {
           logger.info("Bing 静默 SSO 成功，已补齐登录票据。");
-        } else {
-          logger.warn("Bing 静默 SSO 未拿到登录票据（MSA 会话可能已失效），如持续出现请重新授权登录。");
+        } else if (!hasBingAuthCookies(cookies)) {
+          // 静默 SSO 没补上（可能卡在账户选择/隐私确认/需点「是」），
+          // 再像真人一样去 Bing 首页点「登录」按钮并自动确认。
+          logger.warn("静默 SSO 未补齐票据，回退到模拟点登录按钮…");
+          const byClick = await ensureBingLoginByClick(page, context);
+          if (byClick.done) {
+            try {
+              await page.goto("https://rewards.bing.com/earn", { waitUntil: "domcontentloaded", timeout: 60000 });
+              await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
+              await page.waitForTimeout(3000);
+            } catch {}
+            cookies = await context.cookies();
+            let html3 = "";
+            try { html3 = await page.content(); } catch {}
+            loggedIn = checkLoggedIn(page.url(), cookies, html3);
+          }
+          if (hasBingAuthCookies(cookies)) {
+            logger.info("点登录按钮兜底成功，已补齐 Bing 登录票据。");
+          } else {
+            logger.warn("点登录按钮兜底仍未拿到票据（MSA 会话可能已失效），如持续出现请重新授权登录。");
+          }
         }
       }
     }
@@ -471,6 +597,15 @@ async function waitForRewardsSession(page, context) {
       const loggedIn = checkLoggedIn(sso.url, sso.cookies, sso.html);
       last = { loggedIn, cookies: sso.cookies, url: sso.url, html: sso.html };
       if (loggedIn) return last;
+
+      // 静默 SSO 没成，回退到模拟点登录按钮 + 自动确认隐私政策/账户
+      if (!hasBingAuthCookies(sso.cookies)) {
+        logger.info("静默 SSO 未成，回退到模拟点 Bing 登录按钮…");
+        const byClick = await ensureBingLoginByClick(page, context);
+        const loggedIn2 = checkLoggedIn(byClick.url, byClick.cookies, byClick.html);
+        last = { loggedIn: loggedIn2, cookies: byClick.cookies, url: byClick.url, html: byClick.html };
+        if (loggedIn2) return last;
+      }
     }
     logger.info("尚未抓齐 Bing / Rewards 登录信息，等待用户确认隐私政策或页面继续跳转…");
   }
@@ -578,4 +713,5 @@ module.exports = {
   loginInteractive,
   checkLoggedIn,
   ensureBingSSO,
+  ensureBingLoginByClick,
 };

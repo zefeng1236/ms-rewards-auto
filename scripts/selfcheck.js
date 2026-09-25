@@ -2079,6 +2079,25 @@ checkTrue(
   "漏访问 www.bing.com → 部分用户 www 域无登录票据，Bing 首页显示「登录」"
 );
 
+// 0.13.6 点按钮兜底：静默 SSO 没补上票时，像真人一样点 Bing 首页「登录」按钮，
+// 并自动走完微软确认页（#idSIButton9）/ 账户瓦片选择，两路同步都接入。
+checkTrue(
+  "静默 SSO 失败后回退模拟点登录按钮：点 Bing 首页 #id_l、自动确认 #idSIButton9 / 账户瓦片",
+  /async function ensureBingLoginByClick/.test(bingSsoSrc) &&
+    /#id_l/.test(bingSsoSrc) &&
+    /#idSIButton9/.test(bingSsoSrc) &&
+    /#tilesHolder \.tile/.test(bingSsoSrc) &&
+    /async function clickFirst\(page, selectors\)/.test(bingSsoSrc),
+  "点按钮兜底缺失 → 静默 SSO 卡在账户选择/隐私确认的用户仍无法自动补登"
+);
+checkTrue(
+  "点按钮兜底接入 sync 与交互登录两条同步路径（SSO 未成 → ensureBingLoginByClick）",
+  /回退到模拟点登录按钮/.test(bingSsoSrc) &&
+    /await ensureBingLoginByClick\(page, context\)/.test(bingSsoSrc) &&
+    /回退到模拟点 Bing 登录按钮/.test(bingSsoSrc),
+  "点按钮兜底只写没接 → 实际跑不到，等于没兜底"
+);
+
 /* ============ 汇总 ============ */
 console.log(`\n${"=".repeat(46)}`);
 console.log(`结果: ${pass} 通过 / ${fail} 失败`);
