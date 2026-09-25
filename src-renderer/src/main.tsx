@@ -7,8 +7,8 @@ import { IS_WEB } from "./api/ipc";
 const el = document.getElementById("root");
 if (!el) throw new Error("找不到 #root 挂载点");
 
-// 浏览器（Docker 版）根节点标记：向导/锁屏在 Web 下铺满视口，
-// Electron 桌面端仍保留居中浮窗卡片（见 global.css 的 [data-web] 规则）
+// 浏览器（Docker 版）根节点标记：Web 专属样式钩子（0.13.4 起向导与桌面
+// 统一为居中浮动玻璃卡片，仅个别 Web-only 微调仍用 [data-web] 区分）
 if (IS_WEB) document.documentElement.setAttribute("data-web", "1");
 
 createRoot(el).render(<App />);

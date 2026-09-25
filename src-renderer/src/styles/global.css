@@ -1769,7 +1769,9 @@ html[data-preset="opaque"] .compat-toast {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: var(--bg-deep, #070910);
+  /* 不设实心背景：让 AuthBackground 的流场/壁纸透过卡片之外的四周透出来。
+     深色兜底色只作为流场尚未挂载时的一闪而过的底色，几乎不可见。 */
+  background: #13141b;
   overflow: hidden;
 }
 
@@ -1778,40 +1780,38 @@ html[data-preset="opaque"] .compat-toast {
   z-index: 1; /* 浮在 AuthBackground（AuthBackground 的 fixed 层在 .wizard 层叠上下文内 z-0）之上 */
   display: flex;
   flex-direction: column;
-  width: min(760px, 100%);
-  height: min(620px, 100%);
-  border: 1px solid var(--border, #232b39);
-  border-radius: 16px;
-  background: var(--panel, #12161f);
-  box-shadow: var(--shadow-3);
+  /* 放大卡片：与登录页 login-card 同一尺寸档位，各步骤统一大小（内容放不下时内部滚动） */
+  width: min(960px, 100%);
+  height: min(700px, 100%);
+  border-radius: 18px;
   overflow: hidden;
+  /* 与登录页 login-card 一致的深色玻璃质感：半透明深底 + 背景模糊 + 顶部高光描边，
+     流场/壁纸从磨砂后透出 */
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.015) 42%),
+    rgba(18, 19, 28, 0.82);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow:
+    0 24px 64px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.09);
 }
 
 /* ------------------------------------------------------------------
-   Web（Docker / 浏览器）下向导与锁屏铺满整个视口，不再是 760×620 浮窗。
-   桌面 Electron 不受影响（<html> 上没有 data-web 标记）。
-   卡片全撑满，但头/正文/脚的内容限制可读宽度并居中，超宽屏不飞边。
+   Web（Docker / 浏览器）与桌面统一：向导同为居中浮动玻璃卡片 +
+   AuthBackground 背景（0.13.4 起，不再铺满整个视口），与登录页同款观感。
+   头/正文/脚的内容限制可读宽度并居中，超宽屏不飞边。
    ------------------------------------------------------------------ */
-:root[data-web="1"] .wizard {
-  padding: 0;
-}
-
-:root[data-web="1"] .wizard-card {
-  width: 100%;
-  height: 100%;
-  border: 0;
-  border-radius: 0;
-}
-
-:root[data-web="1"] .wizard-head,
-:root[data-web="1"] .wizard-foot {
+.wizard-head,
+.wizard-foot {
   align-self: center;
   width: 100%;
   max-width: 1040px;
   box-sizing: border-box;
 }
 
-:root[data-web="1"] .wz-page {
+.wz-page {
   width: 100%;
   max-width: 920px;
   margin: 0 auto;

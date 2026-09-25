@@ -2033,6 +2033,25 @@ checkTrue(
   "深色玻璃样式回退 → 登录页又变白底或卡片失去玻璃质感"
 );
 
+// 0.13.4 向导统一为登录页同款浮动玻璃卡片：放大尺寸、各步骤统一大小、
+// Web 不再铺满视口（与登录页观感一致）。
+const wizGuardsSrc = cssSource;
+checkTrue(
+  "向导卡片 = 登录页同款深色玻璃：blur+半透明深底+高光描边，统一 960×700 尺寸档",
+  /\.wizard-card \{[^}]*width: min\(960px, 100%\)/.test(wizGuardsSrc) &&
+    /\.wizard-card \{[^}]*height: min\(700px, 100%\)/.test(wizGuardsSrc) &&
+    /\.wizard-card \{[^}]*backdrop-filter: blur\(18px\) saturate\(140%\)/.test(wizGuardsSrc) &&
+    /\.wizard-card \{[^}]*rgba\(18, 19, 28, 0\.82\)/.test(wizGuardsSrc) &&
+    /\.wizard-card \{[^}]*inset 0 1px 0 rgba\(255, 255, 255, 0\.09\)/.test(wizGuardsSrc),
+  "向导卡片玻璃样式或统一尺寸回退 → 各步骤大小不一/观感与登录页脱节"
+);
+checkTrue(
+  "向导容器不再铺满视口：data-web 全屏覆盖已移除，Web 与桌面同为浮动卡片",
+  !/\[data-web="1"\] \.wizard-card \{/.test(wizGuardsSrc) &&
+    !/:root\[data-web="1"\] \.wizard \{/.test(wizGuardsSrc),
+  "Web 全屏覆盖回归 → Web 端向导与登录页观感不一致，玻璃卡失效"
+);
+
 /* ============ 汇总 ============ */
 console.log(`\n${"=".repeat(46)}`);
 console.log(`结果: ${pass} 通过 / ${fail} 失败`);
