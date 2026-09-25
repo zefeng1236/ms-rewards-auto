@@ -2052,6 +2052,33 @@ checkTrue(
   "Web 全屏覆盖回归 → Web 端向导与登录页观感不一致，玻璃卡失效"
 );
 
+// 0.13.5 修复「部分用户 Bing 不会自动登录」：Bing 侧票据与 MSA 票据分层判定，
+// MSA 在线但缺 _U 时显式走 fd/auth/signin 静默 SSO 补票。
+const bingSsoSrc = fs.readFileSync(path.join(ROOT, "src", "browser.js"), "utf8");
+checkTrue(
+  "Bing 侧票据与 MSA 票据分层：checkLoggedIn 不再把 login.live.com 票据当已登录",
+  /const BING_AUTH_COOKIE_NAMES = \["\_U", "\.MSA\.Auth", "\_C_Auth", "\_M"\];/.test(bingSsoSrc) &&
+    /function hasBingAuthCookies/.test(bingSsoSrc) &&
+    /if \(hasBingAuthCookies\(cookies\)\) return true;/.test(bingSsoSrc) &&
+    !/if \(hasAuthCookies\(cookies\)\) return true;/.test(bingSsoSrc.slice(bingSsoSrc.indexOf("function checkLoggedIn"), bingSsoSrc.indexOf("async function ensureBingSSO"))),
+  "MSA-only 误判已登录 → Bing 实际未登录但同步照常存回，搜索不计分"
+);
+checkTrue(
+  "MSA 在线但缺 _U 时显式走 fd/auth/signin 静默 SSO 补登 Bing，sync 与交互登录两路都接上",
+  /fd\/auth\/signin/.test(bingSsoSrc) &&
+    /\?action=interactive&provider=windows_live_id/.test(bingSsoSrc) &&
+    /async function ensureBingSSO/.test(bingSsoSrc) &&
+    /微软账号在线但 Bing 侧缺少登录票据/.test(bingSsoSrc) &&
+    /!hasBingAuthCookies\(cookies\) && hasAuthCookies\(cookies\)/.test(bingSsoSrc) &&
+    /!ssoTried && !hasBingAuthCookies\(last\.cookies\) && hasAuthCookies\(last\.cookies\)/.test(bingSsoSrc),
+  "静默 SSO 缺失或没接入两路同步 → Bing 缺 _U 的用户永远无法自动补登"
+);
+checkTrue(
+  "Cookie 同步目标补全 www.bing.com（_U 可能只落在 cn 或 www 其一）",
+  /\["https:\/\/cn\.bing\.com\/", "https:\/\/www\.bing\.com\/", "https:\/\/rewards\.bing\.com\/earn"\]/.test(bingSsoSrc),
+  "漏访问 www.bing.com → 部分用户 www 域无登录票据，Bing 首页显示「登录」"
+);
+
 /* ============ 汇总 ============ */
 console.log(`\n${"=".repeat(46)}`);
 console.log(`结果: ${pass} 通过 / ${fail} 失败`);

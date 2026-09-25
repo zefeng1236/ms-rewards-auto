@@ -25,7 +25,7 @@ services:
         # （阿里云当时 10.6，原默认值，已换掉；换源只影响首次构建）
         NPM_REGISTRY: https://registry.npmmirror.com
         DEBIAN_MIRROR: https://mirror.nju.edu.cn/debian
-    image: ms-rewards-auto:0.13.4
+    image: ms-rewards-auto:0.13.5
     container_name: ms-rewards
     restart: unless-stopped
 

@@ -23,10 +23,24 @@ const AUTH_COOKIE_NAMES = [
   "WLSSC",
 ];
 
+// Bing 侧（bing.com 域下发）的认证票据。注意与 login.live.com 的 MSA 票据区分：
+// ESTSAUTH / WLSSC / KievRPSSecAuth 等只能证明「微软账号在线」，
+// 不代表 bing.com 已登录 —— 正是漏掉这一层区分，导致部分用户同步后
+// Bing 首页仍显示「登录」、积分页被重定向到登录页（2026-09 用户反馈）。
+const BING_AUTH_COOKIE_NAMES = ["_U", ".MSA.Auth", "_C_Auth", "_M"];
+
 function hasAuthCookies(cookies) {
   return (
     Array.isArray(cookies) &&
     cookies.some((c) => AUTH_COOKIE_NAMES.includes(c.name) && String(c.value || "").length > 0)
+  );
+}
+
+/** 是否拿到了 Bing 侧（bing.com 域）的认证票据 */
+function hasBingAuthCookies(cookies) {
+  return (
+    Array.isArray(cookies) &&
+    cookies.some((c) => BING_AUTH_COOKIE_NAMES.includes(c.name) && String(c.value || "").length > 0)
   );
 }
 
@@ -291,18 +305,53 @@ async function closeContext(handle) {
 
 /**
  * 判断是否已登录：
- * 1. 存在认证 Cookie -> 已登录（最可靠，优先于 URL 判断）
+ * 1. 存在 Bing 侧认证 Cookie（_U 等，bing.com 域下发）-> 已登录（最可靠，优先判断）
  * 2. 页面 HTML 中出现积分数据特征 -> 已登录
- * 3. 页面停留在登录域且无上述特征 -> 未登录
+ * 3. 仅存在 login.live.com 的 MSA 票据（ESTSAUTH/WLSSC 等）-> 不算已登录：
+ *    那只说明微软账号在线，bing.com 本身仍可能显示「登录」。
+ *    调用方（syncCookies / waitForRewardsSession）会据此走静默 SSO 补票。
  */
 function checkLoggedIn(url, cookies, html) {
-  // Cookie 是最可靠的依据，优先判断。
-  // 注意：不能因为 URL 在 login.live.com 就直接判未登录 ——
-  // 授权流程结束时页面常停留在 oauth20_desktop.srf，此时 Cookie 其实已有效。
-  if (hasAuthCookies(cookies)) return true;
+  if (hasBingAuthCookies(cookies)) return true;
   if (html && (html.includes("pointsCounters") || html.includes('"balance"') || html.includes('"availablePoints"'))) return true;
-  if (/login\.live\.com|account\.microsoft\.com/.test(url || "")) return false;
   return false;
+}
+
+/**
+ * 静默 SSO：MSA 在线（login.live.com 有票据）但 Bing 侧没有 _U 时，
+ * 走一次 Bing 的登录入口 fd/auth/signin —— 它会跳到 login.live.com 的
+ * OAuth 授权页，MSA 会话有效时全程静默，回跳后由 bing 下发 _U 票据。
+ * （实测仅访问 bing 首页不会触发这条 SSO，这是「部分用户 Bing 不自动登录」的根因。）
+ * @returns {Promise<{cookies: object[], url: string, html: string, ssoDone: boolean}>}
+ */
+async function ensureBingSSO(page, context) {
+  const ssoUrl =
+    "https://www.bing.com/fd/auth/signin" +
+    "?action=interactive&provider=windows_live_id" +
+    "&return_url=" + encodeURIComponent("https://www.bing.com/");
+  const out = { cookies: [], url: "", html: "", ssoDone: false };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      await page.goto(ssoUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+      await page.waitForLoadState("networkidle", { timeout: 12000 }).catch(() => {});
+      await page.waitForTimeout(4500);
+    } catch (e) {
+      logger.warn(`Bing 静默 SSO 跳转失败: ${e.message}`);
+    }
+    const url = page.url();
+    let html = "";
+    try {
+      html = await page.content();
+    } catch {}
+    const cookies = await context.cookies();
+    out.cookies = cookies;
+    out.url = url;
+    out.html = html;
+    out.ssoDone = true;
+    // 登录页仍要求输入账号 = MSA 会话已失效，重试也不会有结果
+    if (hasBingAuthCookies(cookies) || /login\.live\.com\/.*oauth20_login/i.test(url)) break;
+  }
+  return out;
 }
 
 /**
@@ -316,8 +365,9 @@ async function syncCookies(ctx) {
   try {
     const pages = context.pages();
     const page = pages[0] || (await context.newPage());
-    // 同样先过 bing.com 触发 SSO，再读 rewards 页
-    for (const target of ["https://cn.bing.com/", "https://rewards.bing.com/earn"]) {
+    // 先过 bing.com 触发 SSO，再读 rewards 页。
+    // cn / www 都要过：_U 票据可能只落在其中一个域上。
+    for (const target of ["https://cn.bing.com/", "https://www.bing.com/", "https://rewards.bing.com/earn"]) {
       try {
         await page.goto(target, { waitUntil: "domcontentloaded", timeout: 60000 });
         await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
@@ -331,8 +381,35 @@ async function syncCookies(ctx) {
     try {
       html = await page.content();
     } catch {}
-    const cookies = await context.cookies();
-    const loggedIn = checkLoggedIn(url, cookies, html);
+    let cookies = await context.cookies();
+    let loggedIn = checkLoggedIn(url, cookies, html);
+
+    // MSA 在线但 Bing 侧没有 _U：仅访问首页不会触发 SSO，显式补一次静默登录。
+    // 这是「部分用户 Bing 不会自动登录」的修复点 —— 以前会误判成已登录并原样存回。
+    if (!hasBingAuthCookies(cookies) && hasAuthCookies(cookies)) {
+      logger.info("微软账号在线但 Bing 侧缺少登录票据，尝试静默 SSO 补登 Bing…");
+      const sso = await ensureBingSSO(page, context);
+      if (sso.ssoDone) {
+        // 补票后再回一次 rewards 页，让 rewards 会话也吃 Bing 登录态
+        try {
+          await page.goto("https://rewards.bing.com/earn", { waitUntil: "domcontentloaded", timeout: 60000 });
+          await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
+          await page.waitForTimeout(3000);
+        } catch {}
+        cookies = await context.cookies();
+        let html2 = "";
+        try {
+          html2 = await page.content();
+        } catch {}
+        loggedIn = checkLoggedIn(page.url(), cookies, html2);
+        if (sso.cookies.some((c) => BING_AUTH_COOKIE_NAMES.includes(c.name))) {
+          logger.info("Bing 静默 SSO 成功，已补齐登录票据。");
+        } else {
+          logger.warn("Bing 静默 SSO 未拿到登录票据（MSA 会话可能已失效），如持续出现请重新授权登录。");
+        }
+      }
+    }
+
     const prev = ctx.state.getCookies();
 
     if (loggedIn) {
@@ -361,9 +438,10 @@ async function syncCookies(ctx) {
  * @returns {Promise<{code: string|null, loggedIn: boolean}>}
  */
 async function waitForRewardsSession(page, context) {
-  const targets = ["https://cn.bing.com/", "https://rewards.bing.com/earn"];
+  const targets = ["https://cn.bing.com/", "https://www.bing.com/", "https://rewards.bing.com/earn"];
   const deadline = Date.now() + 90 * 1000;
   let last = { loggedIn: false, cookies: [], url: page.url(), html: "" };
+  let ssoTried = false;
   while (Date.now() < deadline) {
     for (const target of targets) {
       try {
@@ -381,6 +459,17 @@ async function waitForRewardsSession(page, context) {
       const cookies = await context.cookies();
       const loggedIn = checkLoggedIn(url, cookies, html);
       last = { loggedIn, cookies, url, html };
+      if (loggedIn) return last;
+    }
+    // 授权刚完成时通常只有 MSA 票据；仅访问 bing 首页不会触发 SSO，
+    // 必须显式走一次 fd/auth/signin 才能拿到 bing 的 _U（否则部分用户
+    // 登录完成后 Bing 仍是「登录」状态，搜索不计分）。
+    if (!ssoTried && !hasBingAuthCookies(last.cookies) && hasAuthCookies(last.cookies)) {
+      ssoTried = true;
+      logger.info("微软账号已授权，正在静默 SSO 补登 Bing…");
+      const sso = await ensureBingSSO(page, context);
+      const loggedIn = checkLoggedIn(sso.url, sso.cookies, sso.html);
+      last = { loggedIn, cookies: sso.cookies, url: sso.url, html: sso.html };
       if (loggedIn) return last;
     }
     logger.info("尚未抓齐 Bing / Rewards 登录信息，等待用户确认隐私政策或页面继续跳转…");
@@ -472,7 +561,9 @@ async function clearBrowserCache(ctx) {
 module.exports = {
   ROOT,
   AUTH_COOKIE_NAMES,
+  BING_AUTH_COOKIE_NAMES,
   hasAuthCookies,
+  hasBingAuthCookies,
   chromiumExecutablePath,
   bundledChromiumPath,
   fingerprintCfg,
@@ -486,4 +577,5 @@ module.exports = {
   syncCookies,
   loginInteractive,
   checkLoggedIn,
+  ensureBingSSO,
 };
