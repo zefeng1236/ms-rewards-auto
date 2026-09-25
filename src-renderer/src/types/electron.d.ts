@@ -85,9 +85,10 @@ export interface ElectronApi {
   getVaultStatus(): Promise<VaultStatus>;
   /** 首次设置：用密码建库，返回恢复密钥 */
   vaultSetup(password: string, hint?: string): Promise<VaultResult>;
-  vaultUnlock(password: string): Promise<VaultResult>;
+  /** remember：仅 Web 版有效 —— 勾选后会话 cookie 有效期 6 小时（免登录），否则关浏览器即失效 */
+  vaultUnlock(password: string, remember?: boolean): Promise<VaultResult>;
   /** 用恢复密钥解锁（忘记密码时） */
-  vaultUnlockRecovery(key: string): Promise<VaultResult>;
+  vaultUnlockRecovery(key: string, remember?: boolean): Promise<VaultResult>;
   vaultLock(): Promise<VaultStatus>;
   vaultChangePassword(current: string, next: string, hint?: string): Promise<VaultResult>;
   /** 取恢复密钥（仅已解锁时可用，内部会轮换一把新的） */

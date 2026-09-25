@@ -252,6 +252,11 @@ let mockVault: VaultStatus = {
 const MOCK_RECOVERY = "cHJldmlldy1tb2RlLWRlbW8ta2V5（预览模式示例）";
 let mockVaultPw = "";
 
+// ?lock 强制「已建库但未解锁」状态，用于登录页（VaultLock）调试
+if (typeof location !== "undefined" && /\block\b/.test(location.search)) {
+  mockVault = { ...mockVault, configured: true };
+}
+
 const mockLogs = [
   "[2026-08-31 09:12:03] [INFO] 启动应用",
   "[2026-08-31 09:12:04] [INFO] 已加载 3 个账户",
@@ -391,13 +396,13 @@ export function createMockApi(): ElectronApi {
       mockVault = { ...mockVault, configured: true, unlocked: true, hint: hint || "" };
       return { ok: true, recoveryKey: MOCK_RECOVERY };
     },
-    vaultUnlock: async (password) => {
+    vaultUnlock: async (password, _remember) => {
       if (!mockVault.configured) return { ok: false, error: "尚未配置保险库" };
       if (password !== mockVaultPw) return { ok: false, error: "密码错误，请重试" };
       mockVault = { ...mockVault, unlocked: true };
       return { ok: true };
     },
-    vaultUnlockRecovery: async (key) => {
+    vaultUnlockRecovery: async (key, _remember) => {
       if (key !== MOCK_RECOVERY) return { ok: false, error: "恢复密钥不正确" };
       mockVault = { ...mockVault, unlocked: true };
       return { ok: true };
@@ -558,7 +563,7 @@ export function createMockApi(): ElectronApi {
       return {
         ok: true,
         updateAvailable: true,
-        currentVersion: "0.13.2",
+        currentVersion: "0.13.3",
         latestVersion: "0.14.0",
         downloadUrl: "https://github.com/zefeng1236/ms-rewards-auto/releases/download/v0.14.0/MS-Rewards-Auto-Setup-0.14.0.exe",
         assetName: "MS-Rewards-Auto-Setup-0.14.0.exe",

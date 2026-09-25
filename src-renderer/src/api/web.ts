@@ -338,13 +338,13 @@ export function createWebApi(): ElectronApi {
       if (r.ok) openStream(); // 建库即登录，可以把事件流接上了
       return r;
     },
-    vaultUnlock: async (password) => {
-      const r = await postJSON<VaultResult>("/api/vault/unlock", { password });
-      if (r.ok) openStream();
+    vaultUnlock: async (password, remember) => {
+      const r = await postJSON<VaultResult>("/api/vault/unlock", { password, remember: !!remember });
+      if (r.ok) openStream(); // 解锁成功，可以把事件流接上了
       return r;
     },
-    vaultUnlockRecovery: async (key) => {
-      const r = await postJSON<VaultResult>("/api/vault/unlock", { recoveryKey: key });
+    vaultUnlockRecovery: async (key, remember) => {
+      const r = await postJSON<VaultResult>("/api/vault/unlock", { recoveryKey: key, remember: !!remember });
       if (r.ok) openStream();
       return r;
     },

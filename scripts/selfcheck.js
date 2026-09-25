@@ -1972,6 +1972,67 @@ checkTrue(
   "缺 AuthBackground 挂载 → 登录页纯色；App 出现 FlowFieldBg → 流场错误回到主界面"
 );
 
+// 0.13.3 登录页三件事：①忘记密码翻页（卡片内 3D 翻转，内容不溢出）；
+// ②「6 小时免登录」复选框（服务端 Map 会话 + 过期拒绝）；③深色玻璃卡片。
+const sessSrc = fs.readFileSync(path.join(ROOT, "src", "server.js"), "utf8");
+const webApiTs = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "api", "web.ts"), "utf8");
+const passkeyClientSrc = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "api", "passkeyClient.ts"),
+  "utf8"
+);
+const rescueSrc0133 = rescueSource; // 复用第 9 段读过的 VaultRescue 源码
+checkTrue(
+  "服务端「6 小时免登录」：REMEMBER_TTL=6h、cookie Max-Age=21600、会话 Map 带过期时间并在 hasSession 里懒删除",
+  /REMEMBER_TTL = 6 \* 3600 \* 1000/.test(sessSrc) &&
+    /Max-Age=\$\{Math\.floor\(REMEMBER_TTL \/ 1000\)\}/.test(sessSrc) &&
+    /const sessions = new Map\(\)/.test(sessSrc) &&
+    /Date\.now\(\) > exp/.test(sessSrc) &&
+    /sessions\.delete\(token\)/.test(sessSrc),
+  "服务端会话改造回退 → 免登录时长失效或 token 永不过期"
+);
+checkTrue(
+  "解锁/重置/Passkey 三条登录路径都透传 remember 建会话，未勾选回落会话级 cookie",
+  /newSession\(res, !!remember\)/.test(sessSrc) &&
+    /newSession\(res, !!body\.remember\)/.test(sessSrc) &&
+    /\{ password, remember: !!remember \}/.test(webApiTs) &&
+    /\{ recoveryKey: key, remember: !!remember \}/.test(webApiTs) &&
+    /remember: !!remember,/.test(passkeyClientSrc),
+  "任一路径丢 remember → 勾了免登录也不生效，或 Passkey 登录行为与表单不一致"
+);
+checkTrue(
+  "登录页「6 小时内免登录」复选框仅在 Web 渲染并参与解锁调用",
+  /IS_WEB && \(/.test(vaultLockSrc) &&
+    /className="login-remember"/.test(vaultLockSrc) &&
+    /6 小时内免登录/.test(vaultLockSrc) &&
+    /api\.vaultUnlock\(value, remember\)/.test(vaultLockSrc) &&
+    /api\.vaultUnlockRecovery\(value, remember\)/.test(vaultLockSrc) &&
+    /loginWithPasskey\(remember\)/.test(vaultLockSrc),
+  "复选框缺失或没接进解锁调用 → 免登录功能形同虚设"
+);
+checkTrue(
+  "忘记密码为卡片内 3D 翻页：preserve-3d + rotateY + backface 隐藏，背面绝对定位内部滚动",
+  /login-flip\$\{face === "rescue" \? " flipped" : ""\}/.test(vaultLockSrc) &&
+    /<VaultRescue variant="panel"/.test(vaultLockSrc) &&
+    /login-flip-backbtn/.test(vaultLockSrc) &&
+    /inert=\{face !== "login"\}/.test(vaultLockSrc) &&
+    /inert=\{face !== "rescue"\}/.test(vaultLockSrc) &&
+    /transform-style: preserve-3d/.test(cssSource) &&
+    /\.login-flip\.flipped \{[^}]*rotateY\(180deg\)/.test(cssSource) &&
+    /backface-visibility: hidden/.test(cssSource) &&
+    /\.login-flip-back \{[\s\S]*?position: absolute;[\s\S]*?overflow-y: auto/.test(cssSource) &&
+    /variant = "accordion"/.test(rescueSrc0133) && /isPanel/.test(rescueSrc0133),
+  "翻页结构/动画/约束任一缺失 → 自救面板要么点不到要么溢出卡片"
+);
+checkTrue(
+  "登录页深色玻璃质感：卡片半透明深底 + backdrop blur + 高光描边，图区深色渐变，页面级主题变量固定深色",
+  /\.login-page \{[\s\S]*?--lg-text-primary: #e8ecf2/.test(cssSource) &&
+    /backdrop-filter: blur\(18px\) saturate\(140%\)/.test(cssSource) &&
+    /rgba\(18, 19, 28, 0\.82\)/.test(cssSource) &&
+    /inset 0 1px 0 rgba\(255, 255, 255, 0\.09\)/.test(cssSource) &&
+    /radial-gradient\(120% 90% at 32% 24%, #262838/.test(cssSource),
+  "深色玻璃样式回退 → 登录页又变白底或卡片失去玻璃质感"
+);
+
 /* ============ 汇总 ============ */
 console.log(`\n${"=".repeat(46)}`);
 console.log(`结果: ${pass} 通过 / ${fail} 失败`);

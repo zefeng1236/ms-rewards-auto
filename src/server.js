@@ -64,16 +64,22 @@ const FALLBACK_PAGE = path.join(__dirname, "web", "index.html");
  * 保险库密钥是「进程级」的（解锁一次，后台任务就能跑），
  * 会话只决定「这个浏览器要不要再输一次密码」。
  * 因此登出（logout）只销毁会话、不锁保险库 —— 后台定时任务不受影响。
+ *
+ * 「6 小时免登录」：登录表单勾选 remember 时，cookie 带 Max-Age=6h（关浏览器
+ * 也在）；不勾则是会话级 cookie（关浏览器即失效）。服务端用 Map 记录每个
+ * token 的过期时间，过期即拒——否则没了 Max-Age 的约束，token 会永久有效。
  */
-const sessions = new Set();
+const sessions = new Map(); // token -> expiresAt(ms)
 const SESSION_COOKIE = "msr_session";
-const SESSION_TTL = 7 * 24 * 3600 * 1000; // 7 天
+const REMEMBER_TTL = 6 * 3600 * 1000; // 勾选免登录：6 小时
+const SESSION_TTL = 24 * 3600 * 1000; // 未勾选：会话 cookie（关浏览器即失效），服务端兜底 24h
 
-function newSession(res) {
+function newSession(res, remember) {
   const token = crypto.randomBytes(24).toString("hex");
-  sessions.add(token);
-  res.setHeader("Set-Cookie",
-    `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${Math.floor(SESSION_TTL / 1000)}`);
+  const ttl = remember ? REMEMBER_TTL : SESSION_TTL;
+  sessions.set(token, Date.now() + ttl);
+  const cookie = `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax`;
+  res.setHeader("Set-Cookie", remember ? `${cookie}; Max-Age=${Math.floor(REMEMBER_TTL / 1000)}` : cookie);
   return token;
 }
 
@@ -89,7 +95,15 @@ function parseCookies(req) {
 
 function hasSession(req) {
   const c = parseCookies(req);
-  return !!(c[SESSION_COOKIE] && sessions.has(c[SESSION_COOKIE]));
+  const token = c[SESSION_COOKIE];
+  if (!token) return false;
+  const exp = sessions.get(token);
+  if (!exp) return false;
+  if (Date.now() > exp) {
+    sessions.delete(token);
+    return false;
+  }
+  return true;
 }
 
 function clearSession(req, res) {
@@ -386,7 +400,7 @@ async function handle(req, res) {
       if (r.ok) {
         vaultMigrate.migrateAll();
         writeAutoUnlockFile();
-        newSession(res);          // 建库即登录
+        newSession(res);          // 建库即登录（向导无 remember 概念，会话级）
         startBackgroundWork();
         core.pushAccounts();
       }
@@ -394,12 +408,12 @@ async function handle(req, res) {
     }
 
     if (p === "/api/vault/unlock" && method === "POST") {
-      const { password, recoveryKey } = await readBody(req);
+      const { password, recoveryKey, remember } = await readBody(req);
       const r = recoveryKey ? vault.unlockWithRecovery(recoveryKey) : vault.unlock(password);
       if (r.ok) {
         vaultMigrate.migrateAll();
         writeAutoUnlockFile();
-        newSession(res);
+        newSession(res, !!remember);
         startBackgroundWork();
         core.pushAccounts();
         return json(res, 200, { ok: true, byEnv: false });
@@ -411,12 +425,12 @@ async function handle(req, res) {
 
     // ① 有恢复密钥：直接重置密码，成功后顺带建立登录会话
     if (p === "/api/vault/reset" && method === "POST") {
-      const { recoveryKey, next, hint } = await readBody(req);
+      const { recoveryKey, next, hint, remember } = await readBody(req);
       const r = vault.resetPasswordWithRecovery(recoveryKey, next, hint);
       if (r.ok) {
         vaultMigrate.migrateAll();
         writeAutoUnlockFile();
-        newSession(res);
+        newSession(res, !!remember);
         startBackgroundWork();
         core.pushAccounts();
         return json(res, 200, { ok: true });
@@ -443,9 +457,10 @@ async function handle(req, res) {
       return json(res, 200, passkey.authOptions(req));
     }
     if (p === "/api/passkey/auth" && method === "POST") {
-      const r = passkey.auth(req, await readBody(req));
+      const body = await readBody(req);
+      const r = passkey.auth(req, body);
       if (r.ok) {
-        newSession(res);
+        newSession(res, !!body.remember);
         startBackgroundWork();
         writeAutoUnlockFile();
         core.pushAccounts();

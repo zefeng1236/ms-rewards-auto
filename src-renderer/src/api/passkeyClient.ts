@@ -91,8 +91,8 @@ export async function registerPasskey(label: string): Promise<Rest> {
   });
 }
 
-/** 用通行密钥登录（无需会话） */
-export async function loginWithPasskey(): Promise<Rest> {
+/** 用通行密钥登录（无需会话）；remember：勾选「6 小时免登录」时带给服务端 */
+export async function loginWithPasskey(remember?: boolean): Promise<Rest> {
   const opt = await post("/api/passkey/auth-options", {});
   if (!opt.ok) return opt;
   const d = opt.data;
@@ -115,6 +115,7 @@ export async function loginWithPasskey(): Promise<Rest> {
     clientDataJSON: b64u(resp.clientDataJSON),
     authenticatorData: b64u(resp.authenticatorData),
     signature: b64u(resp.signature),
+    remember: !!remember,
   });
 }
 

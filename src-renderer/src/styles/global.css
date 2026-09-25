@@ -3211,13 +3211,23 @@ html[data-preset="opaque"] .compat-toast {
   --lg-spin-ring-width: 2.5px;
 }
 
-/* ============================ 登录页（左图右表单） ============================ */
+/* ====================== 登录页（左图右表单，深色玻璃 + 翻页） ====================== */
+/* 登录页固定深色观感（参照 Rewards 官方深色版式）：在页面作用域覆盖主题变量，
+   让卡片里的 wz-* / hint 等通用样式在玻璃深底上依然可读，不随全局浅色主题翻车 */
 .login-page {
+  --text: #e8ecf2;
+  --muted: #8a92a3;
+  --lg-text-primary: #e8ecf2;
+  --lg-text-secondary: #aeb6c2;
+  --lg-text-disabled: #8a92a3;
+  --border: rgba(255, 255, 255, 0.12);
+  --line: rgba(255, 255, 255, 0.1);
+  --lg-surface-2: rgba(255, 255, 255, 0.05);
   min-height: 100vh;
   display: grid;
   place-items: center;
   padding: 24px;
-  background: var(--lg-bg, #0e1116);
+  background: #13141b;
 }
 .login-card {
   position: relative;
@@ -3226,15 +3236,22 @@ html[data-preset="opaque"] .compat-toast {
   grid-template-columns: minmax(300px, 46%) 1fr;
   width: min(880px, 100%);
   min-height: 520px;
-  border-radius: 16px;
-  overflow: hidden;
-  background: var(--lg-surface-1, #161b22);
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
-  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  border-radius: 18px;
+  overflow: hidden; /* 翻页动画时内容不会甩出卡片 */
+  /* 类玻璃质感：半透明深底 + 背景模糊 + 顶部高光描边，流场/壁纸从磨砂后透出 */
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.015) 42%),
+    rgba(18, 19, 28, 0.82);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow:
+    0 24px 64px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.09);
 }
 .login-art {
   position: relative;
-  background: linear-gradient(160deg, #eef3fb, #dfe8f7);
+  background: radial-gradient(120% 90% at 32% 24%, #262838 0%, #191a25 52%, #111219 100%);
   display: grid;
   place-items: center;
   overflow: hidden;
@@ -3243,7 +3260,7 @@ html[data-preset="opaque"] .compat-toast {
   width: 88%;
   max-width: 380px;
   object-fit: contain;
-  filter: drop-shadow(0 18px 30px rgba(30, 60, 120, 0.25));
+  filter: drop-shadow(0 22px 36px rgba(0, 0, 0, 0.55));
 }
 .login-brand {
   position: absolute;
@@ -3254,11 +3271,39 @@ html[data-preset="opaque"] .compat-toast {
   gap: 8px;
   font-weight: 700;
   font-size: 15px;
-  color: #1d3a6e;
+  color: #e6e9f4;
 }
 .login-brand img {
   width: 26px;
   height: 26px;
+}
+/* 右列：3D 翻页容器（正面登录表单 / 背面忘记密码自救） */
+.login-right {
+  position: relative;
+  perspective: 1600px;
+  min-width: 0;
+  display: flex;
+}
+.login-flip {
+  position: relative;
+  flex: 1;
+  transform-style: preserve-3d;
+  transition: transform 0.6s cubic-bezier(0.35, 0.15, 0.2, 1);
+}
+.login-flip.flipped {
+  transform: rotateY(180deg);
+}
+.login-face {
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+/* 背面：绝对定位填满正面撑起的高度，内容超高时内部滚动，
+   卡片整体高度不会被自救面板的长表单撑爆 */
+.login-flip-back {
+  position: absolute;
+  inset: 0;
+  transform: rotateY(180deg);
+  overflow-y: auto;
 }
 .login-form {
   padding: 40px 44px;
@@ -3325,6 +3370,47 @@ html[data-preset="opaque"] .compat-toast {
 .login-fields input:focus-visible {
   outline: none;
   border-color: var(--accent, #7c5cff);
+}
+/* 「6 小时内免登录」复选框（仅 Web 版渲染） */
+.login-remember {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--lg-text-secondary, #aeb6c2);
+  cursor: pointer;
+  user-select: none;
+  margin: -2px 0;
+}
+.login-remember input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent, #2f7cd6);
+  cursor: pointer;
+}
+/* 翻页入口 / 返回按钮 */
+.login-flip-trigger,
+.login-flip-backbtn {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  color: #6f9dff;
+  font-size: 13px;
+  cursor: pointer;
+}
+.login-flip-trigger:hover,
+.login-flip-backbtn:hover {
+  text-decoration: underline;
+}
+.login-flip-topbar {
+  margin-bottom: 2px;
+}
+/* 自救面板（panel 变体）：去掉手风琴的上分隔线，贴着顶栏排布 */
+.vault-rescue-panel {
+  margin-top: 4px;
+  padding-top: 0;
+  border-top: none;
 }
 .login-submit {
   height: 42px;

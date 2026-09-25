@@ -30,7 +30,17 @@ export function extractRecoveryKey(text: string): string {
   return "";
 }
 
-export function VaultRescue({ onWiped, onReset }: { onWiped?: () => void; onReset?: () => void }) {
+export function VaultRescue({
+  onWiped,
+  onReset,
+  variant = "accordion",
+}: {
+  onWiped?: () => void;
+  onReset?: () => void;
+  /** accordion：默认，设置页用，点「忘记密码?」展开；
+   *  panel：无开关、内容常驻 —— 登录页翻页模式用（点击入口后整面翻过来） */
+  variant?: "accordion" | "panel";
+}) {
   // --- 方式 A：恢复密钥重置密码 ---
   const [open, setOpen] = useState(false);
   const [rk, setRk] = useState("");
@@ -129,19 +139,23 @@ export function VaultRescue({ onWiped, onReset }: { onWiped?: () => void; onRese
     else window.location.reload();
   };
 
-  return (
-    <div className="vault-rescue">
-      <button
-        type="button"
-        className="vault-rescue-toggle"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-      >
-        <span>🔑 忘记密码？</span>
-        <span className="vault-rescue-arrow">{open ? "收起 ▲" : "展开 ▼"}</span>
-      </button>
+  const isPanel = variant === "panel";
 
-      {open && (
+  return (
+    <div className={`vault-rescue${isPanel ? " vault-rescue-panel" : ""}`}>
+      {!isPanel && (
+        <button
+          type="button"
+          className="vault-rescue-toggle"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+        >
+          <span>🔑 忘记密码？</span>
+          <span className="vault-rescue-arrow">{open ? "收起 ▲" : "展开 ▼"}</span>
+        </button>
+      )}
+
+      {(isPanel || open) && (
         <div className="vault-rescue-body">
           {/* ---- A. 有恢复密钥 → 重置密码 ---- */}
           <div className="vault-rescue-sec">

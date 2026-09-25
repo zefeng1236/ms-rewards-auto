@@ -32,6 +32,10 @@ export function VaultLock({ onUnlocked }: { onUnlocked: () => void }) {
   const [savedKey, setSavedKey] = useState<string | null>(() => (IS_WEB ? getSavedRecoveryKey() : null));
   const [pkEnabled, setPkEnabled] = useState(false);
   const [pkSupported] = useState(() => passkeySupported());
+  /** 仅 Web 有效：勾选后会话 cookie 有效期 6 小时，否则关浏览器即需重新登录 */
+  const [remember, setRemember] = useState(false);
+  /** 卡片翻页：login = 登录表单（正面），rescue = 忘记密码自救（背面） */
+  const [face, setFace] = useState<"login" | "rescue">("login");
 
   useEffect(() => {
     api
@@ -62,7 +66,7 @@ export function VaultLock({ onUnlocked }: { onUnlocked: () => void }) {
     setBusy("form");
     let r: Awaited<ReturnType<typeof api.vaultUnlock>> | undefined;
     try {
-      r = byKey ? await api.vaultUnlockRecovery(value) : await api.vaultUnlock(value);
+      r = byKey ? await api.vaultUnlockRecovery(value, remember) : await api.vaultUnlock(value, remember);
     } catch (e) {
       setBusy("");
       setErr((e as Error)?.message || "解锁失败");
@@ -81,7 +85,7 @@ export function VaultLock({ onUnlocked }: { onUnlocked: () => void }) {
     setErr("");
     setBusy("passkey");
     try {
-      const r = await loginWithPasskey();
+      const r = await loginWithPasskey(remember);
       if (!r.ok) {
         setBusy("");
         setErr(r.error || "通行密钥登录失败");
@@ -154,149 +158,193 @@ export function VaultLock({ onUnlocked }: { onUnlocked: () => void }) {
           </div>
         </div>
 
-        {/* 右：表单区 */}
-        <div className="login-form">
-          <h2>登录</h2>
+        {/* 右：翻页区 —— 正面登录表单 / 背面忘记密码自救。
+            3D 翻页始终约束在同一张卡片内，背面内容超高时内部滚动 */}
+        <div className="login-right">
+          <div className={`login-flip${face === "rescue" ? " flipped" : ""}`}>
+            {/* ---- 正面：登录表单 ---- */}
+            <div className="login-face login-form" inert={face !== "login"}>
+              <h2>登录</h2>
 
-          {/* Passkey 主按钮 */}
-          <button
-            type="button"
-            className="login-passkey"
-            disabled={!IS_WEB || !pkSupported || !pkEnabled || busy !== ""}
-            title={passkeyHint}
-            onClick={() => void doPasskey()}
-          >
-            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-              <rect x="4" y="10" width="16" height="10" rx="2" />
-              <path d="M8 10V7a4 4 0 0 1 8 0v3" />
-            </svg>
-            {busy === "passkey" ? "等待通行密钥确认…" : "Passkey 登录"}
-          </button>
-          {IS_WEB && !pkEnabled && <div className="login-hint">{passkeyHint}</div>}
+              {/* Passkey 主按钮 */}
+              <button
+                type="button"
+                className="login-passkey"
+                disabled={!IS_WEB || !pkSupported || !pkEnabled || busy !== ""}
+                title={passkeyHint}
+                onClick={() => void doPasskey()}
+              >
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <rect x="4" y="10" width="16" height="10" rx="2" />
+                  <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+                </svg>
+                {busy === "passkey" ? "等待通行密钥确认…" : "Passkey 登录"}
+              </button>
+              {IS_WEB && !pkEnabled && <div className="login-hint">{passkeyHint}</div>}
 
-          <div className="login-or">或</div>
+              <div className="login-or">或</div>
 
-          {/* 本机保存的数字密钥（旧版兼容，一键） */}
-          {IS_WEB && savedKey && (
-            <button
-              type="button"
-              className="login-savedkey"
-              disabled={busy !== ""}
-              onClick={() => {
-                setBusy("saved");
-                void unlockWith(savedKey, true).finally(() => setBusy(""));
-              }}
-            >
-              🔑 使用本机保存的数字密钥登录（尾号 …{savedKey.slice(-6)}）
-            </button>
-          )}
-
-          {/* 密码 / 恢复密钥 */}
-          <div className="wz-doc-tabs">
-            <button
-              type="button"
-              className={`wz-doc-tab${mode === "pw" ? " on" : ""}`}
-              onClick={() => {
-                setMode("pw");
-                setErr("");
-              }}
-            >
-              用密码解锁
-            </button>
-            <button
-              type="button"
-              className={`wz-doc-tab${mode === "rk" ? " on" : ""}`}
-              onClick={() => {
-                setMode("rk");
-                setErr("");
-              }}
-            >
-              用恢复密钥解锁
-            </button>
-          </div>
-
-          {status.hint && mode === "pw" && (
-            <div className="wz-alert">
-              <strong>密码提示</strong>
-              <span>{status.hint}</span>
-            </div>
-          )}
-
-          <div className="login-fields">
-            <input
-              type="password"
-              value={mode === "pw" ? pw : rk}
-              onChange={(e) => (mode === "pw" ? setPw(e.target.value) : setRk(e.target.value))}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void unlockWith(mode === "pw" ? pw : rk, mode === "rk");
-              }}
-              placeholder={mode === "pw" ? "加密密码" : "粘贴建库时保存的恢复密钥"}
-              autoFocus
-            />
-            {mode === "rk" && (
-              <div className="wz-key-file">
-                <input
-                  ref={keyFileRef}
-                  type="file"
-                  accept=".txt,text/plain"
-                  style={{ display: "none" }}
-                  onChange={(e) => {
-                    void pickKeyFile(e.target.files?.[0]);
-                    e.target.value = "";
+              {/* 本机保存的数字密钥（旧版兼容，一键） */}
+              {IS_WEB && savedKey && (
+                <button
+                  type="button"
+                  className="login-savedkey"
+                  disabled={busy !== ""}
+                  onClick={() => {
+                    setBusy("saved");
+                    void unlockWith(savedKey, true).finally(() => setBusy(""));
                   }}
-                />
-                <GlassButton variant="glass" controlSize="small" onClick={() => keyFileRef.current?.click()}>
-                  📄 上传密钥文件
-                </GlassButton>
-                <span className="hint">
-                  {rkFromFile ? `已从「${rkFromFile}」读取密钥` : "或选择建库时下载的 txt"}
-                </span>
+                >
+                  🔑 使用本机保存的数字密钥登录（尾号 …{savedKey.slice(-6)}）
+                </button>
+              )}
+
+              {/* 密码 / 恢复密钥 */}
+              <div className="wz-doc-tabs">
+                <button
+                  type="button"
+                  className={`wz-doc-tab${mode === "pw" ? " on" : ""}`}
+                  onClick={() => {
+                    setMode("pw");
+                    setErr("");
+                  }}
+                >
+                  用密码解锁
+                </button>
+                <button
+                  type="button"
+                  className={`wz-doc-tab${mode === "rk" ? " on" : ""}`}
+                  onClick={() => {
+                    setMode("rk");
+                    setErr("");
+                  }}
+                >
+                  用恢复密钥解锁
+                </button>
               </div>
-            )}
-          </div>
 
-          {err && <div className="wz-err">{err}</div>}
+              {status.hint && mode === "pw" && (
+                <div className="wz-alert">
+                  <strong>密码提示</strong>
+                  <span>{status.hint}</span>
+                </div>
+              )}
 
-          <button
-            type="button"
-            className="login-submit"
-            disabled={busy !== ""}
-            onClick={() => void unlockWith(mode === "pw" ? pw : rk, mode === "rk")}
-          >
-            {busy === "form" || busy === "saved" ? "解锁中…" : "解锁"}
-          </button>
+              <div className="login-fields">
+                <input
+                  type="password"
+                  value={mode === "pw" ? pw : rk}
+                  onChange={(e) => (mode === "pw" ? setPw(e.target.value) : setRk(e.target.value))}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void unlockWith(mode === "pw" ? pw : rk, mode === "rk");
+                  }}
+                  placeholder={mode === "pw" ? "加密密码" : "粘贴建库时保存的恢复密钥"}
+                  autoFocus
+                />
+                {mode === "rk" && (
+                  <div className="wz-key-file">
+                    <input
+                      ref={keyFileRef}
+                      type="file"
+                      accept=".txt,text/plain"
+                      style={{ display: "none" }}
+                      onChange={(e) => {
+                        void pickKeyFile(e.target.files?.[0]);
+                        e.target.value = "";
+                      }}
+                    />
+                    <GlassButton variant="glass" controlSize="small" onClick={() => keyFileRef.current?.click()}>
+                      📄 上传密钥文件
+                    </GlassButton>
+                    <span className="hint">
+                      {rkFromFile ? `已从「${rkFromFile}」读取密钥` : "或选择建库时下载的 txt"}
+                    </span>
+                  </div>
+                )}
+              </div>
 
-          {savedKey && (
-            <div className="login-hint">
-              <a
-                href="#clear"
-                onClick={(e) => {
-                  e.preventDefault();
-                  clearSavedRecoveryKey();
-                  setSavedKey(null);
-                  toast.success("已清除本机保存的数字密钥");
+              {/* 6 小时免登录（仅 Web 版有会话概念） */}
+              {IS_WEB && (
+                <label className="login-remember" title="勾选后 6 小时内打开页面不再要求登录；不勾则关闭浏览器后需重新登录">
+                  <input
+                    type="checkbox"
+                    checked={remember}
+                    onChange={(e) => setRemember(e.target.checked)}
+                  />
+                  <span>6 小时内免登录</span>
+                </label>
+              )}
+
+              {err && <div className="wz-err">{err}</div>}
+
+              <button
+                type="button"
+                className="login-submit"
+                disabled={busy !== ""}
+                onClick={() => void unlockWith(mode === "pw" ? pw : rk, mode === "rk")}
+              >
+                {busy === "form" || busy === "saved" ? "解锁中…" : "解锁"}
+              </button>
+
+              {savedKey && (
+                <div className="login-hint">
+                  <a
+                    href="#clear"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      clearSavedRecoveryKey();
+                      setSavedKey(null);
+                      toast.success("已清除本机保存的数字密钥");
+                    }}
+                  >
+                    清除本机数字密钥
+                  </a>
+                </div>
+              )}
+
+              {/* 自助退路入口：翻到卡片背面，自救面板全程不出这张卡片 */}
+              <button
+                type="button"
+                className="login-flip-trigger"
+                onClick={() => {
+                  setFace("rescue");
+                  setErr("");
                 }}
               >
-                清除本机数字密钥
-              </a>
+                🔑 忘记密码？
+              </button>
+
+              <p className="login-note">
+                密码不会被保存到任何地方，忘记时只能用恢复密钥解锁。
+                解锁后可在「设置 → 安全」注册 Passkey，实现一键登录。
+                {IS_WEB && pkEnabled && (
+                  <>
+                    {" "}
+                    <a href="#reg" onClick={(e) => { e.preventDefault(); void doRegister(); }}>
+                      现在注册通行密钥
+                    </a>
+                  </>
+                )}
+              </p>
             </div>
-          )}
 
-          {/* 自助退路：有恢复密钥→重设密码；两样都没有→清空账号数据 */}
-          <VaultRescue onReset={afterUnlocked} onWiped={() => window.location.reload()} />
-
-          <p className="login-note">
-            密码不会被保存到任何地方，忘记时只能用恢复密钥解锁。
-            解锁后可在「设置 → 安全」注册 Passkey，实现一键登录。
-            {IS_WEB && pkEnabled && (
-              <>
-                {" "}
-                <a href="#reg" onClick={(e) => { e.preventDefault(); void doRegister(); }}>
-                  现在注册通行密钥
-                </a>
-              </>
-            )}
-          </p>
+            {/* ---- 背面：忘记密码自救面板 ---- */}
+            <div className="login-face login-form login-flip-back" inert={face !== "rescue"}>
+              <div className="login-flip-topbar">
+                <button
+                  type="button"
+                  className="login-flip-backbtn"
+                  onClick={() => {
+                    setFace("login");
+                    setErr("");
+                  }}
+                >
+                  ← 返回登录
+                </button>
+              </div>
+              <VaultRescue variant="panel" onReset={afterUnlocked} onWiped={() => window.location.reload()} />
+            </div>
+          </div>
         </div>
       </div>
     </div>
