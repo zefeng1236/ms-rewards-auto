@@ -1317,9 +1317,12 @@ checkTrue(
 );
 checkTrue(
   "状态接口下发镜像清单（界面下拉不另写一份），且每个节点带实测延迟",
-  /mirrors: await mirrorOptionsWithLatency\(\)/.test(fpSrc) &&
+  // 0.13.8 起 Docker 侧改为镜像预装：预装时不必也没法选下载源，直接返回空数组
+  // （同时省掉最长 4s 的测速探测，容器启动更快）。非预装路径仍按下发清单渲染下拉。
+  /mirrors:\s*pre \? \[\] : await mirrorOptionsWithLatency\(\)/.test(fpSrc) &&
     /async function mirrorLatency/.test(fpSrc) &&
-    /latencyMs/.test(fpSrc)
+    /latencyMs/.test(fpSrc),
+  "镜像清单不再由主进程下发 → 前后端各写一份镜像表，改一处漏一处"
 );
 checkTrue(
   "反例守卫 ⑯：指定镜像时不得掺入自动链其他节点（否则「指定」失去意义）",
@@ -1368,12 +1371,15 @@ checkTrue(
   /下载镜像源/.test(panelSrcFp) && /options=\{st\?\.mirrors \|\| \[\]\}/.test(panelSrcFp)
 );
 
-// —— 向导末页：指纹浏览器下载（0.10.1）——
+// —— 向导末页：指纹浏览器下载（0.10.1 起；0.13.8 起 Docker 版删除本页）——
 checkTrue(
-  "向导扩为六步且末页是指纹浏览器下载页",
-  /const STEPS = \[[^\]]*"指纹"/.test(wizardSource) &&
+  "向导末页是指纹浏览器下载页：桌面版保留（6 步），Web/Docker 版删除（5 步，镜像已预装）",
+  /const STEPS = IS_WEB/.test(wizardSource) &&
+    /"个性化", "指纹"\]/.test(wizardSource) &&
     /function PageFingerprint/.test(wizardSource) &&
-    /page === 5 && <PageFingerprint/.test(wizardSource)
+    /!IS_WEB && page === 5 && <PageFingerprint/.test(wizardSource) &&
+    !/\{page === 5 && <PageFingerprint/.test(wizardSource),
+  "Web 版仍渲染指纹下载页 → 让用户在容器里下载一个已经预装好的浏览器；或桌面版被误删 → 桌面用户失去可选增强入口"
 );
 checkTrue(
   "跳过可直接放行、未跳过必须等下载完成，放行条件由页内上报给页脚",
@@ -1634,10 +1640,12 @@ checkTrue(
   /interface FingerprintStatus/.test(typesSrcFp) && /interface InstallFingerprintResult/.test(typesSrcFp)
 );
 
-/* ---------------- Docker 版接线（0.10.1 后增补） ----------------
- * 此前容器里指纹浏览器「装了也用不上」的两个原因，各锁一条守卫：
- *   ① compose 用 PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH 把容器 Chromium 钉死（优先级最高）
+/* ---------------- Docker 版接线（0.10.1 后增补；0.13.8 起改为指纹浏览器独占） ----------------
+ * 历史坑（各锁一条守卫）：
+ *   ① 早期 compose 用 PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH 把容器 Chromium 钉死（优先级最高）
  *   ② 镜像没装 xz-utils，GNU tar 解 .tar.xz 直接 exit 127
+ *   ③ 中期改用 MS_REWARDS_CHROMIUM_FALLBACK 兜底 —— 但那是「可选增强」时代的做法，
+ *      0.13.8 起 Docker 改为「指纹浏览器独占 + 镜像预装」，兜底变量本身也已废弃。
  */
 const dockerfileSrc = fs.readFileSync(path.join(ROOT, "docker", "Dockerfile"), "utf8");
 const composeSrc = fs.readFileSync(path.join(ROOT, "docker", "docker-compose.yml"), "utf8");
@@ -1648,19 +1656,21 @@ checkTrue(
   /^\s*xz-utils\b/m.test(dockerfileSrc) && /xz --version/.test(dockerfileSrc)
 );
 checkTrue(
-  "Docker 侧用 MS_REWARDS_CHROMIUM_FALLBACK 兜底，而非强指定 PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH",
-  /MS_REWARDS_CHROMIUM_FALLBACK=\/usr\/bin\/chromium/.test(dockerfileSrc) &&
-    /MS_REWARDS_CHROMIUM_FALLBACK: \/usr\/bin\/chromium/.test(composeSrc) &&
+  "Docker 侧不再用兜底 Chromium：指纹浏览器独占，compose 不传已废弃的兜底变量",
+  !/MS_REWARDS_CHROMIUM_FALLBACK/.test(dockerfileSrc) &&
+    !/MS_REWARDS_CHROMIUM_FALLBACK/.test(composeSrc) &&
     !/^\s*PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH[=:]/m.test(dockerfileSrc) &&
-    !/^\s*PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH[=:]/m.test(composeSrc)
+    !/^\s*PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH[=:]/m.test(composeSrc),
+  "仍留兜底 Chromium → 它优先级高于指纹浏览器，Docker「默认用指纹浏览器」的目标直接落空"
 );
 checkTrue(
   "Web 端 installFingerprint 把下载进度转发到 SSE（否则侧边栏徽章在 Web 版永远 0%）",
   /onProgress: \(p\) => emit\("install-progress", p\)/.test(webApiSrcFp)
 );
 checkTrue(
-  "compose 镜像 tag 与 package.json 版本一致",
-  new RegExp(`image: ms-rewards-auto:${String(pkgRaw.version).replace(/\./g, "\\.")}(\\s|$)`).test(composeSrc)
+  "compose 镜像 tag 与 package.json 版本一致，且指向 ghcr（用户可直接 docker pull）",
+  new RegExp(`image: ghcr\\.io/[^:\\s]+:${String(pkgRaw.version).replace(/\./g, "\\.")}(\\s|$)`).test(composeSrc),
+  "镜像 tag 与版本号漂移 → 用户 pull 到的镜像与本次发布对不上；或路径退回本地裸名 → 无法直接拉取"
 );
 // 虚拟桌面尺寸：换了 KasmVNC 之后瓶颈 3（noVNC 纯 JS 解码器）没了，
 // 可以放心提回 1920x1080。KasmVNC 自带 WebP/QOI 编码 + 浏览器原生解码，
@@ -2117,6 +2127,103 @@ checkTrue(
   /function passkeyBlockedByIp/.test(passkeyClientSrc) &&
     /当前通过 IP 地址访问，浏览器不会保存通行密钥/.test(fs.readFileSync(path.join(ROOT, "src-renderer", "src", "components", "VaultPanel.tsx"), "utf8")),
   "IP 访问不提示 → 用户在内网 IP 下反复注册却保存不到，问题依旧"
+);
+
+// 0.13.8 Docker 版「指纹浏览器独占 + 镜像预装 + 可拉取」改造。
+//   核心不变量：
+//     ① 预装目录（镜像内置）优先于运行时下载目录，且状态里如实暴露 preinstalled；
+//     ② 预装存在时禁止运行时下载 / 删除（否则白拉 134MB 且删不掉镜像层）；
+//     ③ 预装存在时 resolveBrowserSource 强制走指纹浏览器（容器里没有别的浏览器）；
+//     ④ Dockerfile 不再装 apt chromium，但必须把 Chromium 运行时依赖显式补齐，
+//        并在构建期用 ldd 自检，缺库直接让构建失败；
+//     ⑤ 向导 Web 版删掉指纹浏览器下载页（5 步），桌面版保留（6 步）。
+const fpbSrc = fs.readFileSync(path.join(ROOT, "src", "fingerprint-browser.js"), "utf8");
+// dockerfileSrc / composeSrc / wizardSrc 已在本文件上方声明，这里直接复用
+const fpPanelSrc = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "components", "FingerprintBrowserPanel.tsx"),
+  "utf8"
+);
+
+checkTrue(
+  "指纹浏览器支持镜像预装目录（MS_REWARDS_FINGERPRINT_PREINSTALLED），且优先于运行时下载目录",
+  /function preinstalledDir\(\)/.test(fpbSrc) &&
+    /MS_REWARDS_FINGERPRINT_PREINSTALLED/.test(fpbSrc) &&
+    /const pre = preinstalledDir\(\);\s*\n\s*if \(pre\) \{[\s\S]{0,200}?return exe;[\s\S]{0,80}?\n\s*return findExecutable\(installDir\(\)\);/.test(
+      fpbSrc
+    ),
+  "预装目录不被优先使用 → Docker 容器明明预装了却报「未安装」，还会去发起 134MB 运行时下载"
+);
+checkTrue(
+  "状态接口暴露 preinstalled，且预装时跳过镜像测速探测",
+  /preinstalled:\s*!!pre/.test(fpbSrc) && /mirrors:\s*pre \? \[\] : await mirrorOptionsWithLatency\(\)/.test(fpbSrc),
+  "不暴露 preinstalled → 界面在容器里仍显示「下载并安装/删除」按钮"
+);
+checkTrue(
+  "预装存在时拒绝运行时安装与卸载（避免白下一份、也避免删除镜像层）",
+  /指纹浏览器已由镜像内置预装，无需下载/.test(fpbSrc) &&
+    /指纹浏览器由镜像内置预装，无法在容器内删除/.test(fpbSrc) &&
+    /if \(preinstalledDir\(\)\) \{[\s\S]{0,120}?return \{ ok: false/.test(fpbSrc),
+  "预装仍允许下载/删除 → 用户点一下就在 /data 卷里堆 400MB 副本，且卸载给假成功"
+);
+checkTrue(
+  "预装存在时强制启用指纹浏览器（容器内它是唯一浏览器，配置 enable=false 也要用）",
+  /const forced = !!fpBrowser\.preinstalledDir\(\)/.test(fs.readFileSync(path.join(ROOT, "src", "browser.js"), "utf8")) &&
+    /if \(forced \|\| cfg\.enable\)/.test(fs.readFileSync(path.join(ROOT, "src", "browser.js"), "utf8")) &&
+    /cfg: \{ \.\.\.cfg, enable: true \}/.test(fs.readFileSync(path.join(ROOT, "src", "browser.js"), "utf8")),
+  "不强制启用 → Docker 默认配置（enable=false）会一路走到「未检测到可用的浏览器」，任务全挂"
+);
+checkTrue(
+  "Dockerfile 不再安装 apt chromium（普通 Chromium 的 Client Hints 改不动，会留指纹矛盾）",
+  !/\n\s{8}chromium \\\n/.test(dockerfileSrc),
+  "apt chromium 回归 → 镜像里同时存在两种浏览器，且普通 Chromium 会产出 UA/CH 自相矛盾的指纹"
+);
+checkTrue(
+  "Dockerfile 显式补齐 Chromium 运行时依赖（移除 apt chromium 后这些库不再被顺带装上）",
+  /libnss3 \\/.test(dockerfileSrc) &&
+    /libgtk-3-0 \\/.test(dockerfileSrc) &&
+    /libatk-bridge2.0-0 \\/.test(dockerfileSrc) &&
+    /libasound2 \\/.test(dockerfileSrc),
+  "缺运行库 → 指纹浏览器一启动就报 libnss3.so 找不到，容器里什么都跑不了"
+);
+checkTrue(
+  "Dockerfile 预装指纹浏览器并用 ldd 自检（缺库直接构建失败）+ 写 version.txt",
+  /MS_REWARDS_FINGERPRINT_PREINSTALLED=\/opt\/fingerprint-chromium/.test(dockerfileSrc) &&
+    /tar -xf \/tmp\/fpcb\.tar\.xz -C \/opt\/fingerprint-chromium/.test(dockerfileSrc) &&
+    /ldd "\$CHROME_BIN" \| grep -q "not found"/.test(dockerfileSrc) &&
+    /version\.txt/.test(dockerfileSrc),
+  "预装/自检缺失 → 运行时要重新下 134MB，或缺库问题拖到用户现场才暴露"
+);
+checkTrue(
+  "预装版本号与 src/fingerprint-browser.js 的 PINNED_VERSION 跨文件一致",
+  (() => {
+    const m = /PINNED_VERSION\s*=\s*"([^"]+)"/.exec(fpbSrc);
+    const d = /ARG FPCB_VERSION=([^\s]+)/.exec(dockerfileSrc);
+    return !!m && !!d && m[1] === d[1];
+  })(),
+  "两处版本号漂移 → 镜像里预装的版本与状态接口自报的「钉死版本」对不上，界面永远提示「需重建镜像对齐」"
+);
+checkTrue(
+  "compose 指向 ghcr 预构建镜像、且不再传已废弃的 Chromium 兜底环境变量",
+  /image: ghcr\.io\/[^:\s]+:0\.13\.8/.test(composeSrc) &&
+    !/MS_REWARDS_CHROMIUM_FALLBACK/.test(composeSrc) &&
+    !/PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH/.test(composeSrc),
+  "compose 仍留兜底变量 → 容器会优先用兜底 Chromium，指纹浏览器永远轮不到"
+);
+checkTrue(
+  "向导 Web 版删掉指纹浏览器页（5 步），桌面版保留（6 步）",
+  /const STEPS = IS_WEB/.test(wizardSrc) &&
+    /!IS_WEB && page === 5 && <PageFingerprint/.test(wizardSrc) &&
+    !/\{page === 5 && <PageFingerprint/.test(wizardSrc) &&
+    /IS_WEB \? "开始使用 ✓" : "下一步 →"/.test(wizardSrc),
+  "Web 版仍渲染指纹页 → 用户在 Docker 里被要求下载一个已经预装好的浏览器"
+);
+checkTrue(
+  "指纹浏览器面板：预装时隐藏下载/更新/删除按钮，并显式禁用「启用」开关",
+  /!st\?\.preinstalled && \(/.test(fpPanelSrc) &&
+    /st\?\.preinstalled \? \(/.test(fpPanelSrc) &&
+    /checked=\{st\?\.preinstalled \? true : cfg\.enable\}/.test(fpPanelSrc) &&
+    /镜像内置/.test(fpPanelSrc),
+  "面板不做预装分支 → 容器里仍出现「下载并安装 / 重新下载 / 删除」三个无效按钮"
 );
 
 /* ============ 汇总 ============ */

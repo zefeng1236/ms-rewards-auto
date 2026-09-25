@@ -2,6 +2,43 @@
 
 本文件记录各版本的重要变更。版本格式为主版本.次版本.修订号，带 `-beta` 后缀的为测试版本。带「.N」四位小版本的为内部交付号（安装包文件名与 exe FileVersion 使用），主版本段仍为 0.9.4。
 
+## 0.13.8
+
+发布日期：2026-09-25 · Docker 版镜像 `ghcr.io/zefeng1236/ms-rewards-auto:0.13.8`
+
+Docker 版改为「指纹浏览器独占 + 镜像预装」，并支持直接拉取预构建镜像。
+
+### 变更
+
+- **Docker 版默认且只用指纹浏览器**：镜像里不再安装 apt Chromium。普通 Chromium 的
+  `sec-ch-ua` / Client Hints 在应用层改不动，会留下「UA 自称 Edge、CH 说 Chromium」的
+  自相矛盾指纹；指纹浏览器由源码 patch 生成，三处同源。
+- **指纹浏览器改为镜像预装**：构建时把 `fingerprint-chromium` 的 Linux 资产（约 134.7MB）
+  解压进 `/opt/fingerprint-chromium` 并用 `MS_REWARDS_FINGERPRINT_PREINSTALLED` 指向它。
+  容器启动即就绪，运行时不再发起任何浏览器下载。
+- **补齐 Chromium 运行时依赖**：这些库原本是 `apt install chromium` 顺带装上的，
+  移除 Chromium 后必须显式列出（`libnss3` / `libgtk-3-0` / `libatk-bridge2.0-0` 等），
+  否则指纹浏览器一启动就报 `libnss3.so: cannot open shared object file`。
+  构建期用 `ldd` 自检，缺库直接让构建失败，不把问题留到用户现场。
+- **预装时强制启用指纹浏览器**：容器里没有第二个浏览器，配置里 `enable=false`
+  （默认值）也必须走指纹浏览器，否则会一路走到「未检测到可用的浏览器」把任务打断。
+- **向导 Web 版删除指纹浏览器下载页**：`IS_WEB` 时向导为 5 步（末页「个性化」即完成），
+  桌面版仍为 6 步，保留可选增强入口。
+- **设置页指纹面板适配预装形态**：标签显示「● 镜像内置」，隐藏「下载/重新下载/删除」
+  与下载镜像源下拉，并把「启用」开关置为强制开启。预装状态下后端会拒绝安装与卸载
+  （避免白下 134MB，也避免删除镜像层给假成功）。
+- **支持 `docker pull` 直接拉取**：compose 的 `image` 指向
+  `ghcr.io/zefeng1236/ms-rewards-auto:0.13.8`。拉取即用
+  （`docker compose pull && docker compose up -d`），本地构建仍是
+  `docker compose up -d --build`。国内可通过 `ghcr.1ms.run` 加速。
+
+### 验证
+
+- tsc 0 错；selfcheck 392+ 全绿（新增 11 条守卫，含反例验证）；
+  打桩验证 18/18（预装探测、状态、拒绝安装/卸载、浏览器来源强制分支）
+- Docker 镜像在服务器重建，容器内 `ldd` 无缺失库、指纹浏览器可执行，
+  health 返回 `version:0.13.8`
+
 ## 0.13.7
 
 发布日期：2026-09-25 · 安装包 `MS-Rewards-Auto-Setup-0.13.7.exe`

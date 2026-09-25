@@ -67,14 +67,17 @@ ENV DEBIAN_FRONTEND=noninteractive \
     TZ=Asia/Shanghai \
     NODE_ENV=production \
     MS_REWARDS_STORAGE_DIR=/data/storage \
-    MS_REWARDS_CHROMIUM_FALLBACK=/usr/bin/chromium \
+    MS_REWARDS_FINGERPRINT_PREINSTALLED=/opt/fingerprint-chromium \
     MS_REWARDS_CHROMIUM_ARGS=--no-sandbox,--disable-dev-shm-usage,--disable-gpu
 
-# 注意这里用的是 MS_REWARDS_CHROMIUM_FALLBACK 而不是 PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH：
-#   前者 = 「指纹浏览器不可用时的兜底」，后者 = 「运维强指定，永远优先」。
-# 早期版本用后者把容器 Chromium 钉死，结果指纹浏览器下载完也永远轮不到它
-# （优先级见 src/browser.js 的 resolveBrowserSource）。容器里 Playwright 自带
-# Chromium 是缺席的（npm ci --ignore-scripts 跳过了下载），所以这个兜底必须留着。
+# 浏览器选型（2026-09 起 Docker 版改为「指纹浏览器独占」）：
+#   - 镜像内预装 fingerprint-chromium（下一段下载解压到 MS_REWARDS_FINGERPRINT_PREINSTALLED），
+#     运行时直接可用、不再发起运行时下载；
+#   - 不再安装 apt Chromium：普通 Chromium 的 sec-ch-ua / Client Hints 改不动，
+#     会留下「UA 自称 Edge / CH 说 Chromium」的自相矛盾指纹。指纹浏览器从根上同源生成，
+#     因此 Docker 版默认、且只用指纹浏览器。
+#   - --no-sandbox 仍必须传给指纹浏览器：容器内以 node(非 root) 运行。
+#     extraChromiumArgs 对指纹浏览器同样生效（见 src/browser.js）。
 
 # ① 先装 CA 证书（用镜像自带的 http 官方源）
 #    坑：node:*-slim 不带 ca-certificates，直接换 https 国内源会报
@@ -86,15 +89,20 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates
 
-# ② 换成国内源后装 Chromium 本体 + 时区 + 中文字体
+# ② 换成国内源后装图形栈依赖 + 时区 + 中文字体（不再装 apt chromium，指纹浏览器在下一段预装）
 #    deb822（bookworm 默认）与传统 sources.list 都试一遍。
 #    sed 在 http://deb.debian.org/debian 上做前缀替换，因此 `debian-security` 会一并
-#    变成 `<镜像>/debian-security`——这是安全更新包的来源（chromium 本体 80MB 就在这），
-#    只换主仓不换 security 是常见的半吊子换源，务必一起换。
+#    变成 `<镜像>/debian-security`——这是安全更新包的来源，只换主仓不换 security 是
+#    常见的半吊子换源，务必一起换。
 #
-#    xz-utils 是给**指纹浏览器**用的：Linux 版资产是 .tar.xz，而 GNU tar 解 xz
+#    xz-utils 是给**指纹浏览器预装**用的：Linux 版资产是 .tar.xz，而 GNU tar 解 xz
 #    必须调用外部 `xz` 程序（不链接 liblzma）。实测不装它时 `tar -xf` 直接
-#    exit 127「xz: not found」——指纹浏览器会卡在解压这一步。体积只有几百 KB。
+#    exit 127「xz: not found」。体积只有几百 KB。
+#
+#    后半段的 libnss3 / libgtk-3-0 等是 **Chromium 运行时依赖**：这些库原本是
+#    `apt install chromium` 顺带拉进来的。既然 Docker 版已改为「不装 apt chromium」，
+#    就必须显式列出，否则指纹浏览器一启动就报 libnss3.so / libatk-1.0.so 找不到。
+#    改动这段后务必在容器里跑一次 `ldd <chrome>` 确认 no "not found"（见 README）。
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     set -eux; \
@@ -107,16 +115,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update; \
     # 图形转发栈（KasmVNC = X server + VNC server + Web UI 三合一）
     #   取代原先的 xvfb + x11vnc + websockify + novnc + fluxbox。
-    #   为什么换：noVNC 是纯 JS 解码器（瓶颈 3），1440×900 才能勉强喂得动；
-    #   KasmVNC 浏览器原生 WebP 解码（瓶颈 3 直接消失），并自带 WebP/JPEG/QOI
-    #   编码 + 多线程 + DRI3 GPU 加速（NAS 上 AMD/Intel 核显直接可用）。
-    #   官方 deb 在 https://github.com/kasmtech/KasmVNC/releases
-    #   GPU 驱动不在基础镜像里硬装：Debian 默认只启用 main，
-    #   intel-media-va-driver-non-free 属于可选 non-free 包，且 NAS 通常已经由宿主
-    #   管理驱动。需要硬件加速时只需透传 /dev/dri（见 compose 注释）；无 GPU 时
-    #   KasmVNC 自动回退 CPU，不应阻塞普通服务器构建。
+    #   （保留 fluxbox 作 KasmVNC 会话的常驻 WM 兜底）
     apt-get install -y --no-install-recommends \
-        chromium \
         xz-utils \
         openssl \
         tzdata \
@@ -146,17 +146,85 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         libscalar-list-utils-perl \
         libhash-merge-simple-perl \
         fluxbox \
+        libnss3 \
+        libnspr4 \
+        libatk1.0-0 \
+        libatk-bridge2.0-0 \
+        libatspi2.0-0 \
+        libcups2 \
+        libdrm2 \
+        libxkbcommon0 \
+        libxkbcommon-x11-0 \
+        libxcomposite1 \
+        libxdamage1 \
+        libxfixes3 \
+        libxrandr2 \
+        libxrender1 \
+        libxcursor1 \
+        libxext6 \
+        libxi6 \
+        libsm6 \
+        libice6 \
+        libx11-xcb1 \
+        libxcb1 \
+        libxcb-dri3-0 \
+        libxcb-present0 \
+        libxcb-sync1 \
+        libxcb-shm0 \
+        libxcb-xfixes0 \
+        libpango-1.0-0 \
+        libpangocairo-1.0-0 \
+        libcairo2 \
+        libasound2 \
+        libexpat1 \
+        libdbus-1-3 \
+        libuuid1 \
+        libfontconfig1 \
+        libfreetype6 \
+        libgtk-3-0 \
+        libgdk-pixbuf-2.0-0 \
+        libxss1 \
     ; \
     # Debian Fluxbox theme launches fbsetbg for its bundled JPEG, but no image backend is installed.
     # Remove the theme wallpaper directives; Fluxbox remains the persistent window manager.
     sed -i '/^background:[[:space:]]/d; /^background[.]pixmap:/d' /usr/share/fluxbox/styles/Squared_for_Debian/theme.cfg; \
-    # KasmVNC deb 装在第二阶段（不在 cache mount 下，避免半成品污染 apt 缓存）。
-    # 镜像里预装 + 缓存版本号 ARG，将来上游发版只改这一处。
     rm -rf /var/lib/apt/lists/*; \
     ln -snf /usr/share/zoneinfo/$TZ /etc/localtime; \
     echo $TZ > /etc/timezone; \
-    chromium --version; \
     xz --version | head -1
+
+# Ⓟ 预装指纹浏览器（fingerprint-chromium，Docker 版默认且唯一浏览器）
+#   - 下载 Linux tar.xz（约 134.7MB）解压到 MS_REWARDS_FINGERPRINT_PREINSTALLED。
+#   - 镜像内固定路径、不进 /data 挂载点，容器起来即就绪，运行时不再下载。
+#   - 下载源用 gh-proxy 镜像链；上游固定版本与 src/fingerprint-browser.js 的
+#     PINNED_VERSION 保持一致（改版本必须两处同步）。
+# 解压后找 chrome/chromium/headless_shell 主程序；与桌面版同款「广度优先找主程序」
+#     逻辑（见 src/fingerprint-browser.js findExecutable），这里只做一次存在性校验。
+#   - 写 version.txt：让 src/fingerprint-browser.js 的 installedVersion() 能报出版本号
+#     （与桌面版运行时下载安装的产物同构，状态接口不用为 Docker 单独开分支）。
+#   - ldd 自检：缺运行库直接让构建失败，而不是等用户在容器里看到浏览器起不来。
+ARG FPCB_VERSION=148.0.7778.215
+ARG FPCB_URL=https://github.com/adryfish/fingerprint-chromium/releases/download/${FPCB_VERSION}/ungoogled-chromium-${FPCB_VERSION}-1-x86_64_linux.tar.xz
+ARG FPCB_PROXY=https://gh-proxy.com/
+RUN set -eux; \
+    mkdir -p /opt/fingerprint-chromium; \
+    if ! curl --connect-timeout 10 --max-time 600 -fsSL -o /tmp/fpcb.tar.xz "$FPCB_URL"; then \
+      rm -f /tmp/fpcb.tar.xz; \
+      curl --connect-timeout 10 --max-time 900 -fsSL -o /tmp/fpcb.tar.xz "${FPCB_PROXY}${FPCB_URL}"; \
+    fi; \
+    tar -xf /tmp/fpcb.tar.xz -C /opt/fingerprint-chromium; \
+    rm -f /tmp/fpcb.tar.xz; \
+    CHROME_BIN="$(find /opt/fingerprint-chromium -type f \( -name chrome -o -name chromium -o -name headless_shell \) -print -quit)"; \
+    test -n "$CHROME_BIN"; \
+    chmod +x "$CHROME_BIN"; \
+    printf '%s\n' "$FPCB_VERSION" > /opt/fingerprint-chromium/version.txt; \
+    if ldd "$CHROME_BIN" | grep -q "not found"; then \
+      echo "❌ 指纹浏览器缺少运行库，上面 not found 的即为缺失项，请补进本文件的 apt 清单"; \
+      ldd "$CHROME_BIN" | grep "not found"; \
+      exit 1; \
+    fi; \
+    echo "✅ 指纹浏览器已预装且无缺失运行库: $CHROME_BIN"; \
+    "$CHROME_BIN" --no-sandbox --version || echo "（构建期跳过版本号输出，运行时会自检）"
 
 # ⑥ KasmVNC（核心图形栈）
 #   - 必须卸掉 apt cache 防止半成品（deb 没装完时缓存里有 锁文件，污染下次构建）

@@ -509,6 +509,8 @@ export function createMockApi(): ElectronApi {
       version: mockFpReady ? "148.0.7778.215" : null,
       pinned: "148.0.7778.215",
       installDir: "<storage>/fingerprint-chromium",
+      // 预览模式按桌面版（运行时下载）呈现；Docker 版由真实后端返回 preinstalled: true
+      preinstalled: false,
       downloadUrl: null,
       mirrors: [
         { value: "auto", label: "自动（按顺序尝试全部）", latencyMs: null },
@@ -563,7 +565,7 @@ export function createMockApi(): ElectronApi {
       return {
         ok: true,
         updateAvailable: true,
-        currentVersion: "0.13.7",
+        currentVersion: "0.13.8",
         latestVersion: "0.14.0",
         downloadUrl: "https://github.com/zefeng1236/ms-rewards-auto/releases/download/v0.14.0/MS-Rewards-Auto-Setup-0.14.0.exe",
         assetName: "MS-Rewards-Auto-Setup-0.14.0.exe",

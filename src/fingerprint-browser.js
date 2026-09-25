@@ -286,22 +286,51 @@ function installDir() {
   return sp.resolve("fingerprint-chromium");
 }
 
+/**
+ * 镜像预装目录（Docker 场景）。
+ *
+ * 桌面版是「运行时按需下载」到 storage/；Docker 版已经改成**镜像内预装**——
+ * Dockerfile 在构建时把 fingerprint-chromium 的 tar.xz 解压进镜像固定路径
+ * （如 /opt/fingerprint-chromium），运行时用 MS_REWARDS_FINGERPRINT_PREINSTALLED
+ * 指向它。这样容器起来时指纹浏览器就是就绪的，不再发起 134MB 的运行时下载。
+ *
+ * 预装目录必须放在镜像内（不放 /data 挂载点，那个会被 volume 覆盖）。
+ */
+function preinstalledDir() {
+  const p = (process.env.MS_REWARDS_FINGERPRINT_PREINSTALLED || "").trim();
+  return p && fs.existsSync(p) ? p : null;
+}
+
 function versionFile() {
   return path.join(installDir(), "version.txt");
+}
+
+/** 预装目录里的版本文件（镜像内置时由 Dockerfile 写入） */
+function preinstalledVersionFile() {
+  const pre = preinstalledDir();
+  return pre ? path.join(pre, "version.txt") : null;
 }
 
 function downloadDir() {
   return sp.resolve("fp-download");
 }
 
-/** 已安装版本（未安装返回 null） */
+/**
+ * 已安装版本（未安装返回 null）。
+ *
+ * 预装目录优先 —— 与 executablePath() 的优先级保持同源：既然实际用的是预装的
+ * 那份可执行文件，报出来的版本就必须是它，否则会出现「跑的是 A 版本、界面显示 B 版本」
+ * 的错位（桌面版可能同时存在运行时下载 + 预装两种来源）。
+ */
 function installedVersion() {
-  try {
-    const v = fs.readFileSync(versionFile(), "utf8").trim();
-    return v || null;
-  } catch {
-    return null;
+  const candidates = [preinstalledVersionFile(), versionFile()].filter(Boolean);
+  for (const f of candidates) {
+    try {
+      const v = fs.readFileSync(f, "utf8").trim();
+      if (v) return v;
+    } catch {}
   }
+  return null;
 }
 
 /* ---------------- 可执行文件探测 ---------------- */
@@ -419,6 +448,12 @@ function hasChromeExe(root) {
 }
 
 function executablePath() {
+  // 镜像预装优先：Docker 场景运行时不需要下载，直接用它。
+  const pre = preinstalledDir();
+  if (pre) {
+    const exe = findExecutable(pre);
+    if (exe) return exe;
+  }
   return findExecutable(installDir());
 }
 
@@ -429,6 +464,7 @@ function isReady() {
 /** 供 IPC / UI 展示的状态（async：镜像下拉要带实测延迟，见 mirrorLatency） */
 async function status() {
   const exe = executablePath();
+  const pre = preinstalledDir();
   return {
     supported: isSupported(),
     platform: process.platform,
@@ -437,9 +473,12 @@ async function status() {
     version: installedVersion(),
     pinned: PINNED_VERSION,
     installDir: installDir(),
+    // 镜像内置（Docker）：界面据此隐藏「下载/重新下载/删除」，避免用户在容器里
+    // 点一下就把 134MB 拉到 /data 卷上（明明已经预装好了，纯属白折腾）。
+    preinstalled: !!pre,
     downloadUrl: releaseUrl(),
-    // 供界面渲染「下载镜像源」下拉（含各节点实测延迟），避免镜像清单在前后端各写一份
-    mirrors: await mirrorOptionsWithLatency(),
+    // 预装场景不需要镜像源下拉，跳过测速探测（省掉最长 4s 的启动等待）
+    mirrors: pre ? [] : await mirrorOptionsWithLatency(),
   };
 }
 
@@ -929,6 +968,11 @@ async function install(opts) {
   if (!isSupported()) {
     return { ok: false, error: `当前平台（${process.platform}）暂不支持指纹浏览器` };
   }
+  // 镜像内置（Docker）：浏览器由镜像提供，运行时再下一份既无必要，又会在 /data 卷里
+  // 堆一份 400MB+ 的副本（而且预装优先级更高，下完也用不上）。直接拒绝并说明原因。
+  if (preinstalledDir()) {
+    return { ok: false, error: "指纹浏览器已由镜像内置预装，无需下载；如需更换版本请重建镜像" };
+  }
   if (!o.force && installedVersion() === version && isReady()) {
     report({ message: `指纹浏览器已是 ${version}，跳过下载`, pct: 100 });
     return { ok: true, skipped: true, version };
@@ -990,6 +1034,11 @@ async function install(opts) {
 
 /** 卸载（删除解压目录与下载缓存） */
 function uninstall() {
+  // 镜像内置（Docker）：预装目录在镜像层里，删不掉也不该删 —— 删了容器重建又回来，
+  // 而且会让「默认使用指纹浏览器」直接落空。明确拒绝，别给假成功。
+  if (preinstalledDir()) {
+    return { ok: false, error: "指纹浏览器由镜像内置预装，无法在容器内删除；如需更替请重建镜像" };
+  }
   for (const d of [installDir(), downloadDir()]) {
     try {
       fs.rmSync(d, { recursive: true, force: true });
@@ -1082,6 +1131,7 @@ module.exports = {
   releaseUrl,
   isSupported,
   installDir,
+  preinstalledDir,
   installedVersion,
   findExecutable,
   executablePath,

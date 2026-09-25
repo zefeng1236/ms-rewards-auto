@@ -293,6 +293,10 @@ export interface FingerprintStatus {
   /** 本项目钉死的版本 */
   pinned: string;
   installDir: string;
+  /** 是否由**镜像内置预装**（Docker 版：/opt/fingerprint-chromium）。
+   *  为 true 时界面隐藏「下载/重新下载/删除」——那些动作在容器里要么无意义
+   *  （已在镜像层），要么会造成一次多余的大体积运行时下载。 */
+  preinstalled?: boolean;
   downloadUrl: string | null;
   /** 可选下载镜像源（供界面渲染下拉，由主进程下发，避免前后端各写一份）；
    *  label 已带实测延迟后缀，latencyMs 供需要单独渲染延迟的界面用 */

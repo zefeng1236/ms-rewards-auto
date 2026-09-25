@@ -141,7 +141,7 @@ export interface ElectronApi {
   installFingerprint(opts?: { force?: boolean }): Promise<InstallFingerprintResult>;
   /** 取消当前指纹浏览器下载任务 */
   cancelFingerprintInstall(): Promise<{ ok: boolean; error?: string }>;
-  uninstallFingerprint(): Promise<{ ok: boolean }>;
+  uninstallFingerprint(): Promise<{ ok: boolean; error?: string }>;
   /** 检查更新：只查询上游版本，不下载不安装 */
   checkFingerprintUpdate(): Promise<CheckFingerprintUpdateResult>;
   /** 应用本身更新检查：查询 GitHub Releases 最新正式版（自动加速），只查不下载 */

@@ -27,17 +27,19 @@ function buildRecoveryText(key: string): string {
 /**
  * 首次启动向导。
  *
- * 只在用户第一次打开软件时出现（setup.json 的 done 为 false 时），走完六步后
- * 写入 done=true，之后不再弹出。六页依次是：
+ * 只在用户第一次打开软件时出现（setup.json 的 done 为 false 时），走完后
+ * 写入 done=true，之后不再弹出。桌面版六页、Web(Docker) 版五页：
  *   1. 欢迎 + 选择语言（当前仅简体中文可用，其余语种标注「暂未开发」）
  *   2. 隐私政策 / 服务条款 / 免责声明（多文档切换 + 必须勾选同意）
  *   3. 非官方授权声明与使用风险告知（3 秒倒计时后才能确认）
  *   4. 加密保险库（设置密码；启用后登录态只以密文落盘，并下发恢复密钥）
  *   5. 个性化初始设置（液态玻璃、开机自启）
- *   6. 指纹浏览器（可选增强，约 181MB；不启用可直接跳过，启用则需等下载完成）
+ *   6. 指纹浏览器（仅桌面版：可选增强约 181MB；Docker 版镜像内已预装，删掉本页）
  */
 
-const STEPS = ["欢迎", "协议", "声明", "加密", "个性化", "指纹"];
+const STEPS = IS_WEB
+  ? ["欢迎", "协议", "声明", "加密", "个性化"]
+  : ["欢迎", "协议", "声明", "加密", "个性化", "指纹"];
 
 /** 语言选项。ready=false 的只做占位展示，标注用该语言自己写的「暂未开发」 */
 const LANGS: { key: string; name: string; sub: string; ready: boolean; tip: string }[] = [
@@ -119,10 +121,10 @@ const RISKS: string[] = [
 export function SetupWizard({ onDone }: { onDone: () => void }) {
   const [state, setState] = useState<SetupState | null>(null);
   const [page, setPage] = useState(0);
-  // 第 6 页（指纹浏览器）能否放行。状态由页内上报 —— 页脚按钮据此禁用，
+  // 第 6 页（指纹浏览器，仅桌面版）能否放行。状态由页内上报 —— 页脚按钮据此禁用，
   // 避免页脚与页内流程各判各的（下载进度归页内，放行条件归页脚，必须同源）。
-  // 初值 false：启用且尚未下载完成时不允许点「开始使用」。
-  const [fpCanProceed, setFpCanProceed] = useState(false);
+  // 初值 false：启用且尚未下载完成时不允许点「开始使用」。Web 版无此页，恒 true。
+  const [fpCanProceed, setFpCanProceed] = useState(IS_WEB ? true : false);
 
   useEffect(() => {
     api.getSetup().then(setState).catch(() => setState(null));
@@ -179,7 +181,7 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
               onChange={(p) => void patch(p)}
             />
           )}
-          {page === 5 && <PageFingerprint onCanProceed={setFpCanProceed} />}
+          {!IS_WEB && page === 5 && <PageFingerprint onCanProceed={setFpCanProceed} />}
         </div>
 
         <footer className="wizard-foot">
@@ -206,13 +208,18 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
           {/* 加密页自带操作按钮（要先把恢复密钥展示完才能进下一步），
               这里只放提示，避免页脚按钮与页内流程状态不同步 */}
           {page === 3 && <span className="wizard-note">请在上方完成加密设置</span>}
+          {/* 第 5 页「个性化」：桌面版继续进指纹页；Web(Docker) 版即末页，直接完成 */}
           {page === 4 && (
-            <GlassButton variant="glassProminent" controlSize="small" onClick={() => setPage(5)}>
-              下一步 →
+            <GlassButton
+              variant="glassProminent"
+              controlSize="small"
+              onClick={() => (IS_WEB ? void finish() : setPage(5))}
+            >
+              {IS_WEB ? "开始使用 ✓" : "下一步 →"}
             </GlassButton>
           )}
-          {/* 末页：启用指纹浏览器时必须等下载完成（fpCanProceed 由页内上报） */}
-          {page === 5 && (
+          {/* 末页（仅桌面版）：启用指纹浏览器时必须等下载完成（fpCanProceed 由页内上报） */}
+          {!IS_WEB && page === 5 && (
             <GlassButton
               variant="glassProminent"
               controlSize="small"

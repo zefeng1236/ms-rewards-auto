@@ -126,12 +126,20 @@ function resolveBrowserSource(ctx) {
   if (override) return { kind: "override", executable: override };
 
   const cfg = fingerprintCfg(ctx);
-  if (cfg.enable) {
+  // 镜像内置（Docker）：指纹浏览器是容器里**唯一**的浏览器（apt Chromium 已移除、
+  // Playwright 自带 Chromium 也没下），所以预装存在时强制启用 —— 否则配置里
+  // enable=false（默认值）会一路走到「未检测到可用的浏览器」直接把任务打断。
+  const forced = !!fpBrowser.preinstalledDir();
+  if (forced || cfg.enable) {
     const exe = fpBrowser.executablePath();
-    if (exe) return { kind: "fingerprint", executable: exe, cfg };
-    logger.warn("已启用指纹浏览器但不可用（未安装或主程序损坏），本轮回落到普通 Chromium（可在设置页重新下载）");
+    if (exe) return { kind: "fingerprint", executable: exe, cfg: { ...cfg, enable: true } };
+    logger.warn(
+      forced
+        ? "镜像内置指纹浏览器不可用（预装目录损坏？），且容器内没有其他浏览器"
+        : "已启用指纹浏览器但不可用（未安装或主程序损坏），本轮回落到普通 Chromium（可在设置页重新下载）"
+    );
   }
-  // 系统兜底（Docker 用 apt Chromium）：必须排在指纹浏览器之后，
+  // 系统兜底（Docker 曾用 apt Chromium）：必须排在指纹浏览器之后，
   // 否则容器里指纹浏览器下载完也永远轮不到它。
   const fb = fallbackChromiumPath();
   if (fb) return { kind: "chromium", executable: fb, cfg };
@@ -148,6 +156,9 @@ function extraChromiumArgs() {
 
 /** Chromium 是否已就绪 */
 function isChromiumReady() {
+  // Docker 式纯指纹浏览器场景：镜像里没有 apt chromium / Playwright 自带 Chromium，
+  // 只有预装的指纹浏览器。此时只有指纹浏览器可用，它也是唯一浏览器，返回 true。
+  if (fpBrowser.isReady()) return true;
   return !!chromiumExecutablePath();
 }
 

@@ -145,8 +145,11 @@ export function FingerprintBrowserPanel() {
   const onUninstall = async () => {
     setBusy(true);
     try {
-      await api.uninstallFingerprint();
-      toast.success("已删除指纹浏览器，后续将使用普通 Chromium");
+      const r = await api.uninstallFingerprint();
+      // 镜像内置（Docker）时后端会拒绝删除，必须把真实原因透出来，
+      // 否则界面会假装「已删除」，而实际什么都没发生。
+      if (r && r.ok === false) toast.error(r.error || "删除失败");
+      else toast.success("已删除指纹浏览器，后续将使用普通 Chromium");
       await refresh();
     } finally {
       setBusy(false);
@@ -162,13 +165,15 @@ export function FingerprintBrowserPanel() {
     <div className="block">
       <div className="block-head">
         <div>
-          <div className="block-title">指纹浏览器（可选）</div>
+          <div className="block-title">指纹浏览器{st?.preinstalled ? "" : "（可选）"}</div>
           <div className="block-sub">
-            用 patch 过源码的 Chromium 统一生成 UA / Client Hints / 插件 / CPU 等指纹，需单独下载约 181MB
+            {st?.preinstalled
+              ? "已随镜像内置（/opt/fingerprint-chromium），容器启动即可用，运行时不再下载"
+              : "用 patch 过源码的 Chromium 统一生成 UA / Client Hints / 插件 / CPU 等指纹，需单独下载约 181MB"}
           </div>
         </div>
         <Tag color={st?.ready ? "success" : "default"} size="sm">
-          {st ? (st.ready ? "● 已安装" : "○ 未安装") : "检查中…"}
+          {st ? (st.ready ? (st.preinstalled ? "● 镜像内置" : "● 已安装") : "○ 未安装") : "检查中…"}
         </Tag>
       </div>
 
@@ -179,9 +184,13 @@ export function FingerprintBrowserPanel() {
           <>
             <SwitchField
               label="启用指纹浏览器"
-              hint="未安装或启动失败时自动回落普通 Chromium，不影响登录与任务"
-              checked={cfg.enable}
-              disabled={!st?.ready}
+              hint={
+                st?.preinstalled
+                  ? "Docker 版镜像内置，且容器里只有指纹浏览器可用，因此始终启用（不可关闭）"
+                  : "未安装或启动失败时自动回落普通 Chromium，不影响登录与任务"
+              }
+              checked={st?.preinstalled ? true : cfg.enable}
+              disabled={!st?.ready || !!st?.preinstalled}
               onChange={(v) => void patch({ enable: v })}
             />
 
@@ -209,58 +218,68 @@ export function FingerprintBrowserPanel() {
                 max={256}
                 onChange={(v) => void patch({ hardwareConcurrency: Math.max(0, Math.floor(v) || 0) })}
               />
-              {/* 镜像清单由主进程下发（status().mirrors），避免前后端各写一份 */}
-              <SelectField
-                label="下载镜像源"
-                hint="国内直连 GitHub Releases 通常不可达。自动=按顺序尝试全部节点、失败自动换下一个；也可钉住某一个节点，或选直连"
-                value={cfg.mirror}
-                options={st?.mirrors || []}
-                onChange={(v) => void patch({ mirror: v })}
-              />
-            </div>
-
-            <div className="fp-actions">
-              <GlassButton
-                variant="plain"
-                controlSize="small"
-                loading={busy && !progress}
-                onClick={() => (busy ? void onCancelInstall() : void onInstall(!!st?.ready))}
-              >
-                {busy ? "取消下载" : st?.ready ? "重新下载" : "下载并安装"}
-              </GlassButton>
-              {st?.ready && (
-                <>
-                  <GlassButton
-                    variant="plain"
-                    controlSize="small"
-                    loading={checking}
-                    disabled={busy || checking}
-                    onClick={() => void onCheck()}
-                  >
-                    检查更新
-                  </GlassButton>
-                  {confirmDel ? (
-                    <GlassButton
-                      variant="plain"
-                      controlSize="small"
-                      disabled={busy}
-                      onClick={() => void onUninstall()}
-                    >
-                      确认删除
-                    </GlassButton>
-                  ) : (
-                    <GlassButton
-                      variant="plain"
-                      controlSize="small"
-                      disabled={busy}
-                      onClick={() => setConfirmDel(true)}
-                    >
-                      删除
-                    </GlassButton>
-                  )}
-                </>
+              {/* 镜像清单由主进程下发（status().mirrors），避免前后端各写一份。
+                  镜像内置（Docker）时不渲染：镜像里已预装好，下载源无从谈起 */}
+              {!st?.preinstalled && (
+                <SelectField
+                  label="下载镜像源"
+                  hint="国内直连 GitHub Releases 通常不可达。自动=按顺序尝试全部节点、失败自动换下一个；也可钉住某一个节点，或选直连"
+                  value={cfg.mirror}
+                  options={st?.mirrors || []}
+                  onChange={(v) => void patch({ mirror: v })}
+                />
               )}
             </div>
+
+            {st?.preinstalled ? (
+              <div className="hint fp-note" style={{ marginTop: 4 }}>
+                指纹浏览器已随镜像内置，无需也无法在容器内下载 / 删除。
+                如需更换版本，请修改镜像构建参数（FPCB_VERSION）后重建镜像。
+              </div>
+            ) : (
+              <div className="fp-actions">
+                <GlassButton
+                  variant="plain"
+                  controlSize="small"
+                  loading={busy && !progress}
+                  onClick={() => (busy ? void onCancelInstall() : void onInstall(!!st?.ready))}
+                >
+                  {busy ? "取消下载" : st?.ready ? "重新下载" : "下载并安装"}
+                </GlassButton>
+                {st?.ready && (
+                  <>
+                    <GlassButton
+                      variant="plain"
+                      controlSize="small"
+                      loading={checking}
+                      disabled={busy || checking}
+                      onClick={() => void onCheck()}
+                    >
+                      检查更新
+                    </GlassButton>
+                    {confirmDel ? (
+                      <GlassButton
+                        variant="plain"
+                        controlSize="small"
+                        disabled={busy}
+                        onClick={() => void onUninstall()}
+                      >
+                        确认删除
+                      </GlassButton>
+                    ) : (
+                      <GlassButton
+                        variant="plain"
+                        controlSize="small"
+                        disabled={busy}
+                        onClick={() => setConfirmDel(true)}
+                      >
+                        删除
+                      </GlassButton>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
 
             {progress && pct < 100 && (
               <div className="fp-progress">
@@ -285,8 +304,12 @@ export function FingerprintBrowserPanel() {
             <div className="hint fp-note">
               {st?.ready ? (
                 <>
-                  已安装版本 {st.version}
-                  {outdated ? `（与钉死版本 ${st.pinned} 不一致，可点「重新下载」对齐）` : "（已是本版钉死版本）"}
+                  {st.preinstalled ? "镜像内置版本" : "已安装版本"} {st.version}
+                  {outdated
+                    ? st.preinstalled
+                      ? `（与钉死版本 ${st.pinned} 不一致，需重建镜像对齐）`
+                      : `（与钉死版本 ${st.pinned} 不一致，可点「重新下载」对齐）`
+                    : `（已是本版钉死版本）`}
                 </>
               ) : (
                 <>

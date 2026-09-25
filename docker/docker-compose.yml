@@ -1,16 +1,24 @@
 # ===========================================================================
 # MS Rewards Auto · Docker 版
 #
-# 一键启动（在项目根目录执行）：
+# 方式一（推荐）：直接拉取预构建镜像，不需要源码
+#     docker compose -f docker/docker-compose.yml pull
+#     docker compose -f docker/docker-compose.yml up -d
+#
+# 方式二：本地构建（改源码 / 自定义构建参数时用）
 #     docker compose -f docker/docker-compose.yml up -d --build
 #
 # 打开：http://<服务器IP>:25560
 #   首次访问进入安装向导 → 设置保险库密码 → 保存恢复密钥到浏览器
 #   之后每次打开浏览器点「使用本机保存的数字密钥登录」即可
 #
-# 国内加速（可选）：拉取基础镜像慢时，在 /etc/docker/daemon.json 加
-#     "registry-mirrors": ["https://docker.1ms.run"]
-# 然后 systemctl daemon-reload && systemctl restart docker
+# 浏览器说明：镜像内已预装指纹浏览器（/opt/fingerprint-chromium），
+#   Docker 版默认且只用它，运行时不会再去下载 134MB。
+#
+# 国内加速（可选）：
+#   拉基础镜像慢 → /etc/docker/daemon.json 加 "registry-mirrors": ["https://docker.1ms.run"]
+#   拉本镜像慢   → 把 image: 换成 ghcr.1ms.run/zefeng1236/ms-rewards-auto:0.13.8
+#   （两者可同时用；改完 systemctl daemon-reload && systemctl restart docker）
 # ===========================================================================
 
 services:
@@ -25,7 +33,11 @@ services:
         # （阿里云当时 10.6，原默认值，已换掉；换源只影响首次构建）
         NPM_REGISTRY: https://registry.npmmirror.com
         DEBIAN_MIRROR: https://mirror.nju.edu.cn/debian
-    image: ms-rewards-auto:0.13.7
+    # 镜像名与 Dockerfile 里预装的内容一一对应：
+    #   - 直接拉取（推荐，无需源码）：docker compose pull && docker compose up -d
+    #   - 本地构建：docker compose up -d --build
+    # ghcr 国内加速：把下面的镜像地址换成 ghcr.1ms.run/zefeng1236/ms-rewards-auto:0.13.8
+    image: ghcr.io/zefeng1236/ms-rewards-auto:0.13.8
     container_name: ms-rewards
     restart: unless-stopped
 
@@ -49,14 +61,10 @@ services:
       #   MS_REWARDS_VAULT_PASSWORD: ""
       #   MS_REWARDS_VAULT_KEY: ""
 
-      # ---------- Chromium ----------
-      # 镜像内已 apt 安装；容器内非 root 运行，必须带 --no-sandbox
-      #
-      # ⚠️ 这里必须是 FALLBACK 而不是 PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH：
-      #    前者语义是「指纹浏览器不可用时的兜底」，后者是「运维强指定，永远优先」。
-      #    用后者会把容器 Chromium 钉死，指纹浏览器装了也永远轮不到（已实测踩过）。
-      #    优先级：强指定 > 指纹浏览器 > 本兜底 > Playwright 自带（见 src/browser.js）
-      MS_REWARDS_CHROMIUM_FALLBACK: /usr/bin/chromium
+      # ---------- 浏览器 ----------
+      # Docker 版默认且只用「指纹浏览器」：已在镜像内预装（/opt/fingerprint-chromium），
+      # 运行时不再下载。容器内非 root 运行，必须带 --no-sandbox。
+      # （普通 Chromium 已从镜像移除——sec-ch-ua / Client Hints 改不动，留指纹矛盾，见 Dockerfile）
       MS_REWARDS_CHROMIUM_ARGS: "--no-sandbox,--disable-dev-shm-usage,--disable-gpu"
 
       MS_REWARDS_PORT: "25560"
