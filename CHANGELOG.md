@@ -2,6 +2,56 @@
 
 本文件记录各版本的重要变更。版本格式为主版本.次版本.修订号，带 `-beta` 后缀的为测试版本。带「.N」四位小版本的为内部交付号（安装包文件名与 exe FileVersion 使用），主版本段仍为 0.9.4。
 
+
+## 0.13.9
+
+发布日期：2026-09-26 · Docker 版镜像 `ghcr.io/zefeng1236/ms-rewards-auto:0.13.9`
+
+修复 Docker 版四个实际问题（证书报错 / 登录无法终止 / 登录设备显示 Linux / 过不了 bot 检测），
+并把「反检测过不过」从口头结论变成可复现的验收项。
+
+### 修复
+
+- **Docker 版 WebGL 全废（反检测上的致命伤）**：容器里 GPU 进程默认起不来，
+  `GL_VENDOR = Disabled` / `BindToCurrentSequence failed`，页面拿不到任何 WebGL 上下文 ——
+  「桌面浏览器没有 WebGL」是最顶级的机器人特征。补上 `--disable-gpu-sandbox` 后 GPU 进程
+  正常启动，WebGL 恢复，且指纹浏览器**如实上报种子生成的 Windows GPU**
+  （`ANGLE (Intel, Intel(R) Arc(TM) Graphics ... D3D11)`）。同时从镜像里移除有害的
+  `--disable-gpu`（它会让 WebGL 永久不可用）。
+- **指纹模式下不再注入任何 JS 补丁**：实测指纹浏览器原生的 `navigator.webdriver` 就是 `false`，
+  且 getter 是 `[native code]`；旧补丁把 getter 写成箭头函数，`toString()` 出来是 `() => false`，
+  等于主动自曝。更关键的是：Playwright 的 `addInitScript` 底层是 CDP 的
+  `Page.addScriptToEvaluateOnNewDocument`，**只要调用一次就会被 BrowserScan 的 Navigator 项
+  识破** —— 对照实验里注入一句 `/* noop */` 注释，verdict 即从 Normal 掉到 Robot
+  （WebDriver / User-Agent / CDP 三项仍然全过）。所以指纹模式改为**零注入**，
+  补丁只在回落普通 Chromium 时生效。
+- **对 `--disable-gpu` 显式告警**：用户自改 `MS_REWARDS_CHROMIUM_ARGS` 带上它时给出警告，
+  避免一次误配把 WebGL 关死后无人察觉。
+- **login-done 跳转不再报证书错误**：原先硬编码 `http://`，TLS 打开时被 302 到 https 后触发
+  `net::ERR_CERT_AUTHORITY_INVALID`。改为按实际监听的协议自适应（TLS 开走 https、关走 http）
+  并反向兜底，上下文同时加 `ignoreHTTPSErrors` 信任自签证书。
+- **WebUI / 桌面都能终止登录任务**：登录是独立入口、不进 `runStatus`，账号详情页原本没有
+  对应的停止按钮，点全局停止也毫无反应（轮询不检查取消标志）。现在新增「■ 停止登录」按钮，
+  登录流程的 5 分钟轮询与 90 秒抓会话循环都会响应取消，被中止时返回 `aborted`
+  并提示「登录已停止」而不是「登录失败」红字。
+- **登录设备不再显示 Linux**：新增「声明操作系统」配置项（默认 `windows`），经
+  `--fingerprint-platform` 让 UA / `navigator.platform` / Client Hints 三处与 HTTP 层声明的
+  Windows UA 对齐，不再是「一台一眼假的 Linux 设备」。
+- **`__RequestVerificationToken` 提取增强**：页面改版后 token 落点不固定（`<input>` 的 value、
+  `<meta>` 的 content、内联 JSON 都可能），改为多形态逐一尝试，并顺带尝试 `/earn` 页。
+  取不到时降级为 info 并说明 quiz 专报不受影响 —— 不再每次运行都刷一条 WARN 制造「出错了」的错觉。
+
+### 验收（服务器 测试环境 容器内实测）
+
+| 检测项 | 修复前 | 修复后 |
+|---|---|---|
+| bot.sannysoft.com | 2 项失败（WebGL Vendor / Renderer = `Canvas has no webgl context`） | **0 项失败**（通过 31 项） |
+| BrowserScan bot-detection | **Robot**（Navigator 项判红） | **Normal**（四项全过） |
+| `navigator.webdriver` | `false`，但 getter 泄漏为 `() => false` | `false`，getter 为原生 `[native code]` |
+| WebGL 渲染器 | 上下文为 `null` | `ANGLE (Intel, Intel(R) Arc(TM) Graphics ... D3D11)` |
+
+有头（noVNC 手动登录）与无头（日常任务）两条路径均已验证一致。
+
 ## 0.13.8
 
 发布日期：2026-09-25 · Docker 版镜像 `ghcr.io/zefeng1236/ms-rewards-auto:0.13.8`

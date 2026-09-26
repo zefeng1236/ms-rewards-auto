@@ -17,7 +17,7 @@
 #
 # 国内加速（可选）：
 #   拉基础镜像慢 → /etc/docker/daemon.json 加 "registry-mirrors": ["https://docker.1ms.run"]
-#   拉本镜像慢   → 把 image: 换成 ghcr.1ms.run/zefeng1236/ms-rewards-auto:0.13.8
+#   拉本镜像慢   → 把 image: 换成 ghcr.1ms.run/zefeng1236/ms-rewards-auto:0.13.9
 #   （两者可同时用；改完 systemctl daemon-reload && systemctl restart docker）
 # ===========================================================================
 
@@ -36,8 +36,8 @@ services:
     # 镜像名与 Dockerfile 里预装的内容一一对应：
     #   - 直接拉取（推荐，无需源码）：docker compose pull && docker compose up -d
     #   - 本地构建：docker compose up -d --build
-    # ghcr 国内加速：把下面的镜像地址换成 ghcr.1ms.run/zefeng1236/ms-rewards-auto:0.13.8
-    image: ghcr.io/zefeng1236/ms-rewards-auto:0.13.8
+    # ghcr 国内加速：把下面的镜像地址换成 ghcr.1ms.run/zefeng1236/ms-rewards-auto:0.13.9
+    image: ghcr.io/zefeng1236/ms-rewards-auto:0.13.9
     container_name: ms-rewards
     restart: unless-stopped
 
@@ -65,7 +65,10 @@ services:
       # Docker 版默认且只用「指纹浏览器」：已在镜像内预装（/opt/fingerprint-chromium），
       # 运行时不再下载。容器内非 root 运行，必须带 --no-sandbox。
       # （普通 Chromium 已从镜像移除——sec-ch-ua / Client Hints 改不动，留指纹矛盾，见 Dockerfile）
-      MS_REWARDS_CHROMIUM_ARGS: "--no-sandbox,--disable-dev-shm-usage,--disable-gpu"
+      # --disable-gpu-sandbox 是必需的：容器里 GPU 进程默认起不来，WebGL 会整个不可用
+      # （GL_VENDOR = Disabled / BindToCurrentSequence failed），而"桌面浏览器没有 WebGL"
+      # 是最顶级的机器人特征。⚠️ 千万不要换成 --disable-gpu，那会让 WebGL 永久不可用。
+      MS_REWARDS_CHROMIUM_ARGS: "--no-sandbox,--disable-dev-shm-usage,--disable-gpu-sandbox"
 
       MS_REWARDS_PORT: "25560"
 

@@ -18,6 +18,7 @@ const FALLBACK: FpCfg = {
   seed: 0,
   brand: "Chrome",
   hardwareConcurrency: 0,
+  platform: "windows",
   mirror: "cdn.gh-proxy.org",
 };
 
@@ -26,6 +27,14 @@ const BRAND_OPTIONS = [
   { label: "Edge", value: "Edge" },
   { label: "Opera", value: "Opera" },
   { label: "Vivaldi", value: "Vivaldi" },
+];
+
+// 声明给网站的操作系统。Docker 里真实平台恒为 Linux，照实声明会让登录设备
+// 显示成「Linux」这台一眼假的设备 —— 默认 Windows，与 HTTP 层 UA 对齐。
+const PLATFORM_OPTIONS = [
+  { label: "Windows", value: "windows" },
+  { label: "macOS", value: "macos" },
+  { label: "Linux", value: "linux" },
 ];
 
 /**
@@ -217,6 +226,13 @@ export function FingerprintBrowserPanel() {
                 min={0}
                 max={256}
                 onChange={(v) => void patch({ hardwareConcurrency: Math.max(0, Math.floor(v) || 0) })}
+              />
+              <SelectField
+                label="声明操作系统"
+                hint="告诉网站（UA / navigator.platform / Client Hints）这台浏览器跑在什么系统上。Docker 里真实是 Linux，保持 Windows 更像一台正常的桌面浏览器"
+                value={cfg.platform}
+                options={PLATFORM_OPTIONS}
+                onChange={(v) => void patch({ platform: v })}
               />
               {/* 镜像清单由主进程下发（status().mirrors），避免前后端各写一份。
                   镜像内置（Docker）时不渲染：镜像里已预装好，下载源无从谈起 */}

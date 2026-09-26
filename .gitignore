@@ -60,3 +60,6 @@ scrape-profile/
 /verify-out.txt
 /shots/
 /WinUI3Demo*/
+# gui-react/ 是构建产物目录：只跟踪 index.html / assets/ / icon.png，
+# 验证用的截图（*-login.png / wiz-*.png / srv-*.png …）不进仓库。
+/gui-react/*.png

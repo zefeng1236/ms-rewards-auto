@@ -234,6 +234,10 @@ async function loginInteractive(id) {
   const acc = accounts.get(id);
   if (!acc) return { ok: false, error: "账户不存在" };
   setRunning(true);
+  // 登录是独立入口（不走 runIds 的 batch），进入前清一次中止标志：
+  // 上一轮任务被「停止」后 globalAborted 会残留，不清的话这里首次循环检查
+  // 就会误判成「登录已被停止」，直接中断。
+  cancel.reset();
   logger.setContext(id, acc.name);
   logger.info(`开始为「${acc.name}」授权登录（弹出独立干净浏览器）...`);
   try {
@@ -252,11 +256,18 @@ async function loginInteractive(id) {
     }
     return { ok: false, loggedIn, message: "未捕获授权码" };
   } catch (e) {
+    if (e && e.isAbort) {
+      logger.warn("登录已手动停止");
+      return { ok: false, aborted: true, error: "登录已手动停止" };
+    }
     logger.error(`登录失败: ${e.message}`);
     return { ok: false, error: e.message };
   } finally {
     logger.clearContext();
     setRunning(false);
+    // 登录是独立入口（不走 runIds 的批处理），中止标志要在这里复位，
+    // 否则下一次登录/运行会一进去就被 throwIfAborted 打断。
+    cancel.reset();
   }
 }
 

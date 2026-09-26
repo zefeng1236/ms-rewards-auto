@@ -68,7 +68,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NODE_ENV=production \
     MS_REWARDS_STORAGE_DIR=/data/storage \
     MS_REWARDS_FINGERPRINT_PREINSTALLED=/opt/fingerprint-chromium \
-    MS_REWARDS_CHROMIUM_ARGS=--no-sandbox,--disable-dev-shm-usage,--disable-gpu
+    # --disable-gpu-sandbox 是必需的：容器里 GPU 进程默认起不来，WebGL 会整个不可用
+    # （GL_VENDOR = Disabled / BindToCurrentSequence failed）。⚠️ 不要用 --disable-gpu。
+    MS_REWARDS_CHROMIUM_ARGS=--no-sandbox,--disable-dev-shm-usage,--disable-gpu-sandbox
 
 # 浏览器选型（2026-09 起 Docker 版改为「指纹浏览器独占」）：
 #   - 镜像内预装 fingerprint-chromium（下一段下载解压到 MS_REWARDS_FINGERPRINT_PREINSTALLED），

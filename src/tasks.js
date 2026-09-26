@@ -266,20 +266,65 @@ function extractJsonArray(cleanHtml, marker, openChar, closeChar) {
 /* ============ 活动上报兜底（quiz / BingTrivia） ============ */
 
 /**
+ * 从 HTML 里提取 __RequestVerificationToken。
+ *
+ * 页面改版后 token 的落点不固定：可能是 <input> 的 value、<meta> 的 content，
+ * 也可能是内联 JSON 里的键值，且属性顺序会变。所以逐一尝试多种形态，
+ * 而不是死磕单一正则（旧版单正则匹配在改版后经常落空）。
+ *
+ * @param {string} html 原始 HTML
+ * @returns {string} 取不到返回空串
+ */
+function extractVerificationToken(html) {
+  const clean = String(html || "").replace(/\s/g, "");
+  const patterns = [
+    // <input name="__RequestVerificationToken" … value="xxx">
+    /name="__RequestVerificationToken"[^>]*value="([^"]+)"/,
+    // 属性顺序反过来
+    /value="([^"]+)"[^>]*name="__RequestVerificationToken"/,
+    // <meta name="__RequestVerificationToken" content="xxx">
+    /name="__RequestVerificationToken"[^>]*content="([^"]+)"/,
+    /content="([^"]+)"[^>]*name="__RequestVerificationToken"/,
+    // 内联 JSON："__RequestVerificationToken":"xxx"
+    /["']?__RequestVerificationToken["']?\s*[:=]\s*["']([^"']+)["']/,
+    // 旧版宽松匹配，保留兜底，防老页面形态回归时失效
+    /RequestVerificationToken(.*?)value="(.*?)"/,
+  ];
+  for (const re of patterns) {
+    const m = clean.match(re);
+    if (m && m[1]) return m[1];
+  }
+  return "";
+}
+
+/**
  * 从 rewards.bing.com 首页提取 __RequestVerificationToken。
  * 旧版 `api/reportactivity` 接口需要它，缺失时那条上报直接跳过（不影响主流程）。
+ *
+ * ⚠️ 取不到 token 不代表出错：真正干活的是 reportActivityFallback 里的
+ * quiz 专报（②，无需 token）。所以这里只记 info，不再用 WARN 制造「出错了」
+ * 的错觉 —— 早期版本用 WARN，用户每次都看到一条吓人的告警却毫无影响。
+ *
  * @returns {Promise<string>} 取不到返回空串
  */
 async function fetchRequestToken(ctx) {
-  try {
-    const res = await httpRequest({ url: "https://rewards.bing.com/", headers: { referer: "https://rewards.bing.com/" }, ctx });
-    const clean = (res.text || "").replace(/\s/g, "");
-    const m = clean.match(/RequestVerificationToken(.*?)value="(.*?)"/);
-    if (m && m[2]) return m[2];
-  } catch (e) {
-    if (e && e.isAbort) throw e;
+  const pages = ["https://rewards.bing.com/", "https://rewards.bing.com/earn"];
+  let lastStatus = 0;
+  for (const url of pages) {
+    try {
+      const res = await httpRequest({ url, headers: { referer: "https://rewards.bing.com/" }, ctx });
+      lastStatus = res.status;
+      if (res.status !== 200 || !res.text) continue;
+      const token = extractVerificationToken(res.text);
+      if (token) return token;
+    } catch (e) {
+      if (e && e.isAbort) throw e;
+      if (!lastStatus) lastStatus = -1; // 请求异常（超时/DNS 等），用 -1 表示
+    }
   }
-  logger.warn("未取到 RequestVerificationToken（将跳过 api/reportactivity 上报）");
+  logger.info(
+    `未取到 RequestVerificationToken（HTTP ${lastStatus || "?"}，跳过 api/reportactivity 上报；quiz 专报不受影响）`
+  );
   return "";
 }
 

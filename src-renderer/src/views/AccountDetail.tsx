@@ -305,6 +305,11 @@ export function AccountDetail({
     setBusy("login");
     try {
       const r = await api.login(account.id);
+      // 用户主动点了「停止登录」→ 不是失败，别弹红色错误
+      if (!r.ok && r.aborted) {
+        toast.info("登录已停止");
+        return;
+      }
       if (!r.ok) {
         toast.error(r.error || r.message || "登录失败");
         return;
@@ -318,6 +323,14 @@ export function AccountDetail({
     } finally {
       setBusy(null);
     }
+  };
+
+  // 登录是独立入口，不进 runStatus，所以账号级「停止此账号」按不到它
+  // （stopAccount 会回「该账号当前没有在执行的任务」）。这里直接走全局停止。
+  const onStopLogin = async () => {
+    const r = await api.stop();
+    if (!r.ok && r.error) toast.error(r.error);
+    else toast.info("正在停止登录…");
   };
 
   const onSync = async () => {
@@ -473,6 +486,11 @@ export function AccountDetail({
             >
               授权登录
             </GlassButton>
+            {busy === "login" && (
+              <GlassButton variant="destructive" controlSize="small" onClick={() => void onStopLogin()}>
+                ■ 停止登录
+              </GlassButton>
+            )}
             <GlassButton variant="glass" controlSize="small"
               onClick={onSync}
               disabled={running || busy === "sync"}

@@ -1090,18 +1090,27 @@ checkTrue(
   /^\s*launchOpts\.userAgent = stealth\.STEALTH_USER_AGENT;/m.test(browserSrc) && /require\("\.\/stealth"\)/.test(browserSrc)
 );
 checkTrue(
-  "browser 在每个页面注入 initScript（指纹模式下注入的是带 __MSR_FP 置位的版本）",
-  /^\s*await context\.addInitScript\(\{ content: initSrc \}\);/m.test(browserSrc) &&
-    /const initSrc = isFp \? "window\.__MSR_FP = true;\\n" \+ stealth\.STEALTH_INIT : stealth\.STEALTH_INIT;/.test(browserSrc)
+  // 契约在 0.13.9 变了：以前是「每个页面都注入，指纹模式下注入带 __MSR_FP 的版本」，
+  // 现在是「只在非指纹分支注入，指纹模式零注入」。
+  // 为什么必须零注入：Playwright 的 addInitScript 底层是 CDP 的
+  // Page.addScriptToEvaluateOnNewDocument，调用一次就会被 BrowserScan 的 Navigator
+  // 项识破 —— 实测注入一句 `/* noop */` 注释，verdict 即从 Normal 掉到 Robot。
+  // 三条断言缺一不可：①注入点存在 ②它被 !isFp 包着 ③旧的 __MSR_FP 注入版本已消失。
+  "browser 只在非指纹分支注入 initScript（指纹模式零注入，避免 CDP 注入痕迹自曝）",
+  /if \(!isFp\) \{\s*await context\.addInitScript\(\{ content: stealth\.STEALTH_INIT \}\);/.test(browserSrc) &&
+    /await context\.setExtraHTTPHeaders\(stealth\.EXTRA_HTTP_HEADERS\)/.test(browserSrc) &&
+    !/window\.__MSR_FP = true/.test(browserSrc)
 );
 checkTrue(
   "browser 追加 stealth 启动参数（EXTRA_ARGS 并入 args）",
   /^\s*\.\.\.stealth\.EXTRA_ARGS,/m.test(browserSrc)
 );
 checkTrue(
-  // 指纹模式下不盖 accept-language（--accept-lang 由上游统一处理），否则两套控制打架
+  // 指纹模式下不盖 accept-language（--accept-lang 由上游统一处理），否则两套控制打架。
+  // 0.13.9 起它与 addInitScript 一起被 !isFp 分支收拢（指纹模式零注入零额外请求头）。
   "browser 补充 accept-language（EXTRA_HTTP_HEADERS；指纹模式让位）",
-  /^\s*if \(!isFp\) await context\.setExtraHTTPHeaders\(stealth\.EXTRA_HTTP_HEADERS\);/m.test(browserSrc)
+  /await context\.setExtraHTTPHeaders\(stealth\.EXTRA_HTTP_HEADERS\);/.test(browserSrc) &&
+    /if \(!isFp\) \{\s*await context\.addInitScript\(\{ content: stealth\.STEALTH_INIT \}\);\s*await context\.setExtraHTTPHeaders\(stealth\.EXTRA_HTTP_HEADERS\);/.test(browserSrc)
 );
 checkTrue(
   "反例守卫 ⑤：注入失败只 warn 不抛出（不阻断登录/领取）",
@@ -1583,28 +1592,67 @@ checkTrue(
     /if \(isFp\) \{/.test(browserSrcFp)
 );
 checkTrue(
-  "指纹模式下给 stealth 置位 __MSR_FP",
-  browserSrcFp.includes('"window.__MSR_FP = true;\\n" + stealth.STEALTH_INIT')
+  // 与上面那条配套：指纹模式不但不注入，连「补丁是否生效」都不该再由我们负责 ——
+  // webdriver / plugins / platform / WebGL 全由 --fingerprint 种子原生生成。
+  "指纹模式零 JS 补丁注入（webdriver 等原生即正确，注入反而自曝）",
+  /if \(!isFp\) \{/.test(browserSrcFp) &&
+    !browserSrcFp.includes('"window.__MSR_FP = true;\\n" + stealth.STEALTH_INIT') &&
+    !/\binitSrc\b/.test(browserSrcFp)
+);
+checkTrue(
+  // 实测（容器内 fingerprint-chromium 148）：GPU 进程默认起不来 → WebGL 整个不可用
+  // （GL_VENDOR = Disabled / BindToCurrentSequence failed），指纹浏览器连伪造 GPU 的
+  // 机会都没有，sannysoft 的 WebGL Vendor / Renderer 两项直接判红。
+  // 补 --disable-gpu-sandbox 后 GPU 进程正常启动，WebGL 恢复并上报种子生成的 Windows GPU。
+  "Linux 指纹模式自动补 --disable-gpu-sandbox（否则 GPU 进程起不来 → WebGL 全废）",
+  /process\.platform === "linux" && !launchOpts\.args\.includes\("--disable-gpu-sandbox"\)/.test(browserSrcFp) &&
+    /launchOpts\.args\.push\("--disable-gpu-sandbox"\)/.test(browserSrcFp)
+);
+checkTrue(
+  "对 --disable-gpu 显式告警（它会让 WebGL 永久不可用，是反检测上的自伤）",
+  /启动参数含 --disable-gpu/.test(browserSrcFp)
 );
 
 // —— 配置层对齐（防白屏：两处默认值必须同字段） ——
+// 为什么盯得这么死：旧 global-config.json 缺新字段时，渲染层读 undefined 会抛
+// TypeError → 白屏。而白屏只在「升级安装」这条路上出现，开发机上全新安装永远复现不了。
 function browserFpBlock(src) {
   const i = src.indexOf("browser: {");
-  return i < 0 ? "" : src.slice(i, i + 700);
+  return i < 0 ? "" : src.slice(i, i + 900);
 }
 const cfgFpBlock = browserFpBlock(cfgSrcFp);
 const gcfgFpBlock = browserFpBlock(gcfgSrcFp);
+// platform 是 0.13.9 新增：声明给网站的操作系统（默认 windows）。
+// 不跟 process.platform 的原因见 src/browser.js 里 fingerprintCfg 的注释。
+const FP_FIELDS = ["enable", "seed", "brand", "hardwareConcurrency", "platform", "mirror"];
 for (const [label, block] of [["config.js", cfgFpBlock], ["global-config.js", gcfgFpBlock]]) {
+  const missing = FP_FIELDS.filter((f) => !new RegExp(`\\b${f}:`).test(block));
   checkTrue(
-    `${label} 的 browser.fingerprint 五个字段齐全（enable/seed/brand/hardwareConcurrency/mirror）`,
-    block.includes("fingerprint: {") &&
-      /enable:/.test(block) &&
-      /seed:/.test(block) &&
-      /brand:/.test(block) &&
-      /hardwareConcurrency:/.test(block) &&
-      /mirror:/.test(block)
+    `${label} 的 browser.fingerprint 六个字段齐全（${FP_FIELDS.join("/")}）`,
+    block.includes("fingerprint: {") && missing.length === 0,
+    `缺字段：${missing.join(", ")}`
   );
 }
+// 渲染层契约同样要对齐：types/index.ts 是编译期，api/mock.ts 是 npm run dev:web 预览期，
+// 两者漏字段分别表现为「tsc 报错」与「预览白屏」，都由这条守卫兜住。
+//
+// ⚠️ 必须把范围锁在 browser.fingerprint 类型块内：FingerprintStatus 接口里也有一行
+// 同名的 `platform: string;`（那是「当前运行平台」），全局扫会假绿 —— 删掉配置侧的
+// platform 照样通过，白屏照旧发生。
+const typesFpBlock = (() => {
+  const i = typesSrcFp.indexOf("fingerprint: {");
+  return i < 0 ? "" : typesSrcFp.slice(i, i + 900);
+})();
+checkTrue(
+  "types/index.ts 的 browser.fingerprint 类型含 platform（渲染层编译期契约）",
+  /\bplatform: string;/.test(typesFpBlock),
+  "缺 platform → tsc 直接失败，且预览模式拿不到该字段"
+);
+checkTrue(
+  'api/mock.ts 的 fingerprint 默认值含 platform: "windows"',
+  /fingerprint: \{[^}]*platform: "windows"/.test(mockSrcFp),
+  "mock 缺 platform → npm run dev:web 预览时该下拉框无值"
+);
 
 // —— IPC / 适配层 ——
 for (const [label, src, keys] of [
@@ -1662,6 +1710,21 @@ checkTrue(
     !/^\s*PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH[=:]/m.test(dockerfileSrc) &&
     !/^\s*PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH[=:]/m.test(composeSrc),
   "仍留兜底 Chromium → 它优先级高于指纹浏览器，Docker「默认用指纹浏览器」的目标直接落空"
+);
+// 只从环境变量的**取值**里判定，不扫整份文件 —— 注释里写「不要用 --disable-gpu」
+// 也会被裸正则命中（这条守卫自己踩过），所以先取出值再判。
+const chromiumArgsOf = (src) => ((src.match(/MS_REWARDS_CHROMIUM_ARGS[=:]\s*"?([^"\n]*)"?/) || [])[1] || "");
+const dfArgs = chromiumArgsOf(dockerfileSrc);
+const cpArgs = chromiumArgsOf(composeSrc);
+checkTrue(
+  "Docker 的 Chromium 参数不含 --disable-gpu 且带 --disable-gpu-sandbox（WebGL 必须可用）",
+  // 负向先行断言是必须的：合法值 `--disable-gpu-sandbox` 本身就以 `--disable-gpu` 开头，
+  // 裸 /--disable-gpu/ 会把它误判成违规。
+  /--disable-gpu-sandbox/.test(dfArgs) &&
+    /--disable-gpu-sandbox/.test(cpArgs) &&
+    !/--disable-gpu(?!-sandbox)/.test(dfArgs) &&
+    !/--disable-gpu(?!-sandbox)/.test(cpArgs),
+  `带 --disable-gpu → WebGL 整个不可用，bot.sannysoft.com 直接判 WebGL Vendor/Renderer 两项失败；缺 --disable-gpu-sandbox → 容器里 GPU 进程起不来，WebGL 同样不可用（Dockerfile="${dfArgs}" / compose="${cpArgs}"）`
 );
 checkTrue(
   "Web 端 installFingerprint 把下载进度转发到 SSE（否则侧边栏徽章在 Web 版永远 0%）",
@@ -2204,7 +2267,9 @@ checkTrue(
 );
 checkTrue(
   "compose 指向 ghcr 预构建镜像、且不再传已废弃的 Chromium 兜底环境变量",
-  /image: ghcr\.io\/[^:\s]+:0\.13\.8/.test(composeSrc) &&
+  // ⚠️ 版本号必须从 package.json 取，不能写死 —— 0.13.8 时这里写的是
+  // /:0\.13\.8/，bump 到 0.13.9 当场变红，属于「守卫自身没跟上版本」的假失败。
+  new RegExp(`image: ghcr\\.io/[^:\\s]+:${String(pkgRaw.version).replace(/\./g, "\\.")}`).test(composeSrc) &&
     !/MS_REWARDS_CHROMIUM_FALLBACK/.test(composeSrc) &&
     !/PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH/.test(composeSrc),
   "compose 仍留兜底变量 → 容器会优先用兜底 Chromium，指纹浏览器永远轮不到"

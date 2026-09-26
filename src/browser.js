@@ -6,6 +6,7 @@ const sp = require("./storage-path");
 const stealth = require("./stealth");
 const globalConfig = require("./global-config");
 const fpBrowser = require("./fingerprint-browser");
+const cancel = require("./cancel");
 
 const ROOT = path.join(__dirname, "..");
 
@@ -103,6 +104,13 @@ function fingerprintCfg(ctx) {
     seed: Number(fp.seed) || 0,
     brand: typeof fp.brand === "string" && fp.brand ? fp.brand : "Chrome",
     hardwareConcurrency: Number(fp.hardwareConcurrency) || 0,
+    // 声明给网站的「操作系统」：默认 windows。为什么不是跟 process.platform：
+    // Docker 容器里 process.platform 恒为 linux，若照实声明，UA/navigator.platform
+    // 会报 Linux，而本项目 HTTP 层 UA（rewards.UA_PC）声明的是 Windows NT ——
+    // 登录设备列表里就显示成「Linux」这台一眼假的设备。统一声明 windows，
+    // 让指纹源码层与 HTTP 层对齐，观感是「一台正常的 Windows 桌面浏览器」。
+    platform:
+      typeof fp.platform === "string" && fp.platform ? fp.platform.toLowerCase() : "windows",
   };
 }
 
@@ -205,6 +213,10 @@ async function openContext(ctx, headless, opts) {
   // 表现为「输入了密码但点登录没反应」（其实是按钮根本点不到）。
   const launchOpts = {
     headless,
+    // 信任自签证书：Docker 下 /login-done 及后续 https 回跳走的是 entrypoint 生成的
+    // 自签 TLS（10 年期，SAN 只覆盖 localhost），不忽略会报 ERR_CERT_AUTHORITY_INVALID。
+    // 桌面版不在本机起 TLS，此开关无副作用。
+    ignoreHTTPSErrors: true,
     viewport: headless ? { width: 1366, height: 768 } : null,
     locale: "zh-CN",
     args: [
@@ -220,11 +232,25 @@ async function openContext(ctx, headless, opts) {
     ],
   };
   if (isFp) {
+    // GPU 进程在容器里起不来时 WebGL 会整个不可用（GL_VENDOR = Disabled /
+    // BindToCurrentSequence failed），而"桌面浏览器没有 WebGL"是最顶级的机器人特征：
+    // bot.sannysoft.com 会直接把 WebGL Vendor / Renderer 两项判红，指纹浏览器也因此
+    // 没机会伪造 GPU。实测补上 --disable-gpu-sandbox 后 GPU 进程正常启动，WebGL 恢复，
+    // 并如实上报种子生成的 Windows GPU（ANGLE (Intel, Intel(R) Arc(TM) ... D3D11)）。
+    if (process.platform === "linux" && !launchOpts.args.includes("--disable-gpu-sandbox")) {
+      launchOpts.args.push("--disable-gpu-sandbox");
+    }
+    // --disable-gpu 与上面正好相反：它会让 WebGL 永久不可用。容器镜像历史上带过这个
+    // 参数，用户自改 MS_REWARDS_CHROMIUM_ARGS 时也可能带上，所以显式提醒一句。
+    if (launchOpts.args.includes("--disable-gpu")) {
+      logger.warn("启动参数含 --disable-gpu：WebGL 将被禁用（bot 检测会判失败），建议移除");
+    }
     // 指纹浏览器：由种子统一生成 UA / userAgentData / Client Hints / 插件 / CPU / 内存
     launchOpts.args.push(
       ...fpBrowser.buildArgs({
         seed: fpSeed,
         brand: source.cfg ? source.cfg.brand : "Chrome",
+        platform: source.cfg ? source.cfg.platform : "windows",
         hardwareConcurrency: source.cfg ? source.cfg.hardwareConcurrency : 0,
       })
     );
@@ -245,14 +271,25 @@ async function openContext(ctx, headless, opts) {
 
   const context = await chromium.launchPersistentContext(tempDir, launchOpts);
 
-  // 在所有页面脚本之前注入去自动化补丁（抹掉 webdriver / 补全 chrome 对象与插件等指纹）
+  // 去自动化补丁：**只在普通 Chromium 回落路径注入；指纹浏览器模式一次都不注入**。
+  //
+  // 为什么指纹模式要"少即是多"（2026-09-26 在容器内实测，fingerprint-chromium 148）：
+  //   · navigator.webdriver 原生就是 false，且 getter 是 `function get webdriver()
+  //     { [native code] }` —— 我们原来的 getter 打成箭头函数，toString 后是
+  //     `() => false`，等于主动告诉检测方"这里被改过"；
+  //   · plugins / languages / platform / hardwareConcurrency / WebGL 全由 --fingerprint
+  //     种子统一生成且互相自洽，我们再盖一层只会造出互相矛盾的指纹；
+  //   · 最关键：Playwright 的 addInitScript 底层是 CDP 的
+  //     Page.addScriptToEvaluateOnNewDocument，**只要调用一次就会被 BrowserScan 的
+  //     Navigator 项识破** —— 对照实验里注入一句 `/* noop */` 注释，verdict 就从
+  //     Normal 掉到 Robot（WebDriver / User-Agent / CDP 三项仍然全过）。
+  //
+  // 结论：指纹浏览器已经做对了每一件事，补丁只在它缺席（回落普通 Chromium）时才有价值。
   try {
-    // 指纹模式下置位 __MSR_FP：stealth.js 会据此让出 languages / plugins / CPU 核数等
-    // 它由种子生成的维度，避免两套补丁叠加出矛盾指纹
-    const initSrc = isFp ? "window.__MSR_FP = true;\n" + stealth.STEALTH_INIT : stealth.STEALTH_INIT;
-    await context.addInitScript({ content: initSrc });
-    // 指纹模式下也不盖 accept-language：--accept-lang 已经由上游统一处理
-    if (!isFp) await context.setExtraHTTPHeaders(stealth.EXTRA_HTTP_HEADERS);
+    if (!isFp) {
+      await context.addInitScript({ content: stealth.STEALTH_INIT });
+      await context.setExtraHTTPHeaders(stealth.EXTRA_HTTP_HEADERS);
+    }
   } catch (e) {
     logger.warn(`注入去自动化补丁失败（不影响主流程）: ${e.message}`);
   }
@@ -580,6 +617,13 @@ async function waitForRewardsSession(page, context) {
   let last = { loggedIn: false, cookies: [], url: page.url(), html: "" };
   let ssoTried = false;
   while (Date.now() < deadline) {
+    // 响应「停止任务」：授权完成后抓会话也是个长等待，用户点停止必须能中断
+    try {
+      cancel.throwIfAborted();
+    } catch (e) {
+      if (e && e.isAbort) throw e;
+      throw e;
+    }
     for (const target of targets) {
       try {
         await page.goto(target, { waitUntil: "domcontentloaded", timeout: 60000 });
@@ -647,6 +691,17 @@ async function loginInteractive(ctx) {
     let code = null;
     const deadline = Date.now() + 5 * 60 * 1000;
     while (Date.now() < deadline) {
+      // 响应「停止任务」：登录是长等待（最长 5 分钟），用户点停止必须立刻中断，
+      // 否则 WebUI 上点终止毫无反应、要干等轮询超时。
+      try {
+        cancel.throwIfAborted();
+      } catch (e) {
+        if (e && e.isAbort) {
+          logger.warn("登录已被手动停止");
+          throw e;
+        }
+        throw e;
+      }
       const u = page.url();
       try {
         const pu = new URL(u);
@@ -682,11 +737,29 @@ async function loginInteractive(ctx) {
     // 才需要这一步；桌面版不启 server，跳了反而触发 ECONNREFUSED 噪声 warn。
     if (loggedIn && process.env.MS_REWARDS_HTTP_LISTENING) {
       const port = process.env.MS_REWARDS_PORT || "25560";
-      try {
-        await page.goto(`http://localhost:${port}/login-done`, { waitUntil: "domcontentloaded", timeout: 10000 });
-      } catch (e) {
-        logger.warn(`导航到登录完成页失败: ${e.message}`);
+      // 协议必须跟 server 实际监听的一致：TLS 打开时只有 https 能通（http 会被
+      // 302 跳 https），关闭时只有 http 能通。所以先按 TLS 环境变量选主协议，
+      // 失败再试另一种兜底 —— 这样无论用户有没有配证书都不会再刷证书/连接错误。
+      // 上下文已 ignoreHTTPSErrors: true（见 openContext），自签证书不再触发
+      // net::ERR_CERT_AUTHORITY_INVALID。
+      const primary = process.env.MS_REWARDS_TLS_CERT ? "https" : "http";
+      const fallback = primary === "https" ? "http" : "https";
+      let navigated = false;
+      let lastErr = null;
+      for (const scheme of [primary, fallback]) {
+        try {
+          await page.goto(`${scheme}://localhost:${port}/login-done`, {
+            waitUntil: "domcontentloaded",
+            timeout: 8000,
+          });
+          navigated = true;
+          break;
+        } catch (e) {
+          if (e && e.isAbort) throw e;
+          lastErr = e;
+        }
       }
+      if (!navigated) logger.warn(`导航到登录完成页失败: ${lastErr ? lastErr.message : "未知原因"}`);
     }
     return { code, loggedIn };
   } finally {

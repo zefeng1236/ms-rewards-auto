@@ -55,7 +55,7 @@ const DEFAULT_CONFIG: AppConfig = {
   },
   browser: {
     // mirror 默认值必须与 src/config.js / src/global-config.js 一致（selfcheck 有跨文件守卫）
-    fingerprint: { enable: true, seed: 0, brand: "Chrome", hardwareConcurrency: 0, mirror: "cdn.gh-proxy.org" },
+    fingerprint: { enable: true, seed: 0, brand: "Chrome", hardwareConcurrency: 0, platform: "windows", mirror: "cdn.gh-proxy.org" },
   },
 };
 
@@ -565,7 +565,7 @@ export function createMockApi(): ElectronApi {
       return {
         ok: true,
         updateAvailable: true,
-        currentVersion: "0.13.8",
+        currentVersion: "0.13.9",
         latestVersion: "0.14.0",
         downloadUrl: "https://github.com/zefeng1236/ms-rewards-auto/releases/download/v0.14.0/MS-Rewards-Auto-Setup-0.14.0.exe",
         assetName: "MS-Rewards-Auto-Setup-0.14.0.exe",

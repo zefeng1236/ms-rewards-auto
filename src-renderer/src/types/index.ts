@@ -125,6 +125,11 @@ export interface AppConfig {
       brand: string;
       /** CPU 核数；0 = 由指纹种子生成 */
       hardwareConcurrency: number;
+      /** 声明给网站的操作系统：windows | macos | linux（默认 windows）。
+       *  为什么不跟 process.platform：Docker 容器里真实平台恒为 Linux，
+       *  照实声明会让登录设备显示为 Linux，既不像是「有图形界面的正常桌面
+       *  浏览器」，也与 HTTP 层声明的 Windows UA 自相矛盾。 */
+      platform: string;
       /** 下载镜像源：auto=按顺序尝试全部，也可指定单个节点或 direct 直连 GitHub */
       mirror: string;
     };
