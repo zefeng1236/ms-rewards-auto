@@ -2339,6 +2339,15 @@ checkTrue(
   /new URLSearchParams\(\{ resolution: "3840x2160" \}\)/.test(wallpapersSrc),
   "upx8Url 的 resolution 不是 3840x2160 → 用户要求的默认 4K 丢失"
 );
+// 上游限制留档：birdpaper 数据源返回原图尺寸，resolution 仅作记录、不强制缩放，
+// 所以实拉常见 1920x1080 属正常（0.13.10 服务器实测确认），不是我们的 bug。
+// 这条守卫只锁「注释里保留了这个事实说明」，防止后人把它当成 bug 去乱改参数。
+checkTrue(
+  "upx8 注释保留了「上游 birdpaper 不强制缩放」的事实说明（防误判为 bug）",
+  /birdpaper 数据源返回图片原始尺寸/.test(wallpapersSrc) &&
+    /不做强制缩放/.test(wallpapersSrc),
+  "注释被删 → 后人可能把 1080p 返回值误判为 bug 并乱改参数"
+);
 const wallpapersMod21 = require(path.join(ROOT, "src", "wallpapers.js"));
 check(
   "upx8 随机分类不带 category（仅 4K 分辨率）",
