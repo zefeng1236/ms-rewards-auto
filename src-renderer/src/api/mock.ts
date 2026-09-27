@@ -69,7 +69,7 @@ const DEFAULT_APPEARANCE: Appearance = {
   authBg: "flow",
   bgUrl: "",
   bgFile: "",
-  bgCategory: "landscape",
+  bgCategory: "random",
   bgUnsplashKey: "",
   bgRotate: 0,
   bgBlur: 4,
@@ -565,7 +565,7 @@ export function createMockApi(): ElectronApi {
       return {
         ok: true,
         updateAvailable: true,
-        currentVersion: "0.13.9",
+        currentVersion: "0.13.10",
         latestVersion: "0.14.0",
         downloadUrl: "https://github.com/zefeng1236/ms-rewards-auto/releases/download/v0.14.0/MS-Rewards-Auto-Setup-0.14.0.exe",
         assetName: "MS-Rewards-Auto-Setup-0.14.0.exe",

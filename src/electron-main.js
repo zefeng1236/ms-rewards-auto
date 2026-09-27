@@ -26,6 +26,7 @@ const fpBrowser = require("./fingerprint-browser");
 const appUpdate = require("./app-update");
 const appearance = require("./appearance");
 const uapi = require("./uapi");
+const wallpapers = require("./wallpapers");
 const launch = require("./launch");
 const setup = require("./setup");
 const sp = require("./storage-path");
@@ -169,13 +170,13 @@ async function rawBackgroundSrc(cfg) {
   switch (cfg.bgType) {
     case "bing":
       return uapi.resolveBingDailyUrl();
-    case "uapi":
-      return uapi.randomImageUrl(cfg.bgCategory);
+    case "upx8":
+      return wallpapers.upx8Url(cfg.bgCategory);
     case "qy98":
-      return uapi.qy98WallpaperUrl();
+      return wallpapers.qy98Url(cfg.bgCategory);
     case "unsplash": {
       const key = (process.env.UNSPLASH_ACCESS_KEY || cfg.bgUnsplashKey || "").trim();
-      return uapi.unsplashRandom(key); // 无 key / 失败时抛错，由 IPC 兜底为 ""
+      return wallpapers.unsplashRandom(key, cfg.bgCategory); // 无 key / 失败时抛错，由 IPC 兜底为 ""
     }
     default:
       return appearance.backgroundSrc();
@@ -188,7 +189,7 @@ const BG_CACHE_DIR = path.join(path.dirname(appearance.FILE), "cache");
 /**
  * 当前背景应显示的图片地址。
  *
- * 随机图源（uapi/qy98/unsplash）每次请求都会返回不同的图，若直接把接口地址
+ * 随机图源（upx8/qy98/unsplash）每次请求都会返回不同的图，若直接把接口地址
  * 丢给渲染端，背景层、缩略图、预览弹窗会各自请求一次，看到的是三张不同的图。
  * 所以远程图源一律先下载到本地缓存，再返回稳定的 file:// 地址；
  * 只有明确要求 fresh（换一张 / 自动轮换到期）时才重新下载。

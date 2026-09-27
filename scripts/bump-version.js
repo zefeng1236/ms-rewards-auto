@@ -1,0 +1,251 @@
+#!/usr/bin/env node
+/**
+ * 版本号 bump 工具 —— 把「发版时容易漏改的七处版本号」收敛成一条命令。
+ *
+ * 用法：
+ *   node scripts/bump-version.js 0.13.10          # 只改主版本（buildNumber 保持不变）
+ *   node scripts/bump-version.js 0.13.10 --build 1 # 同时把小版本号置为 1
+ *   node scripts/bump-version.js --dry 0.13.10     # 预演，不落盘
+ *   node scripts/bump-version.js --check           # 只校验一致性，不改任何文件
+ *
+ * 同步的七处（selfcheck【12】【15】会逐一比对，漏一处门禁变红）：
+ *   1. package.json            version / buildNumber（buildNumber 是唯一真源）
+ *   2. package-lock.json       根 version + packages[""].version（两处）
+ *   3. src-renderer/src/version.ts                 APP_VERSION / BUILD_NUMBER
+ *   4. src-renderer/src/views/About.tsx            APP_VERSION
+ *   5. src-renderer/src/api/mock.ts                currentVersion
+ *   6. docker/docker-compose.yml                   镜像 tag（共 3 处：注释 2 + image 1）
+ *   7. README.md                                   顶部「当前版本：Vx.y.z」
+ *   （另：CHANGELOG.md 若缺 ## 新版本 章节则自动补一个待填骨架，否则门禁会红）
+ *
+ * ⚠️ 注意：CHANGELOG.md 里旧版本章节的镜像 tag 属于历史记录，不能改。
+ *    所以这里只在新版本号「不存在」时插入骨架，不做全局替换。
+ */
+
+const fs = require("fs");
+const path = require("path");
+
+const ROOT = path.resolve(__dirname, "..");
+
+/* ---------------- 参数解析 ---------------- */
+const argv = process.argv.slice(2);
+const dry = argv.includes("--dry") || argv.includes("--dry-run");
+const checkOnly = argv.includes("--check");
+const buildIdx = argv.findIndex((a) => a === "--build" || a === "-b");
+const nextBuild = buildIdx >= 0 ? String(argv[buildIdx + 1] || "").trim() : null;
+const positional = argv.filter(
+  (a, i) => !a.startsWith("--") && !(buildIdx >= 0 && i === buildIdx + 1) && a !== "-b"
+);
+const targetVersion = positional[0];
+
+const SEMVER = /^\d+\.\d+\.\d+$/;
+
+if (!checkOnly && !targetVersion) {
+  console.error("用法: node scripts/bump-version.js <x.y.z> [--build N] [--dry] [--check]");
+  process.exit(2);
+}
+if (targetVersion && !SEMVER.test(targetVersion)) {
+  console.error(`版本号格式非法: ${JSON.stringify(targetVersion)}（要求 x.y.z，例如 0.13.10）`);
+  process.exit(2);
+}
+if (nextBuild !== null && !/^\d+$/.test(nextBuild)) {
+  console.error(`buildNumber 必须为纯数字，实际 ${JSON.stringify(nextBuild)}`);
+  process.exit(2);
+}
+
+/* ---------------- 小工具 ---------------- */
+const log = [];
+function rep(file, label, from, to, contentTransform) {
+  const abs = path.join(ROOT, file);
+  if (!fs.existsSync(abs)) {
+    log.push({ file, label, status: "MISS", note: "文件不存在" });
+    return false;
+  }
+  const src = fs.readFileSync(abs, "utf8");
+  const out = contentTransform(src);
+  if (out === null) {
+    log.push({ file, label, status: "MISS", note: `未匹配到「${from}」` });
+    return false;
+  }
+  if (out === src) {
+    log.push({ file, label, status: "SAME", note: "已是目标值" });
+    return true;
+  }
+  if (!dry) fs.writeFileSync(abs, out, "utf8");
+  log.push({ file, label, status: dry ? "DRY" : "OK" });
+  return true;
+}
+
+/** 把「旧版本号」精确替换为「新版本号」，只替换第一处 / 全部 */
+function swapAll(src, from, to) {
+  if (!src.includes(from)) return null;
+  return src.split(from).join(to);
+}
+
+/* ---------------- --check 模式 ---------------- */
+if (checkOnly) {
+  const pkg = require(path.join(ROOT, "package.json"));
+  const expected = (pkg.version || "").trim();
+  const bNum = String(pkg.buildNumber || "0");
+  const items = [];
+  const add = (name, ok, detail) => items.push({ name, ok, detail });
+
+  const lock = JSON.parse(fs.readFileSync(path.join(ROOT, "package-lock.json"), "utf8"));
+  add("package-lock.json 根 version", lock.version === expected, `${lock.version} vs ${expected}`);
+  add(
+    'package-lock.json packages[""]',
+    lock.packages?.[""]?.version === expected,
+    `${lock.packages?.[""]?.version} vs ${expected}`
+  );
+
+  const verSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "version.ts"), "utf8");
+  const vApp = (verSrc.match(/APP_VERSION\s*=\s*"([^"]+)"/) || [])[1];
+  const vBuild = (verSrc.match(/BUILD_NUMBER\s*=\s*(\d+)/) || [])[1];
+  add("version.ts APP_VERSION", vApp === expected, `${vApp} vs ${expected}`);
+  add("version.ts BUILD_NUMBER", String(vBuild) === bNum, `${vBuild} vs ${bNum}`);
+
+  const aboutSrc = fs.readFileSync(
+    path.join(ROOT, "src-renderer", "src", "views", "About.tsx"),
+    "utf8"
+  );
+  const aboutV = (aboutSrc.match(/APP_VERSION\s*=\s*"([^"]+)"/) || [])[1];
+  add("About.tsx APP_VERSION", aboutV === expected, `${aboutV} vs ${expected}`);
+
+  const mockSrc = fs.readFileSync(
+    path.join(ROOT, "src-renderer", "src", "api", "mock.ts"),
+    "utf8"
+  );
+  const mockV = (mockSrc.match(/currentVersion:\s*"([^"]+)"/) || [])[1];
+  add("mock.ts currentVersion", mockV === expected, `${mockV} vs ${expected}`);
+
+  const composeSrc = fs.readFileSync(path.join(ROOT, "docker", "docker-compose.yml"), "utf8");
+  const tags = [...composeSrc.matchAll(/ms-rewards-auto:([^\s"']+)/g)].map((m) => m[1]);
+  add(
+    "docker-compose.yml 镜像 tag（3 处）",
+    tags.length === 3 && tags.every((t) => t === expected),
+    `实际 ${JSON.stringify(tags)}`
+  );
+
+  const readmeSrc = fs.readFileSync(path.join(ROOT, "README.md"), "utf8");
+  const readmeOk = readmeSrc.includes(`当前版本：V${expected}`);
+  add(
+    "README.md 顶部版本横幅",
+    readmeOk,
+    readmeOk ? `当前版本：V${expected}` : `未找到「当前版本：V${expected}」`
+  );
+
+  const changelogSrc = fs.readFileSync(path.join(ROOT, "CHANGELOG.md"), "utf8");
+  const clOk = new RegExp(`^## ${expected.replace(/\./g, "\\.")}\\s*$`, "m").test(changelogSrc);
+  add("CHANGELOG.md 新版本章节", clOk, clOk ? `## ${expected}` : `未找到「## ${expected}」`);
+
+  const bad = items.filter((i) => !i.ok);
+  for (const i of items) console.log(`${i.ok ? "  ok  " : " FAIL "} ${i.name}${i.detail ? `  (${i.detail})` : ""}`);
+  console.log(
+    `\n版本一致性：${expected}${bNum !== "0" ? `.${bNum}` : ""} —— ${items.length - bad.length}/${items.length} 通过`
+  );
+  process.exit(bad.length ? 1 : 0);
+}
+
+/* ---------------- bump 主流程 ---------------- */
+const pkgAbs = path.join(ROOT, "package.json");
+const pkgRaw = fs.readFileSync(pkgAbs, "utf8");
+const oldVersion = (pkgRaw.match(/"version":\s*"([^"]+)"/) || [])[1];
+const oldBuild = String((pkgRaw.match(/"buildNumber":\s*"([^"]+)"/) || [])[1] || "0");
+const finalBuild = nextBuild === null ? oldBuild : nextBuild;
+
+if (!oldVersion) {
+  console.error("package.json 中未找到顶层 version");
+  process.exit(2);
+}
+console.log(
+  `bump: ${oldVersion}${oldBuild !== "0" ? `.${oldBuild}` : ""} → ${targetVersion}${
+    finalBuild !== "0" ? `.${finalBuild}` : ""
+  }${dry ? "   [--dry 预演]" : ""}\n`
+);
+
+/* 1. package.json —— 顶层 version + buildNumber
+   ⚠️ 绝不能写进 build 段（会被 electron-builder 黑名单剔除，标题退回三段） */
+rep("package.json", "version / buildNumber", oldVersion, targetVersion, (s) => {
+  let out = s.replace(/^(\s*"version":\s*)"[^"]+"/m, `$1"${targetVersion}"`);
+  out = out.replace(/^(\s*"buildNumber":\s*)"[^"]+"/m, `$1"${finalBuild}"`);
+  return out === s ? null : out;
+});
+
+/* 2. package-lock.json —— 两处 version */
+rep("package-lock.json", "version ×2", oldVersion, targetVersion, (s) => {
+  const out = s.replace(/^(\s*"version":\s*)"[^"]+"/gm, `$1"${targetVersion}"`);
+  return out === s ? null : out;
+});
+
+/* 3. 渲染层 version.ts —— APP_VERSION + BUILD_NUMBER */
+rep("src-renderer/src/version.ts", "APP_VERSION / BUILD_NUMBER", oldVersion, targetVersion, (s) => {
+  let out = s.replace(/(APP_VERSION\s*=\s*)"[^"]+"/, `$1"${targetVersion}"`);
+  out = out.replace(/(BUILD_NUMBER\s*=\s*)\d+/, `$1${finalBuild}`);
+  return out === s ? null : out;
+});
+
+/* 4. About.tsx —— APP_VERSION */
+rep("src-renderer/src/views/About.tsx", "APP_VERSION", oldVersion, targetVersion, (s) => {
+  const out = s.replace(/(APP_VERSION\s*=\s*)"[^"]+"/, `$1"${targetVersion}"`);
+  return out === s ? null : out;
+});
+
+/* 5. mock.ts —— currentVersion */
+rep("src-renderer/src/api/mock.ts", "currentVersion", oldVersion, targetVersion, (s) => {
+  const out = s.replace(/(currentVersion:\s*)"[^"]+"/, `$1"${targetVersion}"`);
+  return out === s ? null : out;
+});
+
+/* 6. docker-compose.yml —— 镜像 tag（注释 2 处 + image 1 处） */
+rep("docker/docker-compose.yml", "镜像 tag ×3", oldVersion, targetVersion, (s) => {
+  const out = swapAll(s, `ms-rewards-auto:${oldVersion}`, `ms-rewards-auto:${targetVersion}`);
+  return out === null ? null : out;
+});
+
+/* 7. README.md —— 顶部版本横幅 */
+rep("README.md", "版本横幅", oldVersion, targetVersion, (s) => {
+  const out = swapAll(s, `当前版本：V${oldVersion}`, `当前版本：V${targetVersion}`);
+  return out === null ? null : out;
+});
+
+/* 8. CHANGELOG.md —— 缺新版本章节则补骨架（旧章节里的镜像 tag 属历史，不动） */
+{
+  const abs = path.join(ROOT, "CHANGELOG.md");
+  const src = fs.readFileSync(abs, "utf8");
+  const hasSection = new RegExp(`^## ${targetVersion.replace(/\./g, "\\.")}\\s*$`, "m").test(src);
+  if (hasSection) {
+    log.push({ file: "CHANGELOG.md", label: `## ${targetVersion}`, status: "SAME", note: "章节已存在" });
+  } else {
+    const today = new Date().toISOString().slice(0, 10);
+    const stub =
+      `## ${targetVersion}\n\n` +
+      `发布日期：${today} · Docker 版镜像 \`ghcr.io/zefeng1236/ms-rewards-auto:${targetVersion}\`\n\n` +
+      `<!-- TODO: 补写本版变更说明（至少一段概述 + 变更列表），否则发版说明不完整 -->\n\n`;
+    // 插到第一个 "## " 章节之前（保持时间倒序）
+    const idx = src.search(/^## /m);
+    const out = idx >= 0 ? src.slice(0, idx) + stub + src.slice(idx) : `${src}\n${stub}`;
+    if (!dry) fs.writeFileSync(abs, out, "utf8");
+    log.push({
+      file: "CHANGELOG.md",
+      label: `## ${targetVersion}`,
+      status: dry ? "DRY" : "STUB",
+      note: "已插入待填骨架 —— 记得补写变更说明",
+    });
+  }
+}
+
+/* ---------------- 报告 ---------------- */
+const W = Math.max(...log.map((l) => l.file.length));
+for (const l of log) {
+  const mark = l.status === "OK" || l.status === "SAME" || l.status === "STUB" ? " ok " : l.status === "DRY" ? "dry " : "!!  ";
+  console.log(
+    `${mark} ${l.file.padEnd(W)}  ${String(l.status).padEnd(5)} ${l.label}${l.note ? `  — ${l.note}` : ""}`
+  );
+}
+const missed = log.filter((l) => l.status === "MISS");
+if (missed.length) {
+  console.log(`\n⚠️ 有 ${missed.length} 处未命中，请人工确认（版本号文本可能已被改动过）`);
+}
+console.log(
+  `\n下一步：node scripts/bump-version.js --check  然后再跑门禁三件套（typecheck + test + verify-pack）`
+);

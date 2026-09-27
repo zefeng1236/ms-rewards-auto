@@ -36,6 +36,7 @@ const { displayVersion } = require("./version");
 const logger = require("./logger");
 const notify = require("./notify");
 const uapi = require("./uapi");
+const wallpapers = require("./wallpapers");
 const core = require("./app-core");
 
 /** 壁纸本地缓存目录（与 electron-main 保持一致：storage/cache） */
@@ -87,13 +88,13 @@ async function rawBackgroundSrc(cfg) {
   switch (cfg.bgType) {
     case "bing":
       return uapi.resolveBingDailyUrl();
-    case "uapi":
-      return uapi.randomImageUrl(cfg.bgCategory);
+    case "upx8":
+      return wallpapers.upx8Url(cfg.bgCategory);
     case "qy98":
-      return uapi.qy98WallpaperUrl();
+      return wallpapers.qy98Url(cfg.bgCategory);
     case "unsplash": {
       const key = (process.env.UNSPLASH_ACCESS_KEY || cfg.bgUnsplashKey || "").trim();
-      return uapi.unsplashRandom(key);
+      return wallpapers.unsplashRandom(key, cfg.bgCategory);
     }
     default:
       return appearance.backgroundSrc();

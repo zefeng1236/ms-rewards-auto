@@ -3,10 +3,12 @@ const { httpRequest } = require("./http");
 const appearance = require("./appearance");
 
 /**
- * UAPI（uapis.cn）接口客户端
+ * UAPI（uapis.cn）接口客户端 —— 仅用于必应每日壁纸。
  * 文档：https://uapis.cn/docs/api-reference/get-image-bing-daily
  * 鉴权：Authorization: Bearer <KEY>，密钥以 uapi- 开头，
  *       从环境变量 UAPI_KEY 读取；未配置时不带鉴权头（接口允许匿名限流访问）。
+ * 注意：UAPI 的随机壁纸来源（acg/furry/landscape…）已按用户要求全部移除，
+ *       随机壁纸统一走 ./wallpapers.js（upx8 / 98qy / Unsplash，带二级分类）。
  */
 
 const BASE = "https://uapis.cn/api/v1";
@@ -116,56 +118,7 @@ async function resolveBingDailyUrl() {
   return url;
 }
 
-/**
- * UAPI 随机图片地址（GET /random/image）。
- * 接口直接 302 跳转到图床图片，可直接作为 <img>/CSS background 使用，无需鉴权头。
- * 已排除表情包(bq)与竖屏(mb/mobile_wallpaper)：acg 取 pc 横屏，furry 取 4k 横屏。
- * @param {string} category acg|furry|landscape|pc_wallpaper|anime|ai_drawing
- * @returns {string} 可直接加载的接口地址
- */
-function randomImageUrl(category) {
-  const ALLOWED = ["acg", "furry", "landscape", "pc_wallpaper", "anime", "ai_drawing"];
-  const cat = ALLOWED.includes(category) ? category : "acg";
-  const params = new URLSearchParams({ category: cat });
-  // 仅 UapiPro 服务器分类支持 type；acg→pc（横屏），furry→4k（横屏壁纸）
-  if (cat === "acg") params.set("type", "pc");
-  else if (cat === "furry") params.set("type", "4k");
-  return `${BASE}/random/image?${params.toString()}`;
-}
+// 其余壁纸源（upx8 / 98qy / Unsplash，均带二级分类）已迁至 ./wallpapers.js。
+// 0.13.10 起 UAPI 只保留必应每日壁纸：用户要求移除 UAPI 的所有随机壁纸来源。
 
-/** 98qy 随机壁纸（302 跳转到横屏图片，实测 1080p/4K） */
-function qy98WallpaperUrl() {
-  return "https://www.98qy.com/sjbz/api2.php?lx=fengjing";
-}
-
-/**
- * Unsplash 随机摄影（官方 API，必须 Access Key；服务端请求，key 不进渲染层）。
- * 文档：https://unsplash.com/documentation#get-a-random-photo
- * @param {string} accessKey Unsplash Access Key（Client-ID）
- * @returns {Promise<string>} 可直接使用的横屏图片地址
- */
-async function unsplashRandom(accessKey) {
-  const key = String(accessKey || "").trim();
-  if (!key) throw new Error("未配置 Unsplash Access Key");
-  const url =
-    "https://api.unsplash.com/photos/random?orientation=landscape&content_filter=high&w=1920";
-  const r = await httpRequest({
-    url,
-    headers: { Authorization: `Client-ID ${key}` },
-    timeout: 12000,
-  });
-  if (r.status === 401) throw new Error("Unsplash Access Key 无效（401）");
-  if (r.status === 403) throw new Error("Unsplash 拒绝请求（403，可能超出每小时速率限制）");
-  if (r.error) throw new Error(r.error);
-  if (r.status !== 200) {
-    let msg = `HTTP ${r.status}`;
-    try { const j = JSON.parse(r.body); if (j && j.errors) msg = String(j.errors); } catch {}
-    throw new Error(msg);
-  }
-  const j = JSON.parse(r.body);
-  const src = (j.urls && (j.urls.regular || j.urls.full)) || "";
-  if (!src) throw new Error("Unsplash 响应缺少图片地址");
-  return src;
-}
-
-module.exports = { bingDaily, resolveBingDailyUrl, randomImageUrl, qy98WallpaperUrl, unsplashRandom, BASE };
+module.exports = { bingDaily, resolveBingDailyUrl, BASE };

@@ -3,6 +3,52 @@
 本文件记录各版本的重要变更。版本格式为主版本.次版本.修订号，带 `-beta` 后缀的为测试版本。带「.N」四位小版本的为内部交付号（安装包文件名与 exe FileVersion 使用），主版本段仍为 0.9.4。
 
 
+## 0.13.10
+
+发布日期：2026-09-27 · Docker 版镜像 `ghcr.io/zefeng1236/ms-rewards-auto:0.13.10`
+
+壁纸系统重构为**两级分类**：新增 Upx8 图源（默认 4K）、引入 98qy 与 Unsplash，
+并下线已失修的 UAPI 随机图源（仅保留其必应每日壁纸）。
+
+### 新增
+
+- **Upx8 壁纸源（默认 4K）**：接入 `wp.upx8.com`，请求固定带
+  `resolution=3840x2160`，可选 11 个类别（随机 / 风景 / 动漫 / 游戏 / 动物 /
+  城市 / 抽象 / 宇宙 / 汽车 / 美女 / 运动）。
+- **98qy 壁纸源**：接入 `98qy.com/sjbz`，4 个类别（随机 / 风景 / 动漫 / 美图）。
+- **Unsplash 摄影源**：10 个类别（随机 / 自然 / 动物 / 建筑 / 旅行 / 城市 /
+  海洋 / 太空 / 美食 / 花卉），沿用 `regular` 尺寸（约 1080 宽；
+  98qy 返回原图，无分辨率参数）。
+- **两级分类 UI**：个性化页「背景来源」先选**主分类**（关闭 / Bing 每日 /
+  Upx8 壁纸 / 98qy 壁纸 / Unsplash / 自定义），选中后在其下方展开该类别的
+  **二级壁纸类别** chips；当前生效项以高亮标出。
+
+### 变更
+
+- **下线 UAPI 随机图源**：`src/uapi.js` 从「随机图 + 必应每日」缩为**仅必应每日**，
+  `randomImageUrl` / `qy98WallpaperUrl` / `unsplashRandom` 三个函数移除。
+  旧配置里 `bgType: "uapi"` 会自动回退到 `bing`（`appearance.js` 白名单校验兜底，
+  无需迁移脚本）。
+- **分类目录收敛为唯一真源**：新建 `src/wallpapers.js`，三源的类别表、URL 拼装、
+  跨源非法值回落全部集中在此；前端 `Personalize.tsx`、后端 `electron-main.js` /
+  `web-api.js`、旧版兜底 UI `gui/renderer.js` 均以它为准。
+- **类型收窄**：`BgType` 改为 `none | bing | upx8 | qy98 | unsplash | url | file`
+  （移除 `uapi`；`flow` 仍只属于登录页的 `AuthBgType`）；新增 `Upx8Category` /
+  `Qy98Category` / `UnsplashCategory`。
+- **免责声明文案**：`UAPI` → `Upx8`。
+
+### 工程
+
+- **版本号 bump 工具链**：新增 `scripts/bump-version.js` + `npm run bump`，
+  一条命令同步七处版本号（package.json / package-lock.json ×2 / version.ts /
+  About.tsx / mock.ts / docker-compose.yml ×3 / README.md），并提供
+  `--check`（只校验）、`--dry`（预演）、`--build N`（小版本号）三种模式。
+  此前发版靠手工替换，漏改一处即门禁变红。
+- **selfcheck 新增【21】17 项守卫**（总 401 → 418）：覆盖 UAPI 随机图下线、
+  `BG_TYPES` 白名单、前后端分类表逐 key 对齐、upx8 4K 静态与运行值、
+  跨源非法分类回落、两级 UI 结构、`BgType` 同步等；已跑反例验证
+  （13/13 新绿旧红，基线取自 `git show HEAD` 的 0.13.9 源码，无空转守卫）。
+
 ## 0.13.9
 
 发布日期：2026-09-26 · Docker 版镜像 `ghcr.io/zefeng1236/ms-rewards-auto:0.13.9`

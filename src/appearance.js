@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const { pathToFileURL } = require("url");
 const sp = require("./storage-path");
+const wallpapers = require("./wallpapers");
 
 /**
  * 应用外观设置（appearance.json）
@@ -32,8 +33,12 @@ const DEFAULTS = {
   accent: "#3b82f6",
   // 背景氛围光开关
   glow: true,
-  // 自定义背景（主界面软件壁纸）：none | bing（必应每日一图）| url（图片直链/API）
-  //           | file（本地图片）| uapi（UAPI 随机图，配 bgCategory）| qy98 | unsplash
+  // 自定义背景（主界面软件壁纸），主分类（一级）：
+  //   none | bing（必应每日一图）| upx8（壁纸 API v2.0，配 bgCategory）
+  //   | qy98（98qy 壁纸，配 bgCategory）| unsplash（Unsplash 摄影，配 bgCategory）
+  //   | url（图片直链/API）| file（本地图片）
+  // 两级结构：主分类被选中时展示其壁纸类别（二级分类 bgCategory）。
+  // UAPI 的随机壁纸来源已按用户要求移除，UAPI 只保留必应每日壁纸。
   // 默认必应每日一图：主界面壁纸氛围，随日期自动更新。
   // 注意：流场粒子动画不在这里——它只用于登录页/向导背景，见下方 authBg。
   bgType: "bing",
@@ -42,8 +47,9 @@ const DEFAULTS = {
   authBg: "flow",
   bgUrl: "",
   bgFile: "",
-  // UAPI 随机图分类（仅 bgType=uapi 时生效）：acg/furry/landscape/pc_wallpaper/anime/ai_drawing
-  bgCategory: "acg",
+  // 壁纸二级分类（仅 upx8/qy98/unsplash 三个主分类生效），按主分类分源校验，
+  // 取值见 wallpapers.SOURCES；"random" = 不限分类随机。
+  bgCategory: "random",
   // Unsplash 官方 API Access Key（也可用环境变量 UNSPLASH_ACCESS_KEY）
   bgUnsplashKey: "",
   // 背景自动轮换间隔（秒）。0=不启用；随机图源最低 60s，自定义链接不受此限
@@ -67,14 +73,20 @@ const DEFAULTS = {
 
 // 主界面壁纸白名单。0.13.1 曾把 "flow" 放进来当全局默认，用户纠正：
 // 流场只属于登录页/向导背景（authBg），主界面不渲染 → 已移除。
-// 旧配置里存了 flow 的会被规范化拒绝、回退到默认值，无需迁移脚本。
-const BG_TYPES = ["none", "bing", "url", "file", "uapi", "qy98", "unsplash"];
+// 0.13.10 移除 UAPI 随机图（uapi），新增 upx8（壁纸 API v2.0）。
+// 旧配置里存了 flow/uapi 的会被规范化拒绝、回退到默认值，无需迁移脚本。
+const BG_TYPES = ["none", "bing", "upx8", "qy98", "unsplash", "url", "file"];
 
 /** 登录页/向导背景白名单 */
 const AUTH_BG_TYPES = ["flow", "bing"];
 
-/** UAPI 随机图可用分类（已排除表情包 bq 与竖屏 mb/mobile_wallpaper） */
-const BG_CATEGORIES = ["acg", "furry", "landscape", "pc_wallpaper", "anime", "ai_drawing"];
+/** 壁纸二级分类表（主分类 → key 列表），唯一真源在 wallpapers.SOURCES */
+const BG_CATEGORIES = Object.fromEntries(
+  Object.entries(wallpapers.SOURCES).map(([type, s]) => [type, s.categories.map((c) => c.key)])
+);
+
+/** 全部二级分类 key 的并集（无分类主分类切换时的合法性兜底） */
+const ALL_CATEGORY_KEYS = [...new Set(Object.values(BG_CATEGORIES).flat())];
 
 function clampOpacity(v) {
   const n = Number(v);
@@ -101,6 +113,19 @@ function clampRotate(v) {
   const n = Number(v);
   if (!Number.isFinite(n) || n < 0) return DEFAULTS.bgRotate;
   return Math.min(86400, Math.round(n));
+}
+
+/**
+ * 二级分类合法性校验（按主分类分源）：
+ *   - upx8/qy98/unsplash：取值必须在该源分类表内，非法回落该源默认（列表首个）
+ *   - 其余主分类（none/bing/url/file）无二级分类：保留已知 key（切源不丢选择），
+ *     未知值回落 DEFAULTS.bgCategory
+ */
+function normalizeBgCategory(bgType, v) {
+  const s = String(v || "");
+  const perType = BG_CATEGORIES[bgType];
+  if (perType) return perType.includes(s) ? s : wallpapers.defaultCategory(bgType);
+  return ALL_CATEGORY_KEYS.includes(s) ? s : DEFAULTS.bgCategory;
 }
 
 /** 本地图片路径转 file:// URL，非路径（已是 URL）原样返回 */
@@ -148,7 +173,7 @@ function get() {
     authBg,
     bgUrl: String(raw.bgUrl || "").trim(),
     bgFile,
-    bgCategory: BG_CATEGORIES.includes(raw.bgCategory) ? raw.bgCategory : DEFAULTS.bgCategory,
+    bgCategory: normalizeBgCategory(bgType, raw.bgCategory === undefined ? DEFAULTS.bgCategory : raw.bgCategory),
     bgUnsplashKey: String(raw.bgUnsplashKey || "").trim(),
     bgRotate: clampRotate(raw.bgRotate === undefined ? DEFAULTS.bgRotate : raw.bgRotate),
     bgBlur: clampBlur(raw.bgBlur === undefined ? DEFAULTS.bgBlur : raw.bgBlur),
@@ -181,7 +206,10 @@ function set(patch) {
       BG_TYPES.includes(next.bgType) && next.bgType === "file" && !String(next.bgFile || "").trim()
         ? defaultWallpaperPath()
         : String(next.bgFile || "").trim(),
-    bgCategory: BG_CATEGORIES.includes(next.bgCategory) ? next.bgCategory : cur.bgCategory,
+    bgCategory: normalizeBgCategory(
+      BG_TYPES.includes(next.bgType) ? next.bgType : cur.bgType,
+      next.bgCategory === undefined ? cur.bgCategory : next.bgCategory
+    ),
     bgUnsplashKey: String(next.bgUnsplashKey || "").trim(),
     bgRotate: clampRotate(next.bgRotate),
     bgBlur: clampBlur(next.bgBlur),
@@ -213,4 +241,7 @@ function backgroundSrc() {
   return "";
 }
 
-module.exports = { get, set, needsRestart, backgroundSrc, defaultWallpaperPath, PRESETS, DEFAULTS, BG_TYPES, AUTH_BG_TYPES, BG_CATEGORIES, FILE };
+module.exports = {
+  get, set, needsRestart, backgroundSrc, defaultWallpaperPath,
+  PRESETS, DEFAULTS, BG_TYPES, AUTH_BG_TYPES, BG_CATEGORIES, ALL_CATEGORY_KEYS, FILE,
+};

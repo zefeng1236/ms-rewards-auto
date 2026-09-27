@@ -230,7 +230,16 @@ export type AppearancePreset = "normal" | "opaque";
 
 export type ThemeMode = "dark" | "light" | "system";
 
-export type BgType = "none" | "bing" | "url" | "file" | "uapi" | "qy98" | "unsplash" | "flow";
+/**
+ * 主界面壁纸主分类（一级）：
+ *   - none：关闭
+ *   - bing：必应每日一图
+ *   - upx8 / qy98 / unsplash：第三方壁纸源，被选中时展示壁纸类别（二级分类 bgCategory）
+ *   - url / file：图片直链/API 或本地图片
+ * UAPI 的随机壁纸来源已移除（只保留其必应每日壁纸）；
+ * flow 不属于主界面壁纸（那是登录页/向导的 authBg），故不在本联合内。
+ */
+export type BgType = "none" | "bing" | "upx8" | "qy98" | "unsplash" | "url" | "file";
 
 /**
  * 登录页 / 初始化向导的背景（独立于主界面的 bgType）：
@@ -240,13 +249,38 @@ export type BgType = "none" | "bing" | "url" | "file" | "uapi" | "qy98" | "unspl
  */
 export type AuthBgType = "flow" | "bing";
 
-export type BgCategory =
-  | "acg"
-  | "furry"
-  | "landscape"
-  | "pc_wallpaper"
+/** upx8 壁纸 API 的二级分类（category 参数，random = 不限分类随机） */
+export type Upx8Category =
+  | "random"
+  | "nature"
   | "anime"
-  | "ai_drawing";
+  | "game"
+  | "animal"
+  | "city"
+  | "abstract"
+  | "space"
+  | "car"
+  | "girl"
+  | "sport";
+
+/** 98qy 壁纸的二级分类（lx 参数） */
+export type Qy98Category = "suiji" | "fengjing" | "dongman" | "meizi";
+
+/** Unsplash 的二级分类（映射为官方 API 的 query 关键词，random = 不限主题） */
+export type UnsplashCategory =
+  | "random"
+  | "nature"
+  | "animals"
+  | "architecture"
+  | "travel"
+  | "city"
+  | "ocean"
+  | "space"
+  | "food"
+  | "flowers";
+
+/** 壁纸二级分类（仅 upx8/qy98/unsplash 主分类生效），与后端 wallpapers.SOURCES 对齐 */
+export type BgCategory = Upx8Category | Qy98Category | UnsplashCategory;
 
 export interface Appearance {
   preset: AppearancePreset;

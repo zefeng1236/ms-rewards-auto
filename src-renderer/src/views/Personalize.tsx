@@ -15,24 +15,66 @@ const PRESETS: { key: AppearancePreset; label: string; desc: string }[] = [
 
 const SWATCHES = ["#3b82f6", "#34d399", "#f0b429", "#f85149", "#a855f7", "#ec4899"];
 
-/** 随机图源（已排除表情包与竖屏） */
-const RANDOM_SOURCES: { type: BgType; cat?: BgCategory; label: string }[] = [
-  { type: "uapi", cat: "acg", label: "ACG 动漫 · 横屏" },
-  { type: "uapi", cat: "furry", label: "福瑞 · 横屏" },
-  { type: "uapi", cat: "landscape", label: "风景" },
-  { type: "uapi", cat: "pc_wallpaper", label: "电脑壁纸" },
-  { type: "uapi", cat: "anime", label: "混合动漫" },
-  { type: "uapi", cat: "ai_drawing", label: "AI 绘画" },
-  { type: "qy98", label: "98qy 随机壁纸" },
-  { type: "unsplash", label: "Unsplash 摄影" },
+/**
+ * 壁纸主分类（一级）→ 壁纸类别（二级分类，选中主分类时展开）。
+ * 分类 key 与后端 src/wallpapers.js 的 SOURCES 严格一致（selfcheck 有跨文件守卫）。
+ * UAPI 随机图源已移除；upx8 默认请求 4K（3840x2160）。
+ */
+const BG_SOURCES: { type: BgType; label: string; cats: { key: BgCategory; label: string }[] }[] = [
+  {
+    type: "upx8",
+    label: "Upx8 壁纸",
+    cats: [
+      { key: "random", label: "随机" },
+      { key: "nature", label: "风景" },
+      { key: "anime", label: "动漫" },
+      { key: "game", label: "游戏" },
+      { key: "animal", label: "动物" },
+      { key: "city", label: "城市" },
+      { key: "abstract", label: "抽象" },
+      { key: "space", label: "宇宙" },
+      { key: "car", label: "汽车" },
+      { key: "girl", label: "美女" },
+      { key: "sport", label: "运动" },
+    ],
+  },
+  {
+    type: "qy98",
+    label: "98qy 壁纸",
+    cats: [
+      { key: "suiji", label: "随机" },
+      { key: "fengjing", label: "风景" },
+      { key: "dongman", label: "动漫" },
+      { key: "meizi", label: "美图" },
+    ],
+  },
+  {
+    type: "unsplash",
+    label: "Unsplash 摄影",
+    cats: [
+      { key: "random", label: "随机" },
+      { key: "nature", label: "自然" },
+      { key: "animals", label: "动物" },
+      { key: "architecture", label: "建筑" },
+      { key: "travel", label: "旅行" },
+      { key: "city", label: "城市" },
+      { key: "ocean", label: "海洋" },
+      { key: "space", label: "太空" },
+      { key: "food", label: "美食" },
+      { key: "flowers", label: "花卉" },
+    ],
+  },
 ];
+
+/** 带二级分类的随机图源主分类 key */
+const BG_SOURCE_TYPES: BgType[] = BG_SOURCES.map((s) => s.type);
 
 export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: () => void }) {
   const { appearance, patchAppearance } = useAppState();
   const [disclaimerOpen, setDisclaimerOpen] = useState(false);
   const [pending, setPending] = useState<{ type: BgType; cat?: BgCategory } | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
-  // 「随机美图」只展开二级区、不立刻切源（选源要先过免责声明），
+  // 随机图源主分类只展开二级分类区、不立刻切源（切源要先过免责声明），
   // 所以它无法从外观设置反推，需要一个临时的分组覆盖值。
   const [groupOverride, setGroupOverride] = useState<string | null>(null);
   // 滑动条拖动草稿：受控值只在 onChangeEnd 提交（避免拖动中高频写盘），
@@ -43,22 +85,23 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
 
   if (!appearance) return null;
 
-  const isRandom = ["uapi", "qy98", "unsplash"].includes(appearance.bgType);
-  // 主界面壁纸分组（流场不属于这里——它是登录页/向导的 authBg）
+  const isRandom = BG_SOURCE_TYPES.includes(appearance.bgType);
+  // 主界面壁纸分组（流场不属于这里——它是登录页/向导的 authBg）。
+  // 带二级分类的三个 API 源各自独立成组：被选中时展示壁纸类别（二级分类）。
   const derivedGroup =
     appearance.bgType === "none"
       ? "none"
       : appearance.bgType === "bing"
       ? "bing"
       : isRandom
-      ? "random"
+      ? appearance.bgType
       : "custom";
   const bgGroup = groupOverride ?? derivedGroup;
 
   const onBgGroup = async (v: string) => {
-    // 随机美图只展开二级区，具体图源点 chip 后经免责声明才真正切换
-    if (v === "random") {
-      setGroupOverride("random");
+    // 随机图源主分类只展开二级分类区，具体类别点 chip 后经免责声明才真正切换
+    if (BG_SOURCE_TYPES.includes(v as BgType)) {
+      setGroupOverride(v);
       return;
     }
     setGroupOverride(null);
@@ -71,8 +114,8 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
     }
   };
 
-  const onPickSource = (type: BgType, cat?: BgCategory) => {
-    const already = appearance.bgType === type && (type !== "uapi" || appearance.bgCategory === cat);
+  const onPickSource = (type: BgType, cat: BgCategory) => {
+    const already = appearance.bgType === type && appearance.bgCategory === cat;
     if (already) return;
     setPending({ type, cat });
     setDisclaimerOpen(true);
@@ -84,7 +127,7 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
       bgType: pending.type,
       ...(pending.cat ? { bgCategory: pending.cat } : {}),
     });
-    setGroupOverride(null); // 选完源交给 bgType 反推，撤掉临时覆盖
+    setGroupOverride(null); // 选完类别交给 bgType 反推，撤掉临时覆盖
     setDisclaimerOpen(false);
     setPending(null);
     onShuffle?.();
@@ -123,7 +166,7 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
       authBg: "flow",
       bgUrl: "",
       bgFile: "",
-      bgCategory: "acg",
+      bgCategory: "random",
       bgUnsplashKey: "",
       bgRotate: 0,
       bgBlur: 4,
@@ -234,7 +277,7 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
           <div>
             <div className="block-title">背景图片</div>
             <div className="block-sub">
-              主界面壁纸：必应每日一图、图片直链/API 或本地图片；开启后表面呈液态玻璃效果
+              主界面壁纸：必应每日一图、Upx8/98qy/Unsplash 壁纸类别（Upx8 默认 4K）、图片直链/API 或本地图片；开启后表面呈液态玻璃效果
             </div>
           </div>
         </div>
@@ -242,8 +285,10 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
         <GlassSegmentedControl
           value={bgGroup} items={[
             { label: "关闭", value: "none" },
-            { label: "Bing 每日一图", value: "bing" },
-            { label: "随机美图", value: "random" },
+            { label: "Bing 每日", value: "bing" },
+            { label: "Upx8 壁纸", value: "upx8" },
+            { label: "98qy 壁纸", value: "qy98" },
+            { label: "Unsplash", value: "unsplash" },
             { label: "自定义", value: "custom" },
           ]} onValueChange={onBgGroup}
           aria-label="背景图来源"
@@ -269,28 +314,26 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
           </p>
         </div>
 
-        {/* 随机美图二级：第三方接口，切换前弹免责声明 */}
-        {bgGroup === "random" && (
-          <div style={{ marginTop: 12 }}>
+        {/* 主分类被选中时展示壁纸类别（二级分类）：第三方接口，切换前弹免责声明 */}
+        {BG_SOURCES.filter((s) => s.type === bgGroup).map((s) => (
+          <div key={s.type} style={{ marginTop: 12 }}>
             <div className="bg-chips">
-              {RANDOM_SOURCES.map((s) => {
-                const active =
-                  appearance.bgType === s.type &&
-                  (s.type !== "uapi" || appearance.bgCategory === s.cat);
+              {s.cats.map((c) => {
+                const active = appearance.bgType === s.type && appearance.bgCategory === c.key;
                 return (
                   <button
-                    key={`${s.type}-${s.cat || ""}`}
+                    key={c.key}
                     type="button"
                     className={`bg-chip ${active ? "active" : ""}`}
-                    onClick={() => onPickSource(s.type, s.cat)}
+                    onClick={() => onPickSource(s.type, c.key)}
                   >
-                    {s.label}
+                    {c.label}
                   </button>
                 );
               })}
             </div>
 
-            {appearance.bgType === "unsplash" && (
+            {s.type === "unsplash" && (
               <div className="field-block" style={{ marginTop: 12 }}>
                 <span className="field-label">
                   Unsplash Access Key（官方 API 必需；也可用环境变量 UNSPLASH_ACCESS_KEY）
@@ -313,7 +356,7 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
               </div>
             )}
           </div>
-        )}
+        ))}
 
         {/* 自定义二级 */}
         {bgGroup === "custom" && (
@@ -394,7 +437,7 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
 
             {bgGroup === "random" && (
               <p className="bg-note">
-                随机图片均来自第三方公共接口（UAPI / 98qy / Unsplash），未经人工审核；不满意可「换一张」或切回其他来源。
+                随机图片均来自第三方公共接口（Upx8 / 98qy / Unsplash），未经人工审核；不满意可「换一张」或切回其他来源。
                 <button
                   type="button"
                   className="bg-chip"

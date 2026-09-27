@@ -550,14 +550,14 @@ let bgLastShuffle = 0;  // 上次手动换图时间戳，用于限流（≤30 QP
 let bgRotateTimer = null; // 自动轮换定时器
 
 /** 第三方随机图源（切换这些时弹免责声明） */
-const RANDOM_BG_TYPES = ["uapi", "qy98", "unsplash"];
+const RANDOM_BG_TYPES = ["upx8", "qy98", "unsplash"];
 
 /** 第三方随机图片免责声明（切换随机 API 源时弹窗，确定按钮 3 秒倒计时） */
 const BG_DISCLAIMER_HTML = `
   <div class="disclaimer">
     <p>您即将启用 <b>第三方随机图片</b> 作为应用背景，继续前请阅读：</p>
     <ul>
-      <li>图片由第三方接口（<b>UAPI</b>、<b>98qy</b>、<b>Unsplash</b>）实时随机返回，<span class="hl">均来源于公共互联网</span>，本应用不托管、不存储、不加工这些图片。</li>
+      <li>图片由第三方接口（<b>Upx8</b>、<b>98qy</b>、<b>Unsplash</b>）实时随机返回，<span class="hl">均来源于公共互联网</span>，本应用不托管、不存储、不加工这些图片。</li>
       <li>作者 <span class="hl">未对图片内容做任何审核、筛选或背书</span>；图片版权归原作者及原网站所有。</li>
       <li>图片为随机返回，<span class="hl">可能出现您不喜欢或引起不适的内容</span>；如遇不适，请点「换一张」或关闭该功能。</li>
       <li>因使用第三方图片或服务产生的任何争议或损失，由相应第三方服务方及使用者自行承担。</li>
@@ -658,10 +658,10 @@ async function applyBackground(cfg) {
   try {
     const r = await bridge.getBgSrc();
     if (!r || !r.src) { layer.hidden = true; return; }
-    // uapi/qy98 返回的是 302 接口地址，加时间戳强制每次取新随机图；
+    // upx8/qy98 返回的是 302 接口地址，加时间戳强制每次取新随机图；
     // unsplash 主进程已返回具体图片地址，无需再加
     let src = r.src;
-    if (cfg.bgType === "uapi" || cfg.bgType === "qy98") {
+    if (cfg.bgType === "upx8" || cfg.bgType === "qy98") {
       src += (src.includes("?") ? "&" : "?") + "_=" + (bgNonce || Date.now());
     }
     if (img.dataset.src !== src) {
@@ -684,22 +684,39 @@ async function renderPersonalize() {
   }
   const cfg = appearanceCfg;
   const bgType = cfg.bgType || "none";
-  const isRandomBg = ["uapi", "qy98", "unsplash"].includes(bgType);
+  const isRandomBg = ["upx8", "qy98", "unsplash"].includes(bgType);
   const bgGroup = bgType === "none" ? "none" : bgType === "bing" ? "bing" : isRandomBg ? "random" : "custom";
-  // 随机图源选项（已排除表情包与竖屏；acg→横屏 pc，福瑞→横屏 4k）
+  // 随机图源选项：三个主分类各自的壁纸类别（key 与 src/wallpapers.js 的 SOURCES 对齐）
   const RANDOM_SOURCES = [
-    { type: "uapi", cat: "acg", label: "ACG 动漫 · 横屏" },
-    { type: "uapi", cat: "furry", label: "福瑞 · 横屏" },
-    { type: "uapi", cat: "landscape", label: "风景" },
-    { type: "uapi", cat: "pc_wallpaper", label: "电脑壁纸" },
-    { type: "uapi", cat: "anime", label: "混合动漫" },
-    { type: "uapi", cat: "ai_drawing", label: "AI 绘画" },
-    { type: "qy98", label: "98qy 随机壁纸" },
-    { type: "unsplash", label: "Unsplash 摄影" },
+    { type: "upx8", cat: "random", label: "Upx8 · 随机" },
+    { type: "upx8", cat: "nature", label: "Upx8 · 风景" },
+    { type: "upx8", cat: "anime", label: "Upx8 · 动漫" },
+    { type: "upx8", cat: "game", label: "Upx8 · 游戏" },
+    { type: "upx8", cat: "animal", label: "Upx8 · 动物" },
+    { type: "upx8", cat: "city", label: "Upx8 · 城市" },
+    { type: "upx8", cat: "abstract", label: "Upx8 · 抽象" },
+    { type: "upx8", cat: "space", label: "Upx8 · 宇宙" },
+    { type: "upx8", cat: "car", label: "Upx8 · 汽车" },
+    { type: "upx8", cat: "girl", label: "Upx8 · 美女" },
+    { type: "upx8", cat: "sport", label: "Upx8 · 运动" },
+    { type: "qy98", cat: "suiji", label: "98qy · 随机" },
+    { type: "qy98", cat: "fengjing", label: "98qy · 风景" },
+    { type: "qy98", cat: "dongman", label: "98qy · 动漫" },
+    { type: "qy98", cat: "meizi", label: "98qy · 美图" },
+    { type: "unsplash", cat: "random", label: "Unsplash · 随机" },
+    { type: "unsplash", cat: "nature", label: "Unsplash · 自然" },
+    { type: "unsplash", cat: "animals", label: "Unsplash · 动物" },
+    { type: "unsplash", cat: "architecture", label: "Unsplash · 建筑" },
+    { type: "unsplash", cat: "travel", label: "Unsplash · 旅行" },
+    { type: "unsplash", cat: "city", label: "Unsplash · 城市" },
+    { type: "unsplash", cat: "ocean", label: "Unsplash · 海洋" },
+    { type: "unsplash", cat: "space", label: "Unsplash · 太空" },
+    { type: "unsplash", cat: "food", label: "Unsplash · 美食" },
+    { type: "unsplash", cat: "flowers", label: "Unsplash · 花卉" },
   ];
   const chips = RANDOM_SOURCES.map((s) => {
-    const active = bgType === s.type && (s.type !== "uapi" || (cfg.bgCategory || "acg") === s.cat);
-    return `<button type="button" class="bg-chip ${active ? "active" : ""}" data-bgtype="${s.type}" ${s.cat ? `data-cat="${s.cat}"` : ""}>${escapeHtml(s.label)}</button>`;
+    const active = bgType === s.type && (cfg.bgCategory || "random") === s.cat;
+    return `<button type="button" class="bg-chip ${active ? "active" : ""}" data-bgtype="${s.type}" data-cat="${s.cat}">${escapeHtml(s.label)}</button>`;
   }).join("");
 
   // 窗口级材质预设（透明/亚克力/毛玻璃）暂不提供，需窗口透明配合、且
@@ -894,7 +911,7 @@ async function renderPersonalize() {
       const type = ch.dataset.bgtype;
       const cat = ch.dataset.cat;
       const cur = appearanceCfg || {};
-      const already = cur.bgType === type && (type !== "uapi" || (cur.bgCategory || "acg") === cat);
+      const already = cur.bgType === type && (cur.bgCategory || "random") === cat;
       if (!already) {
         const ok = await confirmRandomBg();
         if (!ok) { await renderPersonalize(); return; } // 不启用：还原选中态
@@ -1008,7 +1025,7 @@ async function renderPersonalize() {
     await saveAppearance({
       preset: "normal", mode: "system", opacity: 1, accent: "#3b82f6", glow: true,
       bgType: "none", bgUrl: "", bgFile: "", bgBlur: 18, bgDim: 0.45, glass: false,
-      bgCategory: "acg", bgUnsplashKey: "", bgRotate: 0,
+      bgCategory: "random", bgUnsplashKey: "", bgRotate: 0,
     });
     await renderPersonalize();
   });

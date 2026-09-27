@@ -1,6 +1,6 @@
 {
   "name": "ms-rewards-auto",
-  "version": "0.13.9",
+  "version": "0.13.10",
   "buildNumber": "0",
   "description": "MS 积分（MS Rewards）自动任务独立软件 · 多账户隔离 · 加密保险库 · 密码强度校验 · 每日活动/每周领取 · Electron GUI",
   "main": "src/electron-main.js",
@@ -19,6 +19,7 @@
     "pack": "electron-builder --win nsis",
     "pack:dir": "electron-builder --win nsis --dir",
     "test": "node scripts/selfcheck.js",
+    "bump": "node scripts/bump-version.js",
     "clean:assets": "node scripts/clean-assets.js"
   },
   "engines": {

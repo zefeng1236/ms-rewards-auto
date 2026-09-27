@@ -5,7 +5,7 @@ import { useAppState } from "./useAppState";
 import type { BgType } from "../types";
 
 /** 随机图源：轮换间隔有下限，避免把第三方接口打爆 */
-const RANDOM_SOURCES: BgType[] = ["uapi", "qy98", "unsplash"];
+const RANDOM_SOURCES: BgType[] = ["upx8", "qy98", "unsplash"];
 const MIN_ROTATE_SEC = 60;
 
 /**
@@ -30,8 +30,8 @@ export function useBackground() {
   // ---- 解析当前背景地址 ----
   const lastNonce = useRef<number>(-1);
   useEffect(() => {
-    // 「流场」是纯本地粒子动画，没有图片地址；此处直接清空并返回
-    if (bgType === "none" || bgType === "flow") {
+    // 关闭壁纸时没有图片地址；此处直接清空并返回
+    if (bgType === "none") {
       setSrc("");
       lastNonce.current = nonce;
       return;

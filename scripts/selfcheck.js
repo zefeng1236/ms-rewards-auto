@@ -2291,6 +2291,155 @@ checkTrue(
   "面板不做预装分支 → 容器里仍出现「下载并安装 / 重新下载 / 删除」三个无效按钮"
 );
 
+/* ============ 21. 壁纸两级分类（upx8 默认 4K）与 UAPI 随机图源移除 ============ */
+console.log("\n【21】壁纸两级分类（upx8 默认 4K）与 UAPI 随机图源移除");
+// 0.13.10 需求（用户原话）：接入 wp.upx8.com 壁纸 API、默认请求 4K 分辨率；
+// 移除 UAPI 的所有壁纸来源（除 Bing 每日壁纸）；新 API 作为主分类名，被选中时
+// 展示壁纸类别；98qy 与 Unsplash 同样加二级分类 → 「主分类 → 壁纸类别」两级结构。
+const wallpapersSrc = fs.readFileSync(path.join(ROOT, "src", "wallpapers.js"), "utf8");
+const uapiOnlySrc = fs.readFileSync(path.join(ROOT, "src", "uapi.js"), "utf8");
+const emBgSrc21 = fs.readFileSync(path.join(ROOT, "src", "electron-main.js"), "utf8");
+const waBgSrc21 = fs.readFileSync(path.join(ROOT, "src", "web-api.js"), "utf8");
+const useBgSrc21 = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "hooks", "useBackground.ts"),
+  "utf8"
+);
+
+// ① UAPI 随机图源彻底移除：客户端函数没了、白名单没了、解析入口不再分发
+checkTrue(
+  "UAPI 随机图源已移除（uapi.js 只剩必应每日客户端）",
+  !/randomImageUrl/.test(uapiOnlySrc) &&
+    !/qy98WallpaperUrl/.test(uapiOnlySrc) &&
+    !/unsplashRandom/.test(uapiOnlySrc),
+  "uapi.js 仍带随机图客户端 → 「移除 UAPI 所有壁纸来源（除 Bing）」被回退"
+);
+const bgTypesM = authAppearSrc.match(/const BG_TYPES = \[([^\]]*)\]/);
+checkTrue(
+  "bgType 白名单去 uapi 加 upx8（旧配置 bgType=uapi 自动回退默认 bing）",
+  bgTypesM !== null &&
+    !/"uapi"/.test(bgTypesM[1]) &&
+    /"upx8"/.test(bgTypesM[1]) &&
+    /"bing"/.test(bgTypesM[1]),
+  `BG_TYPES = ${bgTypesM ? bgTypesM[1] : "未找到"}`
+);
+checkTrue(
+  "两处背景解析入口按 upx8/qy98/unsplash 分发且带二级分类参数",
+  /case "upx8":\s*\r?\n\s*return wallpapers\.upx8Url\(cfg\.bgCategory\);/.test(emBgSrc21) &&
+    /wallpapers\.unsplashRandom\(key, cfg\.bgCategory\)/.test(emBgSrc21) &&
+    /case "upx8":\s*\r?\n\s*return wallpapers\.upx8Url\(cfg\.bgCategory\);/.test(waBgSrc21) &&
+    /wallpapers\.unsplashRandom\(key, cfg\.bgCategory\)/.test(waBgSrc21) &&
+    !/case "uapi"/.test(emBgSrc21) &&
+    !/case "uapi"/.test(waBgSrc21),
+  "入口没带分类 / 仍分发 uapi → 二级分类选择不生效或旧源复活"
+);
+
+// ② upx8 默认请求 4K：静态 + 运行双保险
+checkTrue(
+  "upx8 默认请求 4K 分辨率（resolution=3840x2160 写死在 upx8Url）",
+  /new URLSearchParams\(\{ resolution: "3840x2160" \}\)/.test(wallpapersSrc),
+  "upx8Url 的 resolution 不是 3840x2160 → 用户要求的默认 4K 丢失"
+);
+const wallpapersMod21 = require(path.join(ROOT, "src", "wallpapers.js"));
+check(
+  "upx8 随机分类不带 category（仅 4K 分辨率）",
+  wallpapersMod21.upx8Url("random"),
+  "https://wp.upx8.com/api.php?resolution=3840x2160"
+);
+check(
+  "upx8 指定分类时透传 category 参数",
+  wallpapersMod21.upx8Url("nature"),
+  "https://wp.upx8.com/api.php?resolution=3840x2160&category=nature"
+);
+checkTrue(
+  "98qy 按二级分类透传 lx 参数（method=pc 横屏 + format=images 302）",
+  /lx=dongman/.test(wallpapersMod21.qy98Url("dongman")) &&
+    /method=pc/.test(wallpapersMod21.qy98Url("dongman")) &&
+    /format=images/.test(wallpapersMod21.qy98Url("dongman")),
+  wallpapersMod21.qy98Url("dongman")
+);
+
+// ③ 两级分类目录：三源各带壁纸类别，非法值回落该源默认
+const srcCats21 = (t) =>
+  wallpapersMod21.SOURCES[t] ? wallpapersMod21.SOURCES[t].categories.map((c) => c.key) : [];
+checkTrue(
+  "三个 API 源都带壁纸类别（upx8/qy98/unsplash 各 ≥3 个二级分类）",
+  srcCats21("upx8").length >= 3 &&
+    srcCats21("qy98").length >= 3 &&
+    srcCats21("unsplash").length >= 3,
+  `实际 ${srcCats21("upx8").length}/${srcCats21("qy98").length}/${srcCats21("unsplash").length}`
+);
+checkTrue(
+  "非法二级分类回落该源默认（列表首个），无分类主分类恒返回空",
+  wallpapersMod21.normalizeCategory("upx8", "bogus") === "random" &&
+    wallpapersMod21.normalizeCategory("qy98", "nature") === "suiji" &&
+    wallpapersMod21.normalizeCategory("bing", "nature") === "",
+  `实际 upx8→${wallpapersMod21.normalizeCategory("upx8", "bogus")} qy98→${wallpapersMod21.normalizeCategory("qy98", "nature")}`
+);
+checkTrue(
+  "Unsplash 二级分类映射为官方 API 的 query 参数",
+  /params\.set\("query", cat\)/.test(wallpapersSrc) &&
+    /photos\/random/.test(wallpapersSrc),
+  "unsplashRandom 不传 query → Unsplash 二级分类形同虚设"
+);
+
+// ④ 前后端分类表逐 key 对齐（改一处漏一处 → 点了没反应或写盘被规范化吃掉）
+const bgSourcesBlock21 = (persBgSrc.match(/const BG_SOURCES[\s\S]*?const BG_SOURCE_TYPES/) || [""])[0];
+const feCats21 = {};
+for (const m of bgSourcesBlock21.matchAll(/type: "(upx8|qy98|unsplash)",[\s\S]*?cats: \[([\s\S]*?)\]/g)) {
+  feCats21[m[1]] = [...m[2].matchAll(/key: "([a-z_]+)"/g)].map((x) => x[1]);
+}
+checkTrue(
+  "前端 BG_SOURCES 与后端 wallpapers.SOURCES 分类 key 逐源一致",
+  ["upx8", "qy98", "unsplash"].every(
+    (t) => JSON.stringify(feCats21[t] || []) === JSON.stringify(srcCats21(t))
+  ),
+  `前端 ${JSON.stringify(feCats21)} vs 后端 upx8=${JSON.stringify(srcCats21("upx8"))} qy98=${JSON.stringify(srcCats21("qy98"))} unsplash=${JSON.stringify(srcCats21("unsplash"))}`
+);
+
+// ⑤ 两级 UI 结构：主分类分段 + 选中时展开壁纸类别 chips
+checkTrue(
+  "个性化页三个 API 源各为一个主分类，选中时展开壁纸类别（二级分类 chips）",
+  /value: "upx8"/.test(persBgSrc) &&
+    /value: "qy98"/.test(persBgSrc) &&
+    /value: "unsplash"/.test(persBgSrc) &&
+    /BG_SOURCES\.filter\(\(s\) => s\.type === bgGroup\)/.test(persBgSrc) &&
+    /onPickSource\(s\.type, c\.key\)/.test(persBgSrc) &&
+    !/"uapi"/.test(persBgSrc),
+  "分段缺主分类 / 不展开二级 chips → 用户要求的两级操作逻辑丢失"
+);
+checkTrue(
+  "BgType 类型与随机源列表同步（upx8 替代 uapi，BgType 不再含 uapi/flow）",
+  /const RANDOM_SOURCES: BgType\[\] = \["upx8", "qy98", "unsplash"\]/.test(useBgSrc21) &&
+    /"upx8"/.test(typesBgSrc) &&
+    !/"uapi"/.test(typesBgSrc) &&
+    // 行首锚定 export type BgType：裸写 BgType = 会误命中 AuthBgType = "flow"（假红踩过）
+    !/export type BgType = [^\n]*"flow"/.test(typesBgSrc) &&
+    !/export type BgType = [^\n]*"uapi"/.test(typesBgSrc),
+  "类型/列表与白名单漂移 → tsc 或运行时对不上"
+);
+
+// ⑥ appearance 分源校验（隔离实例：模块在 require 时绑定存储路径，同【15】先例）
+const catRoot21 = fs.mkdtempSync(path.join(os.tmpdir(), "ms-rewards-bgcat-selfcheck-"));
+const catEnvBackup21 = process.env.MS_REWARDS_STORAGE_DIR;
+process.env.MS_REWARDS_STORAGE_DIR = path.join(catRoot21, "storage");
+for (const modPath of ["appearance.js", "wallpapers.js", "storage-path.js"]) {
+  delete require.cache[require.resolve(path.join(ROOT, "src", modPath))];
+}
+const appearanceCat21 = require(path.join(ROOT, "src", "appearance.js"));
+check("旧配置 bgType=uapi 被拒绝并回退默认 bing", appearanceCat21.set({ bgType: "uapi" }).bgType, "bing");
+check("upx8 合法二级分类被保留", appearanceCat21.set({ bgType: "upx8", bgCategory: "nature" }).bgCategory, "nature");
+check(
+  "跨源非法分类回落该源默认（qy98 无 nature → suiji）",
+  appearanceCat21.set({ bgType: "qy98", bgCategory: "nature" }).bgCategory,
+  "suiji"
+);
+check("unsplash 合法二级分类被保留", appearanceCat21.set({ bgType: "unsplash", bgCategory: "flowers" }).bgCategory, "flowers");
+for (const modPath of ["appearance.js", "wallpapers.js", "storage-path.js"]) {
+  delete require.cache[require.resolve(path.join(ROOT, "src", modPath))];
+}
+process.env.MS_REWARDS_STORAGE_DIR = catEnvBackup21;
+fs.rmSync(catRoot21, { recursive: true, force: true });
+
 /* ============ 汇总 ============ */
 console.log(`\n${"=".repeat(46)}`);
 console.log(`结果: ${pass} 通过 / ${fail} 失败`);
