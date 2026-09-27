@@ -97,6 +97,17 @@ if (checkOnly) {
     lock.packages?.[""]?.version === expected,
     `${lock.packages?.[""]?.version} vs ${expected}`
   );
+  // ⚠️ 反向守卫：依赖条目的 version 绝不能等于项目版本号。
+  // 用「全局替换」bump lock 文件会把 531 个依赖版本一起改掉，
+  // 届时 `npm ci` 报 EUSAGE、Docker 构建直接失败（0.13.10 发版时踩过）。
+  const lockRaw = fs.readFileSync(path.join(ROOT, "package-lock.json"), "utf8");
+  const depVerMatches = (lockRaw.match(new RegExp(`"version":\\s*"${expected.replace(/\./g, "\\.")}"`, "g")) || [])
+    .length;
+  add(
+    "package-lock.json 依赖版本未被污染",
+    depVerMatches === 2,
+    `出现 ${depVerMatches} 处（应恰好 2 处：根 + packages[""]）`
+  );
 
   const verSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "version.ts"), "utf8");
   const vApp = (verSrc.match(/APP_VERSION\s*=\s*"([^"]+)"/) || [])[1];
@@ -171,10 +182,38 @@ rep("package.json", "version / buildNumber", oldVersion, targetVersion, (s) => {
   return out === s ? null : out;
 });
 
-/* 2. package-lock.json —— 两处 version */
-rep("package-lock.json", "version ×2", oldVersion, targetVersion, (s) => {
-  const out = s.replace(/^(\s*"version":\s*)"[^"]+"/gm, `$1"${targetVersion}"`);
-  return out === s ? null : out;
+/* 2. package-lock.json —— 只改根与 packages[""] 两处
+   ⚠️⚠️ 绝不能全局替换 `"version": "..."`！lock 文件里每个依赖条目都有自己的
+   version 字段，全局替换会把 531 个依赖版本全改成项目版本号，导致
+   `npm ci` 报 EUSAGE（lock 与 package.json 不同步），Docker 构建直接失败。
+   （0.13.10 发版时踩过，服务器构建失败才发现。）
+   这里用「锚定结构」的写法：只改紧跟 name 之后的第一个 version，
+   以及 packages 段下 "" 键里的 version。 */
+rep("package-lock.json", "version ×2（仅根与 packages[\"\"]）", oldVersion, targetVersion, (s) => {
+  const lines = s.split("\n");
+  let hit = 0;
+  for (let i = 0; i < lines.length; i++) {
+    // 根 version：文件最开头 5 行内
+    if (i < 5 && /^\s{2}"version":\s*"/.test(lines[i])) {
+      lines[i] = lines[i].replace(/("version":\s*)"[^"]+"/, `$1"${targetVersion}"`);
+      hit++;
+      continue;
+    }
+    // packages[""] 的 version：紧跟在第 2 个 `"name": "ms-rewards-auto",` 之后的 version
+    if (/"name":\s*"ms-rewards-auto"/.test(lines[i])) {
+      for (let j = i + 1; j < Math.min(i + 4, lines.length); j++) {
+        if (/^\s{6}"version":\s*"/.test(lines[j])) {
+          lines[j] = lines[j].replace(/("version":\s*)"[^"]+"/, `$1"${targetVersion}"`);
+          hit++;
+          break;
+        }
+      }
+    }
+  }
+  if (hit !== 2) {
+    throw new Error(`package-lock.json 命中 ${hit} 处（应为 2）—— 结构变了，请人工确认`);
+  }
+  return lines.join("\n");
 });
 
 /* 3. 渲染层 version.ts —— APP_VERSION + BUILD_NUMBER */
