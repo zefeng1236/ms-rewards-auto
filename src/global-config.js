@@ -40,6 +40,8 @@ const GLOBAL_DEFAULTS = {
     random: false,
     read: 0,
     promos: 0,
+    // 搜索每轮次数：0 = 沿用内置随机节奏（4–7，force 模式 6–9）；>0 = 固定值
+    search: 0,
   },
   schedule: {
     enable: true,
@@ -61,6 +63,10 @@ const GLOBAL_DEFAULTS = {
     feishu: "",
     pushme: "",
     bark: "",
+    hitokoto: true,
+    // 一言在界面上的显示位置：sidebar 左下角侧边栏贴底（默认）| bottomRight 右下角贴底 | topbar 标题栏一行
+    // ⚠️ 必须与 src/config.js 的 DEFAULTS.notice 逐字段对齐（详见文件顶部说明）
+    hitokotoPosition: "sidebar",
   },
   // 日志设置（应用级）：历史日志按账号、按天保留
   logging: {

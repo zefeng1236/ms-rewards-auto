@@ -5,13 +5,20 @@
  * 做完，比「分几次慢慢做」更像脚本行为。
  *
  * 规则（逐条对应需求）：
- *   1. 用户设定的数量 base 就是本轮基准；显式设为 0 表示不限制（一次做完）。
- *   2. 随机开关打开时，在 base 上随机 ±（2–4），但结果必须同时满足：
- *        · 不得 >= 任务总数 total —— 否则会把剩余任务「一次性做完」；
+ *   1. 用户设定的数量 base 就是本轮上限；显式设为 0 表示不限制（一次做完）。
+ *   2. 随机开关打开时，在 base 上随机 ±（2–4）：
  *        · 不得 < 1               —— 否则会变成「一个都不做」；
- *        · 做减法时 base 必须大于随机数 —— 否则减不动，同样放弃随机。
- *      任意一条不满足，就放弃这次随机，保持 base 原值。
- *   3. 兜底保护：最终数量一定落在 [0, total]，既不会超过任务总数，也不会为负。
+ *        · 做减法时 base 必须大于随机数 —— 否则减不动，放弃随机。
+ *      满足即生效，**随机结果允许超过当日剩余任务数 total**（见保护③）。
+ *   3. 保护：
+ *      · 未随机      → 结果严格不超过 total（设定值就是用户给的上限）；
+ *      · 已随机      → 上限放宽到 total + MAX_DELTA。
+ *
+ * 为什么允许「随机多于当日任务数」（0.13.11 起）：
+ *   每次都把剩余任务做得刚好接满，本身就是很强的规律性特征；
+ *   多出来那几次（超出已满额的任务其实拿不到分）在行为上看不出异常。
+ *   此前那条「随机不得 >= total」会把大多数随机降级为取消，
+ *   结果就是数量永远等于设定值 —— 随机开关名存实亡。
  *
  * 纯函数，无副作用，便于自检直接断言。
  */
@@ -29,7 +36,7 @@ function toCount(v) {
 /**
  * 归一化配置里的 limits 段，兼容老配置（缺字段 / 类型飘）
  * @param {object} [raw]
- * @returns {{random: boolean, read: number, promos: number}}
+ * @returns {{random: boolean, read: number, promos: number, search: number}}
  */
 function normalizeLimits(raw) {
   const o = raw && typeof raw === "object" ? raw : {};
@@ -37,6 +44,7 @@ function normalizeLimits(raw) {
     random: o.random === true,
     read: toCount(o.read),
     promos: toCount(o.promos),
+    search: toCount(o.search),
   };
 }
 
@@ -74,7 +82,9 @@ function resolveTaskCount(opts = {}) {
   const rawBase = Number(opts.base);
   const unlimited = !Number.isFinite(rawBase) || rawBase <= 0;
 
-  // 保护②：设定值不能大于任务总数（也兜住历史脏数据）
+  // 保护②：设定值不能大于任务总数（也兜住历史脏数据）——
+  // 注意这只管「未启用随机」的基准；随机开关会把结果在 base 上再 ±(2–4)，
+  // 允许最终数量超过 total（见下方 cand 判定与保护③）。
   const base = unlimited ? total : Math.min(Math.floor(rawBase), total);
 
   if (unlimited) {
@@ -94,15 +104,15 @@ function resolveTaskCount(opts = {}) {
   let cancelled = false;
   let note = "";
 
-  if (cand >= 1 && cand < total) {
+  // 允许随机结果超过总数 total：多的那几次在任务侧会被满额/数组截断，
+  // 拿不到额外分，但从行为上看不出「每次刚好接满」的规律（见顶部注释）。
+  // 上限放宽到 total + MAX_DELTA —— 理性上 base 已 <= total，delta 最多 +4，
+  // 这里再 clamp 一次只为防御脏数据，正常路径不会被触发。
+  if (cand >= 1 && cand <= total + MAX_DELTA) {
     applied = true;
     note = `随机 ${delta > 0 ? "+" : ""}${delta}`;
-  } else if (delta > 0) {
-    // 加上去就正好等于（或超过）任务总数 —— 会一次性做完，放弃
-    cancelled = true;
-    note = `随机 +${mag} 会一次做完，已取消随机`;
   } else if (base <= mag) {
-    // 设定值比随机数还小，减不动 —— 放弃
+    // 设定值比随机数还小，减不动（或减到 0/负数）—— 放弃
     cancelled = true;
     note = `设定值不足以减去 ${mag}，已取消随机`;
   } else {
@@ -111,8 +121,9 @@ function resolveTaskCount(opts = {}) {
     note = `随机 ${delta} 会变成 0 个，已取消随机`;
   }
 
-  // 保护③：最终夹在 [0, total]
-  const count = Math.max(0, Math.min(applied ? cand : base, total));
+  // 保护③：未随机时夹在 [0, total]；随机生效时可上探到 total + MAX_DELTA
+  const ceil = applied ? total + MAX_DELTA : total;
+  const count = Math.max(0, Math.min(applied ? cand : base, ceil));
 
   return {
     count,

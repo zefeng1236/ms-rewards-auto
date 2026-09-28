@@ -8,6 +8,7 @@ import type {
   InstallProgress,
   LaunchConfig,
   Overview,
+  RunAllOptions,
   SetupState,
   VaultResult,
   VaultStatus,
@@ -27,7 +28,7 @@ const DEFAULT_CONFIG: AppConfig = {
   tasks: { sign: true, read: true, daily: true, promos: true, claim: false, search: true },
   region: { lock: true, ipProvider: "bing" },
   search: { span: 30, api: "offline" },
-  limits: { random: false, read: 0, promos: 0 },
+  limits: { random: false, read: 0, promos: 0, search: 0 },
   schedule: {
     enable: true,
     mode: "interval",
@@ -47,6 +48,8 @@ const DEFAULT_CONFIG: AppConfig = {
     feishu: "",
     pushme: "",
     bark: "",
+    hitokoto: true,
+    hitokotoPosition: "sidebar",
   },
   logging: { retentionDays: 7 },
   goals: {
@@ -102,6 +105,20 @@ const MOCK_WALLPAPER =
       <path d="M660 740 L980 500 L1260 700 L1600 540 L1600 900 L0 900 Z" fill="#0b1120" opacity="0.92"/>
     </svg>`
   );
+
+/**
+ * 浏览器预览用的模拟一言。
+ * 走真实接口的话，调样式时会把公益 API 打一遍；预览只需看到排版效果。
+ */
+function MOCK_HITOKOTO() {
+  return {
+    text: "世界上只有一种真正的英雄主义，那就是认清生活的真相后依然热爱它。",
+    from: "米开朗基罗传",
+    fromWho: "罗曼·罗兰",
+    uuid: "preview-mode",
+    date: new Date().toISOString().slice(0, 10),
+  };
+}
 
 function mkState(over: Partial<Account["state"]> = {}): Account["state"] {
   return {
@@ -434,10 +451,12 @@ export function createMockApi(): ElectronApi {
     },
     passkeyRemove: async () => ({ ok: false, error: "浏览器预览模式不支持通行密钥" }),
 
+    getHitokoto: async () => MOCK_HITOKOTO(),
+
     testPush: async () => ({ ok: false, error: "浏览器预览模式不支持推送" }),
 
     login: async () => ({ ok: false, error: "浏览器预览模式不支持登录" }),
-    run: async (id) => {
+    run: async (id: string, _opts?: RunAllOptions) => {
       const acc = mockAccounts.find((a) => a.id === id);
       emitStatus(id, "running");
       await sleep(1500);

@@ -9,12 +9,15 @@ import {
   type ReactNode,
 } from "react";
 import { api } from "../api/ipc";
+import { formatQuote } from "../utils";
 import type {
   Account,
   AccountRunStatus,
   AccountRunStatusMap,
   Appearance,
+  AppConfig,
   ChromiumStatus,
+  HitokotoPosition,
   OverviewStats,
 } from "../types";
 
@@ -23,10 +26,30 @@ const MAX_LOGS = 500;
 /** 日志批量刷新的节流间隔 */
 const LOG_FLUSH_MS = 200;
 
+/** 合法的一言显示位置；取值与 src/hitokoto.js 的 POSITIONS.key 严格对应 */
+const HITOKOTO_POSITIONS: HitokotoPosition[] = ["sidebar", "bottomRight", "topbar"];
+/** 位置归一化：旧配置缺字段 / 值被改坏时回落到左下角侧边栏 */
+function normalizePosition(v: unknown): HitokotoPosition {
+  return HITOKOTO_POSITIONS.includes(v as HitokotoPosition) ? (v as HitokotoPosition) : "sidebar";
+}
+
 interface AppStateValue {
   accounts: Account[];
   stats: OverviewStats | null;
   appearance: Appearance | null;
+  /**
+   * 全局配置（含 notice.hitokoto / notice.hitokotoPosition）。
+   * 一言的开关与显示位置属于它，所以界面要能读到 —— 这也是唯一需要
+   * 脱离账户单独读取配置的地方（外观同理，但外观走独立的 appearance 接口）。
+   */
+  globalConfig: AppConfig | null;
+  /**
+   * 每日一言的展示文本（已含作者后缀）。
+   * 未启用一言、或公益接口取不到时为 "" —— 界面据此整块隐藏，不留空白占位。
+   */
+  hitokoto: string;
+  /** 一言在界面上的显示位置（已归一化，非法值回落 sidebar） */
+  hitokotoPosition: HitokotoPosition;
   logs: string[];
   running: boolean;
   chromium: ChromiumStatus | null;
@@ -42,6 +65,8 @@ interface AppStateValue {
 
   refreshAccounts: () => Promise<void>;
   refreshLogs: () => Promise<void>;
+  /** 全局配置变更（如一言开关/位置）后重拉，让生效结果即时可见 */
+  refreshGlobalConfig: () => Promise<void>;
   clearLogs: () => void;
   patchAppearance: (patch: Partial<Appearance>) => Promise<void>;
 }
@@ -52,6 +77,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [stats, setStats] = useState<OverviewStats | null>(null);
   const [appearance, setAppearance] = useState<Appearance | null>(null);
+  const [globalConfig, setGlobalConfig] = useState<AppConfig | null>(null);
+  const [hitokoto, setHitokoto] = useState("");
   const [logs, setLogs] = useState<string[]>([]);
   const [running, setRunning] = useState(false);
   const [runStatus, setRunStatus] = useState<AccountRunStatusMap>({});
@@ -89,6 +116,15 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const refreshGlobalConfig = useCallback(async () => {
+    try {
+      const cfg = await api.getGlobalConfig();
+      setGlobalConfig(cfg || null);
+    } catch {
+      // 读不到就保持旧值；一言不会因此崩掉整页
+    }
+  }, []);
+
   const clearLogs = useCallback(() => {
     logBuffer.current = [];
     setLogs([]);
@@ -98,6 +134,61 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     const r = await api.setAppearance(patch);
     if (r?.appearance) setAppearance(r.appearance);
   }, []);
+
+  // ---- 每日一言 ----
+  // 开关默认开启（缺字段当作开）。后端 30 秒 TTL 缓存，前端每 30 秒轮询一次。
+  // 窗口隐藏（最小化/切到后台）时暂停轮询，切回来时立即刷新一次再恢复 ——
+  // 既省请求（公益接口 QPS 2），又不会让界面停在过时的一句话上。
+  const hitokotoEnabled = globalConfig?.notice?.hitokoto !== false;
+  useEffect(() => {
+    if (!hitokotoEnabled) {
+      setHitokoto("");
+      return;
+    }
+    let alive = true;
+    const TICK_MS = 30_000;
+
+    const fetchQuote = () => {
+      api
+        .getHitokoto()
+        .then((q) => {
+          if (alive) setHitokoto(formatQuote(q));
+        })
+        .catch(() => {});
+    };
+
+    fetchQuote();
+
+    let timer: number | null = null;
+    const start = () => {
+      if (timer == null) timer = window.setInterval(fetchQuote, TICK_MS);
+    };
+    const stop = () => {
+      if (timer != null) {
+        window.clearInterval(timer);
+        timer = null;
+      }
+    };
+
+    const onVisibility = () => {
+      if (document.hidden) {
+        stop();
+      } else {
+        // 从后台切回来：可能已经过了很久，立即刷新一次
+        fetchQuote();
+        start();
+      }
+    };
+
+    if (!document.hidden) start();
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      alive = false;
+      stop();
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [hitokotoEnabled, globalConfig]);
 
   const getAccountStatus = useCallback(
     (id: string): AccountRunStatus | null => {
@@ -123,13 +214,13 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (cr) setChromium(cr);
       setRunning(!!run);
       setRunStatus(statusMap || {});
-      await Promise.all([refreshAccounts(), refreshLogs()]);
+      await Promise.all([refreshAccounts(), refreshLogs(), refreshGlobalConfig()]);
       if (alive) setLoading(false);
     })();
     return () => {
       alive = false;
     };
-  }, [refreshAccounts, refreshLogs]);
+  }, [refreshAccounts, refreshLogs, refreshGlobalConfig]);
 
   // ---- 主进程推送订阅 ----
   useEffect(() => {
@@ -179,6 +270,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       accounts,
       stats,
       appearance,
+      globalConfig,
+      hitokoto,
+      hitokotoPosition: normalizePosition(globalConfig?.notice?.hitokotoPosition),
       logs,
       running,
       chromium,
@@ -189,6 +283,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       setLogOpen,
       refreshAccounts,
       refreshLogs,
+      refreshGlobalConfig,
       clearLogs,
       patchAppearance,
     }),
@@ -196,6 +291,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       accounts,
       stats,
       appearance,
+      globalConfig,
+      hitokoto,
       logs,
       running,
       chromium,
@@ -206,6 +303,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       setLogOpen,
       refreshAccounts,
       refreshLogs,
+      refreshGlobalConfig,
       clearLogs,
       patchAppearance,
     ]

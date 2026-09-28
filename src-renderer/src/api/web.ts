@@ -14,11 +14,13 @@ import type {
   DeepPartial,
   DownloadResult,
   FingerprintStatus,
+  Hitokoto,
   InstallBrowserResult,
   InstallFingerprintResult,
   LaunchConfig,
   Overview,
   PushTestResult,
+  RunAllOptions,
   RunResult,
   SaveTextResult,
   SetupState,
@@ -320,6 +322,9 @@ export function createWebApi(): ElectronApi {
       }
     },
 
+    /* ---------------- 每日一言 ---------------- */
+    getHitokoto: () => rpc<Hitokoto | null>("getHitokoto"),
+
     /* ---------------- 启动与托盘 ---------------- */
     getLaunch: () => rpc<LaunchConfig>("getLaunch"),
     setLaunch: (patch) => rpc<LaunchConfig>("setLaunch", patch),
@@ -369,8 +374,8 @@ export function createWebApi(): ElectronApi {
 
     /* ---------------- 任务 ---------------- */
     login: (id) => rpc<RunResult>("login", id),
-    run: (id) => rpc<RunResult>("run", id),
-    runAll: () => rpc<RunResult>("runAll"),
+    run: (id: string, opts?: RunAllOptions) => rpc<RunResult>("run", id, opts || {}),
+    runAll: (opts?: RunAllOptions) => rpc<RunResult>("runAll", opts || {}),
     runSelected: (ids) => rpc<RunResult>("runSelected", ids),
     sync: (id) => rpc<RunResult>("sync", id),
     stop: () => rpc<{ ok: boolean; error?: string }>("stop"),

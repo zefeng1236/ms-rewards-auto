@@ -38,8 +38,17 @@ export default function App() {
 }
 
 function Shell() {
-  const { appearance, loading } = useAppState();
+  const { appearance, loading, hitokoto, hitokotoPosition } = useAppState();
   const { src: bgSrc, ambient, reload: shuffleBg, luma } = useBackground();
+
+  /** 点击一言复制到剪切板 */
+  const copyHitokoto = () => {
+    if (!hitokoto) return;
+    navigator.clipboard?.writeText(hitokoto).then(
+      () => toast.success("一言已复制"),
+      () => {}
+    );
+  };
   // 修复玻璃库指针光晕不跟手的 bug（详见 hook 注释）
   // 指针光晕独立开关：与玻璃表面解耦（玻璃 fallback 面板同样带 .lg-surface，光晕仍可见）
   useLiquidGlassHalo(appearance?.pointerHalo === true);
@@ -257,9 +266,16 @@ function Shell() {
 
           <div className="content">
             <header className="topbar">
-              <div style={{ position: "relative", zIndex: 1 }}>
+              <div style={{ position: "relative", zIndex: 1, minWidth: 0 }}>
                 <h1>{meta.title}</h1>
                 <p>{meta.desc}</p>
+                {/* 一言（标题栏位置）：单行小字，超出省略——
+                    刻意不放右下角那种多行排版，标题栏的高度只有这么点 */}
+                {hitokoto && hitokotoPosition === "topbar" && (
+                  <div className="hk-inline hk-clickable" title="点击复制" onClick={copyHitokoto}>
+                    {hitokoto}
+                  </div>
+                )}
               </div>
               <div className="topbar-actions" style={{ position: "relative", zIndex: 1 }}>
                 <TopbarActions view={view} />
@@ -287,6 +303,13 @@ function Shell() {
 
         <LogConsole />
         {closePrompt}
+        {/* 一言（右下角位置）：悬浮在窗口右下、贴底。
+            用 fixed 而不是塞进 .content —— 后者会被滚动容器裁掉，也就"贴不住底部"了 */}
+        {hitokoto && hitokotoPosition === "bottomRight" && (
+          <div className="hk-float hk-clickable" title="点击复制" onClick={copyHitokoto}>
+            {hitokoto}
+          </div>
+        )}
         <Toaster position="bottom-right" max={3} />
         <BgProgressBubble />
       </div>
@@ -322,7 +345,13 @@ function TopbarActions({ view }: { view: ViewKey }) {
         ⟳ 刷新
       </GlassButton>
       {view === "dashboard" && (
-        <GlassButton variant="glassProminent" controlSize="small" onClick={onRunAll} disabled={running} title="依次运行所有已启用账户">
+        <GlassButton
+          variant="glass"
+          controlSize="small"
+          onClick={onRunAll}
+          disabled={running}
+          title="依次运行所有已启用账户（遵循「单次执行数量」分批限制）"
+        >
           ▶ 运行全部
         </GlassButton>
       )}

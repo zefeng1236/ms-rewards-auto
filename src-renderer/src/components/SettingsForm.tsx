@@ -19,6 +19,16 @@ const MODE_OPTIONS: SelectOption[] = [
 
 const SCOPE_OPTIONS: SelectOption[] = [{ label: "总积分余额", value: "balance" }];
 
+/**
+ * 每日一言在界面上的显示位置。
+ * ⚠️ label/value 必须与 src/hitokoto.js 的 POSITIONS 保持一致（selfcheck 有跨文件守卫）。
+ */
+const HITOKOTO_POSITION_OPTIONS: SelectOption[] = [
+  { label: "左下角侧边栏（贴底部）", value: "sidebar" },
+  { label: "右下角（贴底部）", value: "bottomRight" },
+  { label: "标题栏（一行）", value: "topbar" },
+];
+
 const TASK_LABELS: { key: keyof AppConfig["tasks"]; label: string; hint?: string }[] = [
   { key: "sign", label: "每日签入", hint: "每日打卡签到，获得固定积分奖励" },
   { key: "read", label: "阅读文章", hint: "自动阅读 MSN 文章，每篇 3 分，满额 30 分" },
@@ -48,12 +58,18 @@ export function SettingsForm({
   onChange,
   onTestPush,
   showLogging = false,
+  showHitokotoPosition = false,
 }: {
   value: AppConfig;
   onChange: (patch: DeepPartial<AppConfig>) => void;
   onTestPush?: (notice: AppConfig["notice"]) => Promise<void>;
   /** 日志保留是应用级设置，仅全局设置页显示 */
   showLogging?: boolean;
+  /**
+   * 是否显示一言的「显示位置」。位置是全局的界面行为（左下/右下/标题栏），
+   * 账户级表单里显示它会误导用户以为可以按账户分别设置，所以只有全局页打开。
+   */
+  showHitokotoPosition?: boolean;
 }) {
   const [testing, setTesting] = useState(false);
 
@@ -106,6 +122,11 @@ export function SettingsForm({
   };
 
   const mode = value.schedule?.mode ?? "interval";
+  const hitokotoOn = value.notice?.hitokoto !== false;
+  // 位置可能源自旧配置（缺字段）或被改坏 —— 非法值一律回落到左下角侧边栏
+  const hitokotoPos = HITOKOTO_POSITION_OPTIONS.some((o) => o.value === value.notice?.hitokotoPosition)
+    ? String(value.notice?.hitokotoPosition)
+    : "sidebar";
 
   return (
     <div className="settings-form">
@@ -146,6 +167,14 @@ export function SettingsForm({
             min={0}
             max={50}
             onChange={(v) => onChange({ limits: { promos: Math.max(0, v) } } as DeepPartial<AppConfig>)}
+          />
+          <NumberField
+            label="搜索每次次数"
+            hint="0 = 沿用内置随机节奏（普通 4–7，一次性完成 6–9）"
+            value={value.limits?.search ?? 0}
+            min={0}
+            max={30}
+            onChange={(v) => onChange({ limits: { search: Math.max(0, v) } } as DeepPartial<AppConfig>)}
           />
         </div>
       </Section>
@@ -361,6 +390,25 @@ export function SettingsForm({
             onChange={(v) => onChange({ notice: { bark: v } })}
           />
         </div>
+        <SwitchField
+          label="每日一言"
+          hint="界面左上角/右下角/标题栏显示当天的一言小字，并在推送首尾各附加一次；按天缓存，接口不可用时自动跳过"
+          checked={hitokotoOn}
+          onChange={(v) => onChange({ notice: { hitokoto: v } })}
+        />
+        {hitokotoOn && showHitokotoPosition && (
+          <div className="form-grid" style={{ marginTop: 12 }}>
+            <SelectField
+              label="显示位置"
+              hint="界面中小字展示的位置；标题栏位置会压缩成一行显示"
+              value={hitokotoPos}
+              options={HITOKOTO_POSITION_OPTIONS}
+              onChange={(v) =>
+                onChange({ notice: { hitokotoPosition: v as AppConfig["notice"]["hitokotoPosition"] } })
+              }
+            />
+          </div>
+        )}
         {onTestPush && (
           <div style={{ marginTop: 12 }}>
             <GlassButton variant="glassProminent" controlSize="small" onClick={onTest} loading={testing}>

@@ -137,7 +137,16 @@ export function Sidebar({
   swSection?: string | null;
   onSwSectionClick?: (key: string) => void;
 }) {
-  const { chromium, logOpen, setLogOpen, accounts } = useAppState();
+  const { chromium, logOpen, setLogOpen, accounts, hitokoto, hitokotoPosition } = useAppState();
+
+  /** 点击一言复制到剪切板 */
+  const copyHitokoto = () => {
+    if (!hitokoto) return;
+    navigator.clipboard?.writeText(hitokoto).then(
+      () => toast.success("一言已复制"),
+      () => {}
+    );
+  };
   const [installing, setInstalling] = useState(false);
   const [progress, setProgress] = useState<InstallProgress | null>(null);
   // 指纹浏览器（可选增强）状态：就绪与否 + 正在下载时的实时进度。
@@ -506,6 +515,14 @@ export function Sidebar({
             <span className="nav-item-icon">{ICONS.back}</span>
             <span>返回</span>
           </button>
+        )}
+
+        {/* 一言（左下角位置，默认）：贴在侧边栏最底部、版本号正上方。
+            多行显示不截断 —— 侧栏宽度有限但纵向空间富余，小字折行比一排省略号更好读 */}
+        {hitokoto && hitokotoPosition === "sidebar" && (
+          <div className="nav-hitokoto hk-clickable" title="点击复制" onClick={copyHitokoto}>
+            {hitokoto}
+          </div>
         )}
 
         {/* 左下角版本号（v 主版本.交付号，与安装包文件名一致）；点击也可打开自动更新弹窗 */}

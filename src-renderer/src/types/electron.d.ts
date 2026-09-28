@@ -15,12 +15,14 @@ import type {
   DeepPartial,
   DownloadResult,
   FingerprintStatus,
+  Hitokoto,
   InstallBrowserResult,
   InstallFingerprintResult,
   InstallProgress,
   LaunchConfig,
   Overview,
   PushTestResult,
+  RunAllOptions,
   RunResult,
   SaveTextResult,
   SetupState,
@@ -107,13 +109,21 @@ export interface ElectronApi {
   /** 删除一枚通行密钥（仅 Web/Docker 有实现；桌面版返回不支持） */
   passkeyRemove(id: string): Promise<{ ok: boolean; error?: string }>;
 
+  // ---- 每日一言 ----
+  /**
+   * 取当天的一言（后端按天缓存，界面与推送共用同一句）。
+   * 接口不可用/未取到时返回 null，界面据此隐藏该区域。
+   */
+  getHitokoto(): Promise<Hitokoto | null>;
+
   // ---- 推送测试 ----
   testPush(notice: AppConfig["notice"]): Promise<PushTestResult>;
 
   // ---- 任务 ----
   login(id: string): Promise<RunResult>;
-  run(id: string): Promise<RunResult>;
-  runAll(): Promise<RunResult>;
+  run(id: string, opts?: RunAllOptions): Promise<RunResult>;
+  /** opts.force = 一次性完成模式：忽略单次执行数量限制，一轮做完当天全部任务 */
+  runAll(opts?: RunAllOptions): Promise<RunResult>;
   /** 运行勾选的多个账号（串行 + 账号间随机 20–60 秒） */
   runSelected(ids: string[]): Promise<RunResult>;
   sync(id: string): Promise<RunResult>;

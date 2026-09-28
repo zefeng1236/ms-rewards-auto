@@ -41,6 +41,10 @@ const DEFAULTS = {
     random: false,
     read: 0,
     promos: 0,
+    // 搜索每轮次数：0 = 沿用内置随机节奏（普通模式 4–7，一次性完成模式 6–9）；
+    // >0 = 固定每轮搜这么多次，不再随机。这样用户既能控制节奏，
+    // 又不用为「不想动脑」被迫接受默认随机值。
+    search: 0,
   },
   // 自动运行（本地调度，按账户独立）
   //
@@ -73,6 +77,9 @@ const DEFAULTS = {
     feishu: "",
     pushme: "",
     bark: "",
+    hitokoto: true,
+    // 一言在界面上的显示位置：sidebar 左下角侧边栏贴底（默认）| bottomRight 右下角贴底 | topbar 标题栏一行
+    hitokotoPosition: "sidebar",
   },
   // 日志保留策略（仅全局设置生效；账户独立设置保持同一结构便于表单复用）
   logging: {

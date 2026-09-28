@@ -20,6 +20,8 @@ const runner = require("./runner");
 const rewards = require("./rewards");
 const logger = require("./logger");
 const notify = require("./notify");
+const hitokoto = require("./hitokoto");
+const bgLimit = require("./wallpaper-limit");
 const cancel = require("./cancel");
 const ensureDeps = require("./ensure-deps");
 const fpBrowser = require("./fingerprint-browser");
@@ -217,6 +219,15 @@ async function backgroundSrc(opts = {}) {
 
   if (!fresh && fs.existsSync(cacheFile)) return pathToFileURL(cacheFile).href;
 
+  // 每 IP 每分钟最多 60 次（桌面端算作单一本机来源）。
+  // 只有「真的要打第三方接口」这一步才消耗配额 —— 命中缓存不算请求。
+  // 超限时回落到上一张缓存图，而不是让背景突然空掉。
+  if (!bgLimit.takeLocal()) {
+    logger.warn(`壁纸请求已达每分钟上限（${bgLimit.MAX_PER_MIN} 次），本轮换图延后`);
+    if (fs.existsSync(cacheFile)) return pathToFileURL(cacheFile).href;
+    return "";
+  }
+
   // 推送壁纸下载进度给渲染端，用于「正在切换壁纸，已下载 xx%」气泡
   const onProgress = (info) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -366,7 +377,7 @@ function applyOutcome(id, info) {
  * 串行运行一批账号（账号间随机 20–60 秒），统一维护每账号状态。
  * 调用方需自行做 running 全局锁判断。
  */
-async function runIds(ids, interactive) {
+async function runIds(ids, interactive, opts = {}) {
   const valid = [];
   for (const rawId of ids || []) {
     const id = String(rawId);
@@ -384,6 +395,8 @@ async function runIds(ids, interactive) {
       interactive,
       minGap: 20,
       maxGap: 60,
+      // force：「立即一次性完成全部任务」忽略单次数量限制（limits.read/promos）
+      force: opts.force === true,
       shouldSkip: (id) => batchSkip.has(String(id)),
       onPhase: (id, _name, phase, info) => {
         if (phase === "start") {
@@ -1050,26 +1063,28 @@ function registerIpc() {
   });
 
   // 运行单个账号（走统一的串行/状态编排，单账号无账号间等待）
-  ipcMain.handle("account:run", async (_e, id) => {
+  // opts.force = true 时忽略「单次执行数量」限制，一轮把当天任务全部做完
+  ipcMain.handle("account:run", async (_e, id, opts) => {
     const vg = vaultGuard();
     if (vg) return vg;
     if (running) return { ok: false, error: "已有任务正在运行，请稍候" };
     const acc = accounts.get(id);
     if (!acc) return { ok: false, error: "账户不存在" };
-    const r = await runIds([id], true);
+    const r = await runIds([id], true, opts || {});
     const single = (r.results || [])[0];
     if (r.ok && single) return { ok: single.ok !== false, result: single, aborted: single.reason === "已手动停止" || single.reason === "此账号任务已被手动停止" };
     return r;
   });
 
   // 运行全部已启用账号（串行 + 随机 20–60 秒）
-  ipcMain.handle("app:runAll", async () => {
+  // opts.force = true 时忽略「单次执行数量」限制，一轮把当天任务全部做完
+  ipcMain.handle("app:runAll", async (_e, opts) => {
     const vg = vaultGuard();
     if (vg) return vg;
     if (running) return { ok: false, error: "已有任务正在运行，请稍候" };
     const ids = accounts.list().filter((a) => a.enabled).map((a) => a.id);
     if (ids.length === 0) return { ok: false, error: "没有已启用的账户" };
-    return runIds(ids, true);
+    return runIds(ids, true, opts || {});
   });
 
   // 运行选中的账号（复选框批量；串行 + 随机 20–60 秒）
@@ -1450,6 +1465,15 @@ function registerIpc() {
       }
     }
     return r;
+  });
+
+  // ---- 每日一言（界面取当天那一句，与推送共用同一份按天缓存）----
+  ipcMain.handle("hitokoto:get", async () => {
+    try {
+      return await hitokoto.get();
+    } catch {
+      return null;
+    }
   });
 
   // ---- 推送测试 ----

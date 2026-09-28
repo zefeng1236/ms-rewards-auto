@@ -3451,3 +3451,65 @@ html[data-preset="opaque"] .compat-toast {
     padding: 28px 24px;
   }
 }
+
+/* ==========================================================
+   每日一言（Hitokoto）
+   ----------------------------------------------------------
+   三处位置共用一套视觉规格：小字 + 次要文字色，不抢界面焦点。
+   差别只在定位与换行策略：侧边栏可折行，标题栏与右下角必须单行截断
+   （前者怕顶栏被撑高，后者怕浮标越铺越长）。
+
+   可选位置来自 notice.hitokotoPosition：
+     sidebar（默认，左下角侧边栏贴底） / bottomRight（右下角贴底） / topbar（标题栏）
+   ========================================================== */
+.nav-hitokoto,
+.hk-float,
+.hk-inline {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--lg-text-secondary);
+  /* 允许选中：用户可能想复制这句话 */
+  user-select: text;
+}
+
+/* 左下角侧边栏（默认）：贴在版本号上方，朴素排版、自然折行 */
+.nav-hitokoto {
+  padding: 0 6px 2px;
+  text-align: left;
+}
+
+/* 右下角悬浮：贴窗口底部，单行截断，限宽避免整条横贯。
+   z-index 30 —— 刻意低于日志面板（40）：展开日志时让它被盖住，
+   比两个半透明层叠在一起糊成一团要清楚。 */
+.hk-float {
+  position: fixed;
+  right: 18px;
+  bottom: 10px;
+  z-index: 30;
+  max-width: min(46vw, 480px);
+  padding: 4px 10px;
+  border-radius: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: color-mix(in srgb, var(--lg-surface-bg, rgba(18, 20, 28, 0.5)) 72%, transparent);
+  backdrop-filter: blur(10px);
+}
+
+/* 标题栏：一行小字，宽度跟随标题块，绝不换行把顶栏撑高 */
+.hk-inline {
+  margin-top: 5px;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 点击复制：三个位置共用，指针变手型提示可交互 */
+.hk-clickable {
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.hk-clickable:hover {
+  opacity: 0.7;
+}

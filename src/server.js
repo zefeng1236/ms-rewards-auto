@@ -49,6 +49,7 @@ const logger = require("./logger");
 const core = require("./app-core");
 const runner = require("./runner");
 const webApi = require("./web-api");
+const { ipFromRequest } = require("./wallpaper-limit");
 
 const PORT = Number(process.env.MS_REWARDS_PORT) || 25560;
 /** React 前端产物目录（vite.web.config.ts 的 outDir） */
@@ -519,7 +520,8 @@ async function handle(req, res) {
       }
 
       try {
-        const data = await api.dispatch(m, a);
+        // 壁纸按来源 IP 限流（每 IP 每分钟 60 次），需要请求的真实 IP
+        const data = await api.dispatch(m, a, { ip: ipFromRequest(req) });
         return json(res, 200, { ok: true, data });
       } catch (e) {
         logger.error(`RPC ${m} 出错: ${e.message}`);

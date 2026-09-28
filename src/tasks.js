@@ -169,7 +169,13 @@ async function taskRead(ctx, token) {
     let articlesDone = Math.floor(cur / rewards.POINTS_PER_ARTICLE);
     // 单次数量限制：把剩余篇数摊到多轮里读，随机开关打开时还会小幅波动
     const limits = normalizeLimits(cfg.limits);
-    const plan = resolveTaskCount({ base: limits.read, total: readsNeeded, random: limits.random });
+    // 一次性完成模式（首页红色按钮）：base=0 即不限制、并关掉随机，
+    // 保证这一轮真的把剩余篇数全部读完，而不是只做设定的几篇
+    const plan = resolveTaskCount({
+      base: ctx.force ? 0 : limits.read,
+      total: readsNeeded,
+      random: ctx.force ? false : limits.random,
+    });
     const toRead = plan.count;
     // 写入初始篇数，GUI 卡片可实时显示「已读/总数」
     state.get().readArticles = { done: articlesDone, total: articlesTotal };
@@ -750,7 +756,12 @@ async function taskPromos(ctx) {
 
   // 单次数量限制：本轮只做其中一部分，剩下的留到下一轮（随机开关可小幅波动）
   const limits = normalizeLimits(cfg.limits);
-  const plan = resolveTaskCount({ base: limits.promos, total: totalNewTasks, random: limits.random });
+  // 一次性完成模式：base=0（不限制）+ 关随机，一轮把检测到的活动全部做完
+  const plan = resolveTaskCount({
+    base: ctx.force ? 0 : limits.promos,
+    total: totalNewTasks,
+    random: ctx.force ? false : limits.random,
+  });
   const queue = promosArr.slice(0, plan.count);
   const runCount = queue.length;
 
@@ -902,12 +913,26 @@ async function taskSearch(ctx) {
     }
   }
 
-  // 本轮计划次数 = 随机节奏 与 服务器剩余额度 取小（最后一轮不超搜）
+  // 本轮计划次数 = 随机节奏 4–7（不再与服务器剩余额度取小）。
+  // 允许随机多于当天的剩余额度：多出来的几次在下方 while 的满额判定里会被
+  // 安全短路，拿不到额外分，但从「每次刚好接到额度上限」的规律性中走了出来。
+  // 循环内仍保留 `progress < max` 的硬护栏，绝不可能无限搜或打爆接口。
   const remaining =
     Math.max(0, (search.pc.max || 0) - (search.pc.progress || 0)) +
     Math.max(0, (search.m.max || 0) - (search.m.progress || 0));
-  const limit = Math.max(1, Math.min(randInt(4, 7), remaining));
-  logger.log("🔍", `服务器进度已同步，本轮计划搜索 ${limit} 次（剩余 ${remaining} 次，PC:${search.pc.progress}/${search.pc.max} Mobile:${search.m.progress}/${search.m.max}）`);
+  // limit 来源优先级：limit.search >0（用户显式设了固定值）> force（一次性完成，6–9）> 默认随机（4–7）。
+  // 不再受 remaining 截断 —— 多出来的几次在循环满额判定里自然短路。
+  const setBase = normalizeLimits(cfg.limits).search;
+  let limit;
+  if (setBase > 0) {
+    limit = setBase;
+  } else if (ctx.force) {
+    limit = randInt(6, 9);
+  } else {
+    limit = randInt(4, 7);
+  }
+  const source = setBase > 0 ? "用户设定" : ctx.force ? "force" : "随机";
+  logger.log("🔍", `服务器进度已同步，本轮计划搜索 ${limit} 次（来源 ${source}，剩余 ${remaining} 次，PC:${search.pc.progress}/${search.pc.max} Mobile:${search.m.progress}/${search.m.max}）`);
   let searched = 0;
 
   while (searched < limit && (search.pc.progress < search.pc.max || search.m.progress < search.m.max)) {

@@ -6,6 +6,7 @@ import { useAppState } from "../hooks/useAppState";
 import { SettingsForm } from "../components/SettingsForm";
 import { AskTextModal } from "../components/AskTextModal";
 import { WebLoginModal } from "../components/WebLoginModal";
+import { RunAllConfirm } from "../components/RunAllConfirm";
 import { mergeDeep } from "../utils";
 import type { AccountLogEntry, AppConfig, DeepPartial, GoalItem } from "../types";
 
@@ -189,6 +190,8 @@ export function AccountDetail({
   const [renameOpen, setRenameOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
+  // 「立即完成当日全部任务」的二次确认弹窗（5 秒倒计时）
+  const [forceConfirmOpen, setForceConfirmOpen] = useState(false);
 
   const account = useMemo(
     () => accounts.find((a) => a.id === selectedId) || accounts[0] || null,
@@ -359,6 +362,24 @@ export function AccountDetail({
     }
   };
 
+  /**
+   * 立即完成当日全部任务：忽略「单次执行数量」限制，一轮把该账户当天任务跑完。
+   * 与「立即运行」的区别就在这里 —— 后者仍按 limits 分批发货，更贴近日常自动化行为。
+   */
+  const onForceRun = async () => {
+    if (!account) return;
+    setForceConfirmOpen(false);
+    setBusy("forceRun");
+    try {
+      const r = await api.run(account.id, { force: true });
+      if (!r.ok) toast.error(r.error || "运行失败");
+      else toast.success("已完成当日全部任务");
+      await refreshAccounts();
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const onRename = async (name: string) => {
     if (!account) return;
     await api.renameAccount(account.id, name);
@@ -503,14 +524,24 @@ export function AccountDetail({
                 ■ 停止此账号
               </GlassButton>
             ) : (
-              <GlassButton variant="glassProminent" controlSize="small"
-                onClick={onRun}
-                loading={busy === "run"}
-                disabled={running}
-                title={thisWaiting ? "该账号正在排队等待" : "仅运行当前账号"}
-              >
-                {thisWaiting ? "排队中…" : "立即运行"}
-              </GlassButton>
+              <>
+                <GlassButton variant="glassProminent" controlSize="small"
+                  onClick={onRun}
+                  loading={busy === "run"}
+                  disabled={running}
+                  title={thisWaiting ? "该账号正在排队等待" : "仅运行当前账号（遵循「单次执行数量」分批限制）"}
+                >
+                  {thisWaiting ? "排队中…" : "立即运行"}
+                </GlassButton>
+                <GlassButton variant="destructive" controlSize="small"
+                  onClick={() => setForceConfirmOpen(true)}
+                  loading={busy === "forceRun"}
+                  disabled={running}
+                  title="忽略分批限制，一轮完成该账户当天全部任务（弹窗倒计时 5 秒后仍需二次确认）"
+                >
+                  ⚡ 立即完成
+                </GlassButton>
+              </>
             )}
             {thisWaiting && (
               <GlassButton variant="destructive" controlSize="small" onClick={() => void onStopThis()} loading={stopping}>
@@ -520,6 +551,15 @@ export function AccountDetail({
           </div>
         </div>
       </AppCard>
+
+      {/* 「立即完成当日全部任务」的二次确认（5 秒倒计时 + 手动确认） */}
+      <RunAllConfirm
+        open={forceConfirmOpen}
+        count={1}
+        accountName={account?.name}
+        onCancel={() => setForceConfirmOpen(false)}
+        onConfirm={() => void onForceRun()}
+      />
 
       {/* ---- 今日任务进度 ---- */}
       <div className="block">

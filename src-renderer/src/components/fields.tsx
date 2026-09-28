@@ -52,7 +52,7 @@ export function NumberField({
         min={min}
         max={max}
         step={step}
-        onChange={(v) => onChange(Number(v) || 0)}
+        onChange={(v) => onChange(v == null ? 0 : Number(v))}
         size="sm"
       />
       {hint && <div className="hint">{hint}</div>}

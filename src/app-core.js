@@ -149,7 +149,7 @@ function vaultGuard() {
  * 串行运行一批账号（账号间随机 20–60 秒），统一维护每账号状态。
  * 调用方需自行做 running 全局锁判断。
  */
-async function runIds(ids, interactive) {
+async function runIds(ids, interactive, opts = {}) {
   const valid = [];
   for (const rawId of ids || []) {
     const id = String(rawId);
@@ -167,6 +167,8 @@ async function runIds(ids, interactive) {
       interactive,
       minGap: 20,
       maxGap: 60,
+      // force：「立即一次性完成全部任务」忽略单次数量限制（limits.read/promos）
+      force: opts.force === true,
       shouldSkip: (id) => batchSkip.has(String(id)),
       onPhase: (id, _name, phase, info) => {
         if (phase === "start") {
@@ -343,13 +345,13 @@ async function syncAccount(id) {
 }
 
 /** 运行单个账户（单账号无账号间等待） */
-async function runOne(id) {
+async function runOne(id, opts = {}) {
   const vg = vaultGuard();
   if (vg) return vg;
   if (running) return { ok: false, error: "已有任务正在运行，请稍候" };
   const acc = accounts.get(id);
   if (!acc) return { ok: false, error: "账户不存在" };
-  const r = await runIds([id], true);
+  const r = await runIds([id], true, opts);
   const single = (r.results || [])[0];
   if (r.ok && single) {
     return {
@@ -361,14 +363,18 @@ async function runOne(id) {
   return r;
 }
 
-/** 运行全部已启用账户 */
-async function runAllEnabled() {
+/**
+ * 运行全部已启用账户
+ * @param {object} [opts]
+ * @param {boolean} [opts.force] true = 忽略「单次执行数量」限制，一轮做完当天全部任务
+ */
+async function runAllEnabled(opts = {}) {
   const vg = vaultGuard();
   if (vg) return vg;
   if (running) return { ok: false, error: "已有任务正在运行，请稍候" };
   const ids = accounts.list().filter((a) => a.enabled).map((a) => a.id);
   if (ids.length === 0) return { ok: false, error: "没有已启用的账户" };
-  return runIds(ids, true);
+  return runIds(ids, true, opts);
 }
 
 /** 运行勾选的账户 */

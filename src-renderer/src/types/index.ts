@@ -42,6 +42,40 @@ export interface RunTaskResult {
   [k: string]: unknown;
 }
 
+/**
+ * 「运行全部」的可选参数
+ */
+export interface RunAllOptions {
+  /**
+   * true = 一次性完成模式：忽略每个任务的「单次执行数量」限制
+   * （即按 limits.read / limits.promos = 0 处理），一轮把当天任务全部做完。
+   * 仅对本次运行生效，不会改用户的配置。
+   */
+  force?: boolean;
+}
+
+/**
+ * 每日一言（接口 https://v1.hitokoto.cn）。
+ * 后端按天缓存到 storage/hitokoto.json，界面与推送共用同一句 ——
+ * 前端不要自己去 fetch 公益接口，否则 QPS 翻倍且两边句子不一致。
+ */
+export interface Hitokoto {
+  text: string;
+  /** 出处（作品名） */
+  from: string;
+  /** 作者 */
+  fromWho: string;
+  uuid: string;
+  /** 缓存日期 YYYY-MM-DD */
+  date: string;
+}
+
+/**
+ * 每日一言在界面上的显示位置。
+ * 取值必须与 src/hitokoto.js 的 POSITIONS.key 严格一一对应（selfcheck 有跨文件守卫）。
+ */
+export type HitokotoPosition = "sidebar" | "bottomRight" | "topbar";
+
 /** 有效配置（已按「全局 → 账户覆盖」合并后的结果） */
 export interface AppConfig {
   /** 仅账户级配置才有：true 表示完全跟随全局 */
@@ -79,6 +113,8 @@ export interface AppConfig {
     read: number;
     /** 积分活动每次最多几个，0 = 不限制 */
     promos: number;
+    /** 搜索每次每轮的次数，0 = 沿用内置随机节奏（4–7，一次性完成模式 6–9） */
+    search: number;
   };
   schedule: {
     enable: boolean;
@@ -102,6 +138,15 @@ export interface AppConfig {
     feishu: string;
     pushme: string;
     bark: string;
+    /** 推送中附加每日一言，默认开启 */
+    hitokoto: boolean;
+    /**
+     * 一言在界面上的显示位置：
+     *   sidebar     —— 左下角侧边栏、贴窗口底部（默认）
+     *   bottomRight —— 右下角、贴窗口底部
+     *   topbar      —— 标题栏（压缩成一行小字）
+     */
+    hitokotoPosition: HitokotoPosition;
   };
   logging: {
     /** 历史日志保留天数，默认 7，范围 1–365 */

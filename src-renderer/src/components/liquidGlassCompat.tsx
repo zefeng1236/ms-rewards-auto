@@ -118,13 +118,28 @@ export function InputNumber({ value, defaultValue, onChange, precision, ...props
     if (!Number.isFinite(parsed)) return null;
     return typeof precision === "number" ? Number(parsed.toFixed(precision)) : parsed;
   };
+  const initial = value ?? defaultValue;
+  const [draft, setDraft] = useState(initial == null ? "" : String(initial));
+  const editingEmpty = useRef(false);
+
+  useEffect(() => {
+    // 清空数字时父层通常会把 null 归一化成 0；保留当前空草稿，避免输入框立即补回 0。
+    if (editingEmpty.current && (value === 0 || value == null)) return;
+    editingEmpty.current = false;
+    setDraft(value == null ? "" : String(value));
+  }, [value]);
+
   return (
     <Input
       {...props}
       type="number"
-      value={value ?? undefined}
-      defaultValue={defaultValue ?? undefined}
-      onChange={(event) => onChange?.(normalize(event.target.value))}
+      value={draft}
+      onChange={(event) => {
+        const raw = event.target.value;
+        editingEmpty.current = raw === "";
+        setDraft(raw);
+        onChange?.(normalize(raw));
+      }}
     />
   );
 }

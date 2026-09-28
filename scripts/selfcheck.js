@@ -10,6 +10,7 @@
 const fs = require("fs");
 const path = require("path");
 const esbuild = require("esbuild");
+const { execFileSync } = require("child_process");
 
 const ROOT = path.join(__dirname, "..");
 let pass = 0;
@@ -341,8 +342,9 @@ const plan = (o) => resolveTaskCount(o);
 
 // —— 需求原例 ——
 const lim1 = plan({ base: 6, total: 10, random: true, rng: plus(4) });
-check("例①总10/设6/随机+4：会一次做完 → 取消随机，仍执行 6", lim1.count, 6);
-check("例①：随机未生效", lim1.applied, false);
+// 0.13.11 起：随机允许等于/超过任务总数（多出的次数在任务侧被满额短路），不再取消随机
+check("例①总10/设6/随机+4：允许上探到 10（不再取消随机）", lim1.count, 10);
+check("例①：随机生效", lim1.applied, true);
 const lim2 = plan({ base: 4, total: 10, random: true, rng: minus(4) });
 check("例②总10/设4/随机-4：会变成 0 个 → 取消随机，仍执行 4", lim2.count, 4);
 check("例②：随机未生效", lim2.applied, false);
@@ -375,7 +377,9 @@ check(
   [0, 3, 3]
 );
 
-// —— 穷举：任意组合下数量恒在 [0,total]，随机生效时恒在 1..total-1 ——
+// —— 穷举：任意组合下数量恒在 [0,total+4]；随机生效时 >=1 且 <= total+4 ——
+// 0.13.11 起随机允许上探到 total + MAX_DELTA（多出的在任务侧被满额短路），
+// 所以上限从 total 放宽到 total + MAX_DELTA。
 let bad = 0;
 let appliedCount = 0;
 for (let total = 0; total <= 12; total++) {
@@ -383,30 +387,30 @@ for (let total = 0; total <= 12; total++) {
     for (const r1 of [0, 0.1, 0.49, 0.5, 0.51, 0.99]) {
       for (const r2 of [0, 0.1, 0.49, 0.5, 0.51, 0.99]) {
         const p = resolveTaskCount({ base, total, random: true, rng: seqRng(r1, r2) });
-        if (!Number.isInteger(p.count) || p.count < 0 || p.count > total) bad++;
+        if (!Number.isInteger(p.count) || p.count < 0 || p.count > total + 4) bad++;
         if (p.applied) {
           appliedCount++;
-          if (p.count < 1 || p.count >= total) bad++;
+          if (p.count < 1 || p.count > total + 4) bad++;
         }
       }
     }
   }
 }
-check("穷举组合：数量恒在 [0,total]，随机生效时恒在 1..total-1", bad, 0);
+check("穷举组合：数量恒在 [0,total+4]，随机生效时恒在 1..total+4", bad, 0);
 checkTrue("穷举中确有随机生效的样本（断言非空转）", appliedCount > 200, `applied 样本仅 ${appliedCount} 个`);
 
 // —— 归一化 ——
 check(
   "limits 归一化：随机只认 true，篇数取整、负数回 0",
   normalizeLimits({ random: "yes", read: 6.9, promos: -3 }),
-  { random: false, read: 6, promos: 0 }
+  { random: false, read: 6, promos: 0, search: 0 }
 );
-check("limits 归一化：空值 → 全部不限制", normalizeLimits(null), { random: false, read: 0, promos: 0 });
+check("limits 归一化：空值 → 全部不限制", normalizeLimits(null), { random: false, read: 0, promos: 0, search: 0 });
 
 // —— 静态守卫：任务侧接入 ——
 const tasksSrc2 = fs.readFileSync(path.join(ROOT, "src", "tasks.js"), "utf8");
-checkTrue("阅读任务接入单次数量限制", /resolveTaskCount\(\{ base: limits\.read/.test(tasksSrc2));
-checkTrue("活动任务接入单次数量限制", /resolveTaskCount\(\{ base: limits\.promos/.test(tasksSrc2));
+checkTrue("阅读任务接入单次数量限制", /base:\s*(ctx\.force \? 0 : limits\.read)/.test(tasksSrc2));
+checkTrue("活动任务接入单次数量限制", /base:\s*(ctx\.force \? 0 : limits\.promos)/.test(tasksSrc2));
 checkTrue("阅读未读完不标记完成", /if \(toRead >= readsNeeded\)/.test(tasksSrc2));
 checkTrue("活动未做完不标记完成", /if \(runCount >= totalNewTasks\)/.test(tasksSrc2));
 
@@ -445,9 +449,9 @@ check("老配置归一化补上 20/300 且默认开启", [scOld.randomDelay, scO
 const cfgDefaults = require(path.join(ROOT, "src", "config.js")).DEFAULTS;
 const globalDefaults = require(path.join(ROOT, "src", "global-config.js")).GLOBAL_DEFAULTS;
 const mockSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "api", "mock.ts"), "utf8");
-check("config.DEFAULTS 含 limits", cfgDefaults.limits, { random: false, read: 0, promos: 0 });
-check("global-config 默认值同步含 limits", globalDefaults.limits, { random: false, read: 0, promos: 0 });
-checkTrue("渲染层 mock 默认值同步含 limits", /limits: \{ random: false, read: 0, promos: 0 \}/.test(mockSrc));
+check("config.DEFAULTS 含 limits", cfgDefaults.limits, { random: false, read: 0, promos: 0, search: 0 });
+check("global-config 默认值同步含 limits", globalDefaults.limits, { random: false, read: 0, promos: 0, search: 0 });
+checkTrue("渲染层 mock 默认值同步含 limits（含 search）", /limits: \{ random: false, read: 0, promos: 0, search: 0 \}/.test(mockSrc));
 // 0.9.4 白屏根因：global-config 的 GLOBAL_DEFAULTS 缺 goals，旧配置文件只有
 // { enable: true } 无 items，全局设置页 value.goals.items 抛 TypeError。必须与
 // config.DEFAULTS.goals 对齐，带 items: [] 兜底。
@@ -954,9 +958,33 @@ checkTrue(
   "taskSearch 拉取失败时续轮沿用本地计数（不许冲 0）",
   /搜索进度拉取失败，本轮沿用本地计数继续/.test(tasksSrcSearch)
 );
+// 需求变更：搜索允许随机「多于当日剩余任务数」，计划次数不再与 remaining 取小。
+// limit 来源优先级：limit.search >0（用户固定值）> force（一次性完成）> 默认随机。
 checkTrue(
-  "taskSearch 本轮计划次数以服务器剩余额度封顶",
-  /const limit = Math\.max\(1, Math\.min\(randInt\(4, 7\), remaining\)\)/.test(tasksSrcSearch)
+  "taskSearch 优先用 setBase = normalizeLimits(cfg.limits).search",
+  /const setBase = normalizeLimits\(cfg\.limits\)\.search;/.test(tasksSrcSearch)
+);
+checkTrue(
+  "taskSearch force 模式放大到 randInt(6, 9)",
+  /else if \(ctx\.force\) \{[\s\S]*?randInt\(6, 9\)/.test(tasksSrcSearch)
+);
+checkTrue(
+  "taskSearch 默认随机 randInt(4, 7)",
+  /else \{[\s\S]*?randInt\(4, 7\)/.test(tasksSrcSearch)
+);
+checkTrue(
+  "taskSearch 本轮计划次数不再被服务器剩余额度截断",
+  !/const limit = Math\.max\(1, Math\.min\(randInt\(4, 7\), remaining\)\)/.test(tasksSrcSearch)
+);
+// 类型层也含 search（防止 renderer 类型与后端脱节）
+checkTrue(
+  "渲染层 AppConfig.limits 含 search 字段",
+  /search: number;/.test(fs.readFileSync(path.join(ROOT, "src-renderer", "src", "types", "index.ts"), "utf8"))
+);
+// 设置页里出现搜索次数字段
+checkTrue(
+  "设置页出现搜索次数字段",
+  /label=\"搜索每次次数\"/.test(formSrc)
 );
 checkTrue(
   "taskSearch 旧「仅首轮拉取」分支已移除",
@@ -2448,6 +2476,160 @@ for (const modPath of ["appearance.js", "wallpapers.js", "storage-path.js"]) {
 }
 process.env.MS_REWARDS_STORAGE_DIR = catEnvBackup21;
 fs.rmSync(catRoot21, { recursive: true, force: true });
+
+/* ============ 0.13.11：一言 / 壁纸限流 / 目标勋章 / 一次性完成 ============ */
+console.log("\n【17】每日一言、壁纸限流、目标勋章与一次性完成");
+
+// —— 一言模块（隔离实例避免污染全局存储路径）——
+const hkRoot = fs.mkdtempSync(path.join(os.tmpdir(), "ms-rewards-hk-selfcheck-"));
+const hkEnvBackup = process.env.MS_REWARDS_STORAGE_DIR;
+process.env.MS_REWARDS_STORAGE_DIR = path.join(hkRoot, "storage");
+if (require.cache[require.resolve(path.join(ROOT, "src", "hitokoto.js"))]) {
+  delete require.cache[require.resolve(path.join(ROOT, "src", "hitokoto.js"))];
+}
+const hk = require(path.join(ROOT, "src", "hitokoto.js"));
+check("一言 API 指向官方公益接口", hk.API_URL, "https://v1.hitokoto.cn/?encode=json&max_length=30");
+// ts 是「取得时刻」的动态时间戳（30 秒 TTL 判据），不能参与深比较，单独断言
+const hkNorm = hk.normalize({ hitokoto: " 你好 ", from: "书", from_who: "作者", uuid: "u1" });
+check(
+  "一言归一化：取 text/from/from_who/uuid",
+  hkNorm && { text: hkNorm.text, from: hkNorm.from, fromWho: hkNorm.fromWho, uuid: hkNorm.uuid },
+  { text: "你好", from: "书", fromWho: "作者", uuid: "u1" }
+);
+checkTrue(
+  "一言归一化：带毫秒时间戳 ts（30 秒 TTL 的判据，非按天 date）",
+  typeof (hkNorm && hkNorm.ts) === "number" && Math.abs(Date.now() - hkNorm.ts) < 1000
+);
+check("一言归一化：缺正文返回 null", hk.normalize({ hitokoto: "   " }), null);
+check("一言格式化：带作者合成「正文 —— 作者」", hk.format({ text: "你好", fromWho: "作者" }), "你好 —— 作者");
+check("一言格式化：无作者只留正文", hk.format({ text: "你好" }), "你好");
+check("一言位置归一化：合法值原样保留", hk.normalizePosition("topbar"), "topbar");
+check("一言位置归一化：非法值回落 sidebar", hk.normalizePosition("garbage"), "sidebar");
+check("一言位置归一化：缺省回落 sidebar", hk.normalizePosition(undefined), "sidebar");
+process.env.MS_REWARDS_STORAGE_DIR = hkEnvBackup;
+fs.rmSync(hkRoot, { recursive: true, force: true });
+
+// —— 壁纸限流（滑动窗口，纯内存无副作用）——
+const wl = require(path.join(ROOT, "src", "wallpaper-limit.js"));
+wl.reset();
+const wlBase = 1_000_000;
+let wlOk = 0;
+for (let i = 0; i < wl.MAX_PER_MIN; i++) if (wl.take("1.2.3.4", wlBase + i * 10)) wlOk++;
+check(`窗口内前 ${wl.MAX_PER_MIN} 次全部放行`, wlOk, wl.MAX_PER_MIN);
+check(`第 ${wl.MAX_PER_MIN + 1} 次被拦截`, wl.take("1.2.3.4", wlBase + wl.MAX_PER_MIN * 10), false);
+// 窗口滑过 60 秒后重新放行
+check("窗口滑过 60 秒后重新放行", wl.take("1.2.3.4", wlBase + 60 * 1000 + 1), true);
+wl.reset();
+for (let i = 0; i < wl.MAX_PER_MIN; i++) wl.take("5.6.7.8", wlBase + i * 10);
+check("不同 IP 互不影响（B 不受 A 满额影响）", wl.take("9.9.9.9", wlBase + 1), true);
+check("IPv4-mapped IPv6 归一化到同一来源", wl.normalizeIp("::ffff:1.2.3.4"), "1.2.3.4");
+check("回环统一归一到本机 key", [wl.normalizeIp("::1"), wl.normalizeIp("127.0.0.1")], [wl.LOCAL_KEY, wl.LOCAL_KEY]);
+check("XFF 取第一跳", wl.ipFromRequest({ headers: { "x-forwarded-for": "1.2.3.4, 10.0.0.1" }, socket: { remoteAddress: "6.6.6.6" } }), "1.2.3.4");
+check("无代理头回落 socket 地址", wl.ipFromRequest({ headers: {}, socket: { remoteAddress: "6.6.6.6" } }), "6.6.6.6");
+wl.reset();
+
+// —— 目标勋章图标 ——
+const goalsSrc = fs.readFileSync(path.join(ROOT, "src", "goals.js"), "utf8");
+const goalsMod = require(path.join(ROOT, "src", "goals.js"));
+checkTrue("目标行带勋章图标前缀", /const MEDAL = "🏅 "/.test(goalsSrc));
+const oneLine = goalsMod.formatOne({ name: "测试", current: 120, target: 300, reached: false, remain: 180 });
+checkTrue("目标行实际输出带勋章图标", oneLine.startsWith("🏅 "), `实际: ${oneLine}`);
+const medalLine = goalsMod.formatOne({ name: "🏅 测试", current: 300, target: 300, reached: true, rewardName: "" });
+checkTrue("已带图标的名称不重复叠加", medalLine.startsWith("🏅 ") && !medalLine.startsWith("🏅 🏅 "), `实际: ${medalLine}`);
+
+// —— 通知外壳：版本号 + 一言首末行 + 无重复 ——
+const notifySrc = fs.readFileSync(path.join(ROOT, "src", "notify.js"), "utf8");
+checkTrue("notify 复用 displayVersion() 而非手拼版本", /require\("\.\/version"\)/.test(notifySrc) && /displayVersion\(\)/.test(notifySrc));
+// sendText 必须仍只调用一次外壳拼装（把一句话抬到标题之上时改用了 opts，
+// 不能退化成「标题前拼一次 + 正文里再拼一次」两处拼装）
+checkTrue(
+  "sendText 仅调用一次 withAccountHeader（外壳唯一拼装点）",
+  // testPush 也用外壳（预览用），这里只要求 sendText 函数体内恰好拼装一次
+  (() => {
+    const from = notifySrc.indexOf("async function sendText");
+    const to = notifySrc.indexOf("async function sendSummary");
+    return from >= 0 && to > from && (notifySrc.slice(from, to).match(/withAccountHeader\(/g) || []).length === 1;
+  })() &&
+    /await withAccountHeader\(ctx, text, \{ skipTop: !!lead \}\)/.test(notifySrc)
+);
+checkTrue(
+  "sendSummary 不再二次 withAccountHeader",
+  /await sendText\(ctx, `Rewards 运行汇总 \$\{date\}`, summary\)/.test(notifySrc)
+);
+checkTrue(
+  "一言关闭与否只由 quoteLine 一处判定（避免两处口径漂移）",
+  /async function quoteLine\(notice, override, force = false\)/.test(notifySrc) &&
+    /const line = await quoteLine\(notice, opts\.quote\);/.test(notifySrc)
+);
+checkTrue(
+  "一句话顶到标题之上（buildRequests 支持 lead，标题下沉一行）",
+  /const lead = opts\.lead \? `\$\{opts\.lead\}\\n` : "";/.test(notifySrc) &&
+    /const titlePart = opts\.includeTitleInBody === false \? "" : `\$\{title\}\\n`;/.test(notifySrc) &&
+    /const content = `\$\{lead\}\$\{titlePart\}\$\{body\}`;/.test(notifySrc)
+);
+checkTrue(
+  "汇总推送也带 lead（标题不进正文时一句话不被吞）",
+  /const lead = await quoteLine\(noticeCfg, undefined, true\);/.test(notifySrc) &&
+    // 回归反例：曾写过 `isSummary ? "" : ...`，导致汇总推送第一行变成用户名行
+    !/const lead = isSummary \? "" :/.test(notifySrc)
+);
+checkTrue("测试推送同样 force 刷新一言", /const lead = await quoteLine\(cfg, undefined, true\);/.test(notifySrc));
+
+// —— 一次性完成：force 穿透到任务层，忽略单次数量限制 ——
+const tasksForceSrc = fs.readFileSync(path.join(ROOT, "src", "tasks.js"), "utf8");
+const runnerForceSrc = fs.readFileSync(path.join(ROOT, "src", "runner.js"), "utf8");
+checkTrue("runner 用派生 ctx 传递 force（不污染原账户上下文）", /opts\.force === true \? \{ \.\.\.ctxRaw, force: true \} : ctxRaw/.test(runnerForceSrc));
+checkTrue("阅读任务在 force 时按 base=0（不限制）", /ctx\.force \? 0 : limits\.read/.test(tasksForceSrc));
+checkTrue("活动任务在 force 时按 base=0（不限制）", /ctx\.force \? 0 : limits\.promos/.test(tasksForceSrc));
+checkTrue(
+  "搜索不再按服务器剩余额度硬截断（setBase 优先，否则 force/随机）",
+  /const setBase = normalizeLimits\(cfg\.limits\)\.search;/.test(tasksForceSrc) &&
+    !/const limit = Math\.max\(1, Math\.min\(randInt\(4, 7\), remaining\)\)/.test(tasksForceSrc)
+);
+
+// —— 默认值跨文件同步（含 hitokoto / hitokotoPosition）——
+check("config.DEFAULTS.notice 含 hitokoto 开关与位置", cfgDefaults.notice.hitokotoPosition, "sidebar");
+check("global-config 默认值同步含位置", globalDefaults.notice.hitokotoPosition, "sidebar");
+checkTrue("渲染层 mock 默认值同步含位置", /hitokotoPosition: "sidebar"/.test(mockSrc));
+checkTrue("设置页出现一只言位置下拉", /显示位置/.test(formSrc) && /hitokotoPosition/.test(formSrc));
+
+// —— 一言：30 秒轮询 + 后台暂停 + 点击复制（批次 C）——
+const hookSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "hooks", "useAppState.tsx"), "utf8");
+const hkInterval = hookSrc.slice(hookSrc.indexOf("hitokotoEnabled ="), hookSrc.indexOf("}, [hitokotoEnabled, globalConfig])"));
+checkTrue("一言轮询间隔为 30 秒（非按天）", /const TICK_MS = 30_000;/.test(hkInterval));
+checkTrue(
+  "一言后台（窗口隐藏）时停止轮询，切回前台立即刷新",
+  /addEventListener\("visibilitychange", onVisibility\)/.test(hkInterval) &&
+    /if \(document\.hidden\) \{\s*stop\(\);/.test(hkInterval) &&
+    /fetchQuote\(\);\s*start\(\);/.test(hkInterval)
+);
+// 反例防线：绝不能退化成「一条永不停歇的 setInterval」，那会在后台持续请求公益接口
+checkTrue(
+  "一言定时器可停（未写成不可控的裸定时轮询）",
+  !/setInterval\(fetchQuote, TICK_MS\)\s*;?\s*\n\s*\}, \[/.test(hkInterval) && /if \(!document\.hidden\) start\(\);/.test(hkInterval)
+);
+
+const appSrcHk = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "App.tsx"), "utf8");
+const sidebarSrcHk = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "components", "Sidebar.tsx"), "utf8");
+const globalCssHk = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "styles", "global.css"), "utf8");
+for (const [label, src] of [["App.tsx", appSrcHk], ["Sidebar.tsx", sidebarSrcHk]]) {
+  checkTrue(`${label} 支持点击一言复制到剪贴板`, /const copyHitokoto = /.test(src) && /writeText\(hitokoto\)/.test(src));
+}
+// 一言出现的三处容器：侧边栏 / 标题栏 / 右下角，都必须挂上可点击的钩子
+checkTrue("三个展示位置都挂 hk-clickable 复制钩子", (appSrcHk.match(/hk-clickable/g) || []).length === 2 && /hk-clickable/.test(sidebarSrcHk));
+checkTrue("global.css 定义 .hk-clickable 悬停反馈", /\.hk-clickable/.test(globalCssHk) && /\.hk-clickable:hover/.test(globalCssHk));
+
+// —— 推送版式：跑真实路径（桩掉 fetch / 临时 storage），断言最终报文 ——
+// 静态正则只能证明代码长这样；这里证明「收到的消息真的是这样」。
+try {
+  const out = execFileSync(process.execPath, [path.join(ROOT, "scripts", "verify-notify-format.js")], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  checkTrue("推送版式真实路径验收", /✅ 推送版式验收通过/.test(out), `输出: ${String(out).trim().slice(0, 200)}`);
+} catch (e) {
+  checkTrue("推送版式真实路径验收", false, `脚本失败: ${String(e.stdout || e.message).trim().slice(0, 300)}`);
+}
 
 /* ============ 汇总 ============ */
 console.log(`\n${"=".repeat(46)}`);

@@ -64,13 +64,24 @@ function evaluate(cfgGoals, ctxNums) {
 const SCOPE_LABEL = { balance: "总积分" };
 
 /**
+ * 目标行统一的勋章图标前缀。
+ *
+ * 加在【推送汇总】与所有复用本模块的输出里（展示口径必须一致，
+ * 否则仪表盘和推送消息会长得不一样）。抽成常量而不是散落在各条 return 里，
+ * 是为了 selfcheck 能直接断言「目标行必带图标」这条规则。
+ */
+const MEDAL = "🏅 ";
+
+/**
  * 单条目标的展示文案
  *
- * 未达成      -> 🎯 每日目标（今日 120/300）还差 180 分
- * 刚好/超出   -> 🎯 每日目标（今日 320/300）当前目标已达成（106.7%）
+ * 未达成      -> 🏅 目标已完成120还差180积分
+ * 刚好/超出   -> 🏅 目标当前已可兑换2个奖品名，距离下一个还剩xx积分
  */
 function formatOne(r) {
-  const head = `${r.name}目标`;
+  const rawName = String((r && r.name) || "").trim();
+  // 调用方可能已经带了别的图标，这里不再叠一层
+  const head = rawName.startsWith(MEDAL.trim()) ? `${rawName}目标` : `${MEDAL}${rawName}目标`;
   if (!r.reached) return `${head}已完成${r.current}还差${r.remain}积分`;
   if (r.rewardName) {
     const count = Math.floor(r.current / r.target);
@@ -88,4 +99,4 @@ function formatLines(cfgGoals, ctxNums) {
   return res.items.map(formatOne);
 }
 
-module.exports = { normalizeGoals, evaluate, evalOne, formatOne, formatLines, SCOPE_LABEL };
+module.exports = { normalizeGoals, evaluate, evalOne, formatOne, formatLines, SCOPE_LABEL, MEDAL };

@@ -55,8 +55,14 @@ async function runAccountGuarded(ctx, opts) {
  * @param {object} ctx 账户上下文
  * @param {{interactive?: boolean}} [opts]
  */
-async function runOnce(ctx, opts = {}) {
+async function runOnce(ctxRaw, opts = {}) {
   const interactive = !!opts.interactive;
+  // 「立即一次性完成全部」模式：忽略单次执行数量限制（limits.read/promos），
+  // 一轮把当天的任务全部做完。
+  // 用派生 ctx 而不是直接改 accounts.context() 返回的对象 —— 那个对象可能被复用，
+  // 原地写 force 会让之后的定时运行也被"解锁限制"，等于开关关不掉。
+  const ctx = opts.force === true ? { ...ctxRaw, force: true } : ctxRaw;
+  if (opts.force === true) logger.info("已进入「一次性完成」模式：本轮忽略单次执行数量限制");
   const cfg = ctx.config.get();
   const state = ctx.state;
   const result = { account: { id: ctx.id, name: ctx.name }, tasks: {}, ok: true, reason: "" };

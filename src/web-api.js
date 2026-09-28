@@ -37,6 +37,8 @@ const logger = require("./logger");
 const notify = require("./notify");
 const uapi = require("./uapi");
 const wallpapers = require("./wallpapers");
+const hitokoto = require("./hitokoto");
+const limit = require("./wallpaper-limit");
 const core = require("./app-core");
 
 /** 壁纸本地缓存目录（与 electron-main 保持一致：storage/cache） */
@@ -115,8 +117,9 @@ function localPathFromSrc(src) {
  * 当前背景应显示的图片地址（Web 版）。
  * 随机图源先缓存到本地（保证各处看到同一张），再返回可被浏览器加载的 HTTP 地址。
  * emitFn 可选：传入时下载过程会推送 bg-progress 事件给 SSE。
+ * clientIp 可选：壁纸请求按来源 IP 限流（每 IP 每分钟最多 60 次，见 ./wallpaper-limit）。
  */
-async function bgSrc(opts = {}, emitFn) {
+async function bgSrc(opts = {}, emitFn, clientIp = "") {
   const { fresh = false, auth = false } = opts || {};
   const cfg0 = appearance.get();
   // auth=true：登录页/向导背景解析（与主界面 bgType 无关）——
@@ -135,12 +138,20 @@ async function bgSrc(opts = {}, emitFn) {
     const cacheName = `bg-${key}.img`;
     const cacheFile = path.join(BG_CACHE_DIR, cacheName);
     if (fresh || !fs.existsSync(cacheFile)) {
+      // 每 IP 每分钟最多 60 次。只有真的要向第三方发起请求时才占配额，
+      // 命中本地缓存的常规渲染不受影响；超限时跳过下载、继续用旧缓存。
+      const allowed = limit.take(clientIp);
+      if (!allowed) {
+        logger.warn(`壁纸请求已达每分钟上限（${limit.MAX_PER_MIN} 次），本次换图延后`);
+      }
       try {
-        fs.mkdirSync(BG_CACHE_DIR, { recursive: true });
-        const r = await downloadImage(url, cacheFile, {
-          onProgress: emitFn ? (info) => emitFn("bg-progress", info) : undefined,
-        });
-        if (!r.ok) logger.warn(`壁纸缓存失败: ${r.error || "未知错误"}`);
+        if (allowed) {
+          fs.mkdirSync(BG_CACHE_DIR, { recursive: true });
+          const r = await downloadImage(url, cacheFile, {
+            onProgress: emitFn ? (info) => emitFn("bg-progress", info) : undefined,
+          });
+          if (!r.ok) logger.warn(`壁纸缓存失败: ${r.error || "未知错误"}`);
+        }
       } catch (e) {
         logger.warn(`壁纸缓存失败: ${e.message}`);
       } finally {
@@ -291,9 +302,10 @@ function createApi({ emit }) {
       emit("appearance", next);
       return { ok: true, appearance: next, restartNeeded: false };
     },
-    async getBgSrc(opts) {
+    async getBgSrc(opts, ctx) {
       try {
-        const src = await bgSrc(opts, emit);
+        // ctx.ip 由 server.js 按请求来源注入，用于壁纸限流（每 IP 每分钟 60 次）
+        const src = await bgSrc(opts, emit, (ctx && ctx.ip) || "");
         // luma 由前端 canvas 采样（同源图片不污染画布），服务端不重复解码
         return { src, luma: null };
       } catch (e) {
@@ -392,6 +404,14 @@ function createApi({ emit }) {
     },
 
     /* ---------------------------- 通知 ---------------------------- */
+    /** 每日一言：界面取这一天的一句（与推送共用同一份按天缓存） */
+    async getHitokoto() {
+      try {
+        return await hitokoto.get();
+      } catch {
+        return null;
+      }
+    },
     async testPush(notice) {
       try {
         return await notify.testPush(notice || {}, "界面");
@@ -409,8 +429,8 @@ function createApi({ emit }) {
       }
       return r;
     },
-    run(id) { return core.runOne(id); },
-    runAll() { return core.runAllEnabled(); },
+    run(id, opts) { return core.runOne(id, opts); },
+    runAll(opts) { return core.runAllEnabled(opts || {}); },
     runSelected(ids) { return core.runSelected(ids); },
     sync(id) { return core.syncAccount(id); },
     stop() { return core.stopAll(); },
@@ -502,10 +522,19 @@ function createApi({ emit }) {
 
   /** 方法名白名单：防止前端拼错方法名时静默成功 */
   const KNOWN = new Set(Object.keys(methods));
+  /** 需要请求上下文（目前只用来源 IP 做壁纸限流）的方法 */
+  const CTX_METHODS = new Set(["getBgSrc"]);
 
-  async function dispatch(m, a) {
+  /**
+   * @param {string} m 方法名
+   * @param {any[]} a 参数数组
+   * @param {{ip?: string}} [ctx] 请求上下文，由 server.js 按 HTTP 请求注入
+   */
+  async function dispatch(m, a, ctx) {
     if (!KNOWN.has(m)) throw new Error(`未知方法: ${m}`);
     const args = Array.isArray(a) ? a : [];
+    // IP 显式传参而不是模块级变量：并发 RPC 时后者会被别的请求覆盖，限流就串了
+    if (CTX_METHODS.has(m)) return methods[m](...args, ctx);
     return methods[m](...args);
   }
 

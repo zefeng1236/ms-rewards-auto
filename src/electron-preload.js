@@ -70,12 +70,16 @@ contextBridge.exposeInMainWorld("api", {
   // Passkey 仅 Web/Docker 实现；桌面版走系统钥匙串免密，这里明确返回不支持
   passkeyRemove: async () => ({ ok: false, error: "桌面版不支持通行密钥（使用系统钥匙串免密）" }),
 
+  // 每日一言：后端按天缓存，界面与推送共用同一句（避免重复请求公益接口）
+  getHitokoto: () => ipcRenderer.invoke("hitokoto:get"),
+
   // 推送通知测试：把当前表单填的通道试发一遍，日志输出具体（脱敏）地址
   testPush: (notice) => ipcRenderer.invoke("notify:test", notice),
 
   login: (id) => ipcRenderer.invoke("account:login", id),
-  run: (id) => ipcRenderer.invoke("account:run", id),
-  runAll: () => ipcRenderer.invoke("app:runAll"),
+  run: (id, opts) => ipcRenderer.invoke("account:run", id, opts),
+  // opts: { force } —— 一次性完成模式，忽略单次执行数量限制
+  runAll: (opts) => ipcRenderer.invoke("app:runAll", opts),
   // 运行勾选的多个账号（串行 + 账号间随机 20–60 秒）
   runSelected: (ids) => ipcRenderer.invoke("app:runSelected", ids),
 

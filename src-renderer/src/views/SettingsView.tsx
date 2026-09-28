@@ -7,7 +7,7 @@ import { mergeDeep } from "../utils";
 import type { AppConfig, DeepPartial } from "../types";
 
 export function SettingsView() {
-  const { accounts, refreshAccounts } = useAppState();
+  const { accounts, refreshAccounts, refreshGlobalConfig } = useAppState();
   const [cfg, setCfg] = useState<AppConfig | null>(null);
 
   useEffect(() => {
@@ -22,6 +22,8 @@ export function SettingsView() {
     setCfg(next);
     // 全局值变了，遵循全局的账户有效配置随之改变
     await refreshAccounts();
+    // 一言的开关/位置也是全局的，界面要立刻跟着变（否则要刷新进程才看得到效果）
+    await refreshGlobalConfig();
   };
 
   const applyCount = accounts.filter((a) => a.useGlobal !== false).length;
@@ -44,6 +46,7 @@ export function SettingsView() {
             <SettingsForm
               value={cfg}
               showLogging
+              showHitokotoPosition
               onChange={(patch) => {
                 // 本地先乐观更新，避免输入框闪烁
                 setCfg((prev) => (prev ? mergeDeep(prev, patch) : prev));
