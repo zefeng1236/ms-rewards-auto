@@ -944,6 +944,24 @@ function registerIpc() {
     }
   });
 
+  // 日历与签到勋章：某账户某月的每日状态、连续签到天数、勋章获得次数
+  ipcMain.handle("history:get", (_e, id, year, month) => {
+    try {
+      return accounts.context(id).history.snapshot(year, month);
+    } catch (e) {
+      logger.error(`读取账户历史失败: ${e.message}`);
+      // 返回空壳而不是抛错：日历区块照常渲染，只是没有格子数据
+      return {
+        month: { year: year || 0, month: month || 0, days: [], perfect: false, doneDays: 0 },
+        streak: 0,
+        badges: {},
+        stats: null,
+        years: [],
+        today: "",
+      };
+    }
+  });
+
 
   ipcMain.handle("account:login", async (_e, id) => {
     const vg = vaultGuard();

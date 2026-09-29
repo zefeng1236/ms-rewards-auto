@@ -2636,6 +2636,136 @@ try {
   checkTrue("推送版式真实路径验收", false, `脚本失败: ${String(e.stdout || e.message).trim().slice(0, 300)}`);
 }
 
+/* ============ N. 签到日历与勋章 ============ */
+console.log("\n【N】签到日历与勋章（0.13.11 新增）");
+const osMod = require("os");
+const lunarMod = require(path.join(ROOT, "src", "lunar.js"));
+const badgesMod = require(path.join(ROOT, "src", "badges.js"));
+const historyMod = require(path.join(ROOT, "src", "history.js"));
+
+const fmtD = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+// —— 农历换算：用已知的春节/中秋等日期钉死，表改错立刻红 ——
+check("农历：2026 春节 = 2026-02-17", fmtD(lunarMod.lunarToSolar(2026, 1, 1)), "2026-02-17");
+check("农历：2026 中秋 = 2026-09-25", fmtD(lunarMod.lunarToSolar(2026, 8, 15)), "2026-09-25");
+check("农历：2026 端午 = 2026-06-19", fmtD(lunarMod.lunarToSolar(2026, 5, 5)), "2026-06-19");
+check("农历：2026 七夕 = 2026-08-19", fmtD(lunarMod.lunarToSolar(2026, 7, 7)), "2026-08-19");
+const revA = lunarMod.solarToLunar("2025-01-29");
+checkTrue("农历反向：2025-01-29 是正月初一", revA.month === 1 && revA.day === 1, JSON.stringify(revA));
+const revB = lunarMod.solarToLunar("2024-02-10");
+checkTrue("农历反向：2024-02-10 是正月初一", revB.month === 1 && revB.day === 1, JSON.stringify(revB));
+
+// —— 节日判定 ——
+check("节日：2026-12-25 是圣诞节", (badgesMod.festivalOn("2026-12-25") || {}).id, "christmas");
+check("节日：2026-10-31 是万圣节", (badgesMod.festivalOn("2026-10-31") || {}).id, "halloween");
+check("节日：2026-04-01 是愚人节", (badgesMod.festivalOn("2026-04-01") || {}).id, "fool");
+check("节日：2026-08-19 是七夕", (badgesMod.festivalOn("2026-08-19") || {}).id, "qixi");
+check("节日：2026-09-25 是中秋", (badgesMod.festivalOn("2026-09-25") || {}).id, "midautumn");
+check("节日：平常日子不误判为节日", badgesMod.festivalOn("2026-09-30"), null);
+check("节日：2026 全年共 20 个节日", badgesMod.festivalsOfYear(2026).length, 20);
+checkTrue(
+  "节日：清明节按节气浮动（2026-04-05）",
+  badgesMod.qingmingDay(2026) === "2026-04-05",
+  badgesMod.qingmingDay(2026)
+);
+
+// —— 勋章元数据：前端 badgeMeta.ts 必须与主进程 badges.js 逐字段一致 ——
+const metaSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "data", "badgeMeta.ts"), "utf8");
+const metaTriples = [...metaSrc.matchAll(/id:\s*"([^"]+)",\s*name:\s*"([^"]+)",\s*desc:\s*"[^"]*",\s*iconKey:\s*"([^"]+)"/g)]
+  .map((m) => `${m[1]}|${m[2]}|${m[3]}`)
+  .sort();
+const jsTriples = badgesMod.allBadges().map((b) => `${b.id}|${b.name}|${b.iconKey}`).sort();
+check("勋章元数据：前端与主进程 id/名称/图形一一对应", metaTriples, jsTriples);
+check("勋章总数：6 连续 + 1 全勤 + 20 节日 = 27", badgesMod.allBadges().length, 27);
+
+// —— 历史与勋章结算（真实读写临时目录） ——
+const tmpHist = fs.mkdtempSync(path.join(osMod.tmpdir(), "msr-hist-"));
+try {
+  const hh = historyMod.createHistory(tmpHist);
+  const D = { status: "done", done: 5, total: 5, points: 80 };
+  for (let i = 1; i <= 10; i++) hh.record(`2026-03-${String(i).padStart(2, "0")}`, D);
+  check("历史：连 10 天 → streak3 计数 1", hh.getBadges().streak3.count, 1);
+  check("历史：连 10 天 → streak10 计数 1", hh.getBadges().streak10.count, 1);
+  check("历史：连 10 天 → 未到 14 天不给", hh.getBadges().streak14, undefined);
+
+  // 断一天后重新连 3 天：同一档位应再发一次（否则「获得次数」永远停在 1）
+  hh.record("2026-03-11", { status: "error" });
+  for (const d of [12, 13, 14]) hh.record(`2026-03-${d}`, D);
+  check("历史：断后重新连 3 天 → streak3 累计 2", hh.getBadges().streak3.count, 2);
+
+  // 部分完成会中断连续
+  hh.record("2026-05-01", D);
+  hh.record("2026-05-02", { status: "partial", done: 2, total: 5 });
+  check("历史：部分完成中断连续（streak 归 1）", hh.record("2026-05-03", D).streak, 1);
+
+  // 好状态覆盖坏状态
+  hh.record("2026-04-01", { status: "error" });
+  hh.record("2026-04-01", D);
+  check("历史：先报错后跑通 → 记为 done", hh.getMonth(2026, 4).days[0].status, "done");
+  check("历史：4/1 是愚人节 → 顺带拿到节日勋章", (hh.getBadges().fool || {}).count, 1);
+  // 反向：先成功后报错，不能被降级成 error（否则跑完又重试失败会把绿格子刷红）
+  hh.record("2026-04-02", D);
+  hh.record("2026-04-02", { status: "error" });
+  check("历史：先跑通后报错 → 不降级，仍为 done", hh.getMonth(2026, 4).days[1].status, "done");
+
+  // 月全勤
+  for (let d = 1; d <= 30; d++) hh.record(`2026-06-${String(d).padStart(2, "0")}`, D);
+  check("历史：整月完成 → month.perfect", hh.getMonth(2026, 6).perfect, true);
+  check("历史：整月完成 → 授出全勤勋章", (hh.getBadges().perfectMonth || {}).count, 1);
+  check("历史：缺一天就不算全勤", hh.getMonth(2026, 3).perfect, false);
+
+  // 今天未跑不算断：连续天数从昨天往前数
+  const hh2 = historyMod.createHistory(fs.mkdtempSync(path.join(osMod.tmpdir(), "msr-hist-")));
+  const t = new Date();
+  const dKey = (dt) => fmtD(dt);
+  for (let i = 1; i <= 3; i++) {
+    const dd = new Date(t.getFullYear(), t.getMonth(), t.getDate() - i);
+    hh2.record(dKey(dd), D);
+  }
+  check("历史：今天还没跑时，连续天数从昨天算起", hh2.getStreak(), 3);
+} finally {
+  fs.rmSync(tmpHist, { recursive: true, force: true });
+}
+
+// —— 运行流程接入 ——
+const runnerSrc = fs.readFileSync(path.join(ROOT, "src", "runner.js"), "utf8");
+checkTrue("运行流程：成功后写入每日历史", /recordDay\(ctx, result, "ok"\)/.test(runnerSrc));
+checkTrue("运行流程：出错写入 error 状态", /recordDay\(ctx, null, "error"\)/.test(runnerSrc));
+checkTrue(
+  "运行流程：写在 runAccountGuarded 层（覆盖中途 return 的分支）",
+  /const result = await runOnce\(ctx, opts\);[\s\S]{0,80}recordDay\(ctx, result, "ok"\)/.test(runnerSrc)
+);
+const accountSrc = fs.readFileSync(path.join(ROOT, "src", "account.js"), "utf8");
+checkTrue("账户上下文挂载 history 实例", /history: createHistory\(dir\)/.test(accountSrc));
+
+// —— 接口链路六处同步（缺一处就是白屏或 RPC 未知方法） ——
+const preloadSrc = fs.readFileSync(path.join(ROOT, "src", "electron-preload.js"), "utf8");
+const mainSrcHist = fs.readFileSync(path.join(ROOT, "src", "electron-main.js"), "utf8");
+const webApiSrc = fs.readFileSync(path.join(ROOT, "src", "web-api.js"), "utf8");
+const webTsSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "api", "web.ts"), "utf8");
+const mockApiSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "api", "mock.ts"), "utf8");
+const dtsSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "types", "electron.d.ts"), "utf8");
+checkTrue("接口链路：preload 暴露 getHistory", /getHistory:/.test(preloadSrc) && /"history:get"/.test(preloadSrc));
+checkTrue("接口链路：主进程注册 history:get", /ipcMain\.handle\("history:get"/.test(mainSrcHist));
+checkTrue("接口链路：web-api 提供 getHistory", /getHistory\(id, year, month\)/.test(webApiSrc));
+checkTrue("接口链路：web.ts 转发 getHistory", /getHistory: \(id, year, month\) => rpc/.test(webTsSrc));
+checkTrue("接口链路：mock 提供 getHistory（dev:web 可预览）", /getHistory: async/.test(mockApiSrc));
+checkTrue("接口链路：类型声明含 getHistory", /getHistory\(id: string/.test(dtsSrc));
+
+// —— 日历界面静态守卫 ——
+const calSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "views", "CalendarPanel.tsx"), "utf8");
+const calCss = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "styles", "global.css"), "utf8");
+checkTrue("日历：四态 class 由 status 驱动", /cal-\$\{d\.status\}/.test(calSrc));
+checkTrue("日历：连续签到文案完整", /您已使用本软件连续签到/.test(calSrc) && /继续努力/.test(calSrc));
+checkTrue("日历：账号下拉切换（只显示一个账号）", /<Select[\s\S]{0,200}onChange=\{\(v\) => setId\(v\)\}/.test(calSrc));
+checkTrue("日历：可上下翻月", /shift\(-1\)/.test(calSrc) && /shift\(1\)/.test(calSrc));
+checkTrue("日历：一次只取一个月", /api\s*\.getHistory\(id, year, month\)/.test(calSrc.replace(/\s+/g, " ")) || /getHistory\(id, year, month\)/.test(calSrc));
+checkTrue("勋章墙：展示每枚勋章的获得次数", /cal-bcount/.test(calSrc) && /×\{n\}/.test(calSrc));
+checkTrue("勋章墙：未获得的勋章置灰", /dim=\{n === 0\}/.test(calSrc));
+for (const cls of ["cal-done", "cal-partial", "cal-idle", "cal-error"]) {
+  checkTrue(`日历 CSS：${cls} 已定义且为浅调半透明`, new RegExp(`\\.${cls}\\s*\\{[^}]*background:\\s*rgb\\([^)]*\\/\\s*0?\\.\\d+\\)`).test(calCss));
+}
+
 /* ============ 汇总 ============ */
 console.log(`\n${"=".repeat(46)}`);
 console.log(`结果: ${pass} 通过 / ${fail} 失败`);

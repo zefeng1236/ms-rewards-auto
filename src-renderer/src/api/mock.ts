@@ -510,6 +510,49 @@ export function createMockApi(): ElectronApi {
       ];
     },
     getAccountLogDays: async () => ["2026-08-31", "2026-08-30"],
+    // 日历假数据：造一整月有绿/橙/灰/红四态 + 若干勋章，方便脱机调样式
+    getHistory: async (_id, year, month) => {
+      const now = new Date();
+      const y = year || now.getFullYear();
+      const m = month || now.getMonth() + 1;
+      const total = new Date(y, m, 0).getDate();
+      const pad = (n: number) => String(n).padStart(2, "0");
+      // 用日期做伪随机，保证每次渲染同一天颜色不变
+      const days = Array.from({ length: total }, (_, i) => {
+        const d = i + 1;
+        const seed = (y * 10000 + m * 100 + d) % 10;
+        const status = seed < 6 ? "done" : seed < 8 ? "partial" : seed === 8 ? "error" : "idle";
+        return {
+          day: d,
+          key: `${y}-${pad(m)}-${pad(d)}`,
+          status: status as "done" | "partial" | "idle" | "error",
+          done: status === "done" ? 5 : status === "partial" ? 3 : 0,
+          total: 5,
+          points: status === "done" ? 82 : status === "partial" ? 45 : 0,
+          hasRecord: status !== "idle",
+        };
+      });
+      return {
+        month: { year: y, month: m, days, perfect: false, doneDays: days.filter((x) => x.status === "done").length },
+        streak: 4,
+        badges: {
+          streak3: { count: 3, last: `${y}-${pad(m)}-04` },
+          streak7: { count: 1, last: `${y}-${pad(m)}-07` },
+          midautumn: { count: 1, last: "2026-09-25" },
+          halloween: { count: 1, last: "2026-10-31" },
+          perfectMonth: { count: 1, last: "2026-01-31", month: "2026-01" },
+        },
+        stats: {
+          first: "2026-08-01", trackedDays: total, doneDays: days.filter((x) => x.status === "done").length,
+          partialDays: days.filter((x) => x.status === "partial").length,
+          errorDays: days.filter((x) => x.status === "error").length,
+          totalPoints: days.reduce((s, x) => s + x.points, 0),
+          streak: 4, bestStreak: 12, badgeCount: 5, badgeTotal: 7,
+        },
+        years: [y],
+        today: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`,
+      };
+    },
     getAccountLogHistory: async (id, day) => {
       const acc = mockAccounts.find((a) => a.id === id);
       const name = acc?.name || id;

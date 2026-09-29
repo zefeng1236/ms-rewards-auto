@@ -7,6 +7,7 @@ const rewards = require("./rewards");
 const tasks = require("./tasks");
 const cancel = require("./cancel");
 const goals = require("./goals");
+const { STATUS } = require("./history");
 
 function pad2(n) {
   return String(n).padStart(2, "0");
@@ -30,19 +31,65 @@ function randomBetween(min, max) {
  *
  * @returns {Promise<{result?:object, aborted?:boolean, abortAll?:boolean, error?:string}>}
  */
+/**
+ * 把当天结局写进 history.json —— 日历与勋章的唯一写入口。
+ *
+ * 挂在这一层而不是 runOnce 末尾，是为了覆盖 runOnce 的**所有**出口：
+ * IP 非大陆、明确未登录这些中途 return 的分支同样要记一笔，
+ * 否则日历上那天是空白，看起来像「没用过」而不是「失败了」。
+ *
+ * @param {object} ctx 账户上下文（含 history）
+ * @param {object|null} result runOnce 的返回值
+ * @param {"ok"|"error"|"aborted"} kind 出口类型
+ */
+function recordDay(ctx, result, kind) {
+  try {
+    if (!ctx || !ctx.history || typeof ctx.history.record !== "function") return;
+
+    const cfg = ctx.config.get();
+    const ev = ctx.state.evaluateDayDone(cfg);
+    const total = ev.enabled.length;
+    const done = total - ev.pending.length;
+
+    let status;
+    if (kind === "error") status = STATUS.ERROR;
+    else if (kind === "aborted") status = done > 0 ? STATUS.PARTIAL : STATUS.IDLE;
+    else if (!result || result.ok === false) status = STATUS.ERROR;
+    else if (ev.done) status = STATUS.DONE;
+    else if (done > 0) status = STATUS.PARTIAL;
+    else status = STATUS.IDLE;
+
+    // 积分以服务器权威值为准，拿不到才回落本地估算
+    const st = ctx.state.get();
+    const serverPts = Number(st.todayPointsServer) || 0;
+    const points = serverPts > 0 ? serverPts : Number(st.todayPoints) || 0;
+
+    const r = ctx.history.record(undefined, { status, done, total, points });
+    if (r && r.awarded && r.awarded.length) {
+      logger.success(`🏅 账户「${ctx.name}」获得勋章：${r.awarded.join("、")}`);
+    }
+  } catch (e) {
+    // 历史只是附加价值，绝不能因为它写失败就影响任务本身
+    logger.warn(`写入每日历史失败（不影响任务）: ${e.message}`);
+  }
+}
+
 async function runAccountGuarded(ctx, opts) {
   cancel.setActiveScope(ctx.id);
   cancel.clearScope(ctx.id);
   logger.setContext(ctx.id, ctx.name);
   try {
     const result = await runOnce(ctx, opts);
+    recordDay(ctx, result, "ok");
     return { result };
   } catch (e) {
     if (e && e.isAbort) {
+      recordDay(ctx, null, "aborted");
       if (e.all) return { aborted: true, abortAll: true, error: "已手动停止" };
       return { aborted: true, error: "此账号任务已被手动停止" };
     }
     logger.error(`账户「${ctx.name}」运行出错: ${e.message}`);
+    recordDay(ctx, null, "error");
     return { error: e.message };
   } finally {
     logger.clearContext();

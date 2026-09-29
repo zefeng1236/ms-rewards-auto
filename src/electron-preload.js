@@ -21,6 +21,8 @@ contextBridge.exposeInMainWorld("api", {
 
   // 仪表盘聚合数据
   overview: () => ipcRenderer.invoke("app:overview"),
+  // 日历与签到勋章：某账户某月的每日状态 + 连续签到 + 勋章计数
+  getHistory: (id, year, month) => ipcRenderer.invoke("history:get", id, year, month),
 
   // 外观个性化（应用级偏好，独立于账户）
   getAppearance: () => ipcRenderer.invoke("appearance:get"),

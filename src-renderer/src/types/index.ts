@@ -636,3 +636,79 @@ export interface AccountLogEntry {
   accountId: string | null;
   accountName: string | null;
 }
+
+/* ------------------------------------------------------------------ *
+ * 日历 / 签到勋章（history.json）
+ * ------------------------------------------------------------------ */
+
+/**
+ * 每日状态四档。
+ * done    全部启用任务完成 —— 只有这一档计入「连续签到」
+ * partial 完成一部分      idle 当天未运行      error 运行出错无进度
+ */
+export type DayStatus = "done" | "partial" | "idle" | "error";
+
+/** 日历中的一格 */
+export interface CalendarDay {
+  /** 1-31 */
+  day: number;
+  /** YYYY-MM-DD */
+  key: string;
+  status: DayStatus;
+  /** 已完成 / 启用的任务数 */
+  done: number;
+  total: number;
+  /** 当日积分 */
+  points: number;
+  /** 是否有真实记录（false 表示这天从没跑过，颜色按 idle 画但提示不同） */
+  hasRecord: boolean;
+}
+
+/** 一个月的数据 */
+export interface CalendarMonth {
+  year: number;
+  month: number;
+  days: CalendarDay[];
+  /** 整月每一天都完成 */
+  perfect: boolean;
+  doneDays: number;
+}
+
+/** 勋章获得记录：累计次数 + 最近获得日期 */
+export interface BadgeRecord {
+  count: number;
+  last: string;
+  /** 仅月全勤勋章使用：YYYY-MM，用于同月去重 */
+  month?: string;
+}
+
+/** 历史汇总统计 */
+export interface HistoryStats {
+  /** 首次记录的日期 */
+  first: string;
+  trackedDays: number;
+  doneDays: number;
+  partialDays: number;
+  errorDays: number;
+  totalPoints: number;
+  /** 当前连续签到天数 */
+  streak: number;
+  /** 历史最长连续 */
+  bestStreak: number;
+  /** 获得过的勋章种类数 */
+  badgeCount: number;
+  /** 获得勋章总次数 */
+  badgeTotal: number;
+}
+
+/** getHistory 的完整返回 */
+export interface HistorySnapshot {
+  month: CalendarMonth;
+  streak: number;
+  badges: Record<string, BadgeRecord>;
+  stats: HistoryStats | null;
+  /** 有记录的年份（新在前），用于快速跳转 */
+  years: number[];
+  /** 今天 YYYY-MM-DD */
+  today: string;
+}

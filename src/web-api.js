@@ -463,6 +463,20 @@ function createApi({ emit }) {
         return logger.getAccountHistory(id, day, retentionDays);
       } catch { return []; }
     },
+
+    /* ------------------------ 日历 / 签到勋章 ------------------------ */
+    /**
+     * 某账户的日历快照：月视图 + 连续签到 + 勋章计数 + 汇总。
+     * 前端日历翻月只传 year/month，主进程按需读 history.json。
+     */
+    getHistory(id, year, month) {
+      try {
+        return accounts.context(id).history.snapshot(year, month);
+      } catch {
+        // 账户不存在或文件损坏时给一个空壳，界面照常渲染而不是白屏
+        return { month: { year: year || 0, month: month || 0, days: [], perfect: false, doneDays: 0 }, streak: 0, badges: {}, stats: null, years: [], today: "" };
+      }
+    },
     chromiumStatus() {
       return { ready: browser.isChromiumReady(), executable: browser.chromiumExecutablePath() };
     },

@@ -15,6 +15,7 @@ import type {
   DeepPartial,
   DownloadResult,
   FingerprintStatus,
+  HistorySnapshot,
   Hitokoto,
   InstallBrowserResult,
   InstallFingerprintResult,
@@ -59,6 +60,8 @@ export interface ElectronApi {
 
   // ---- 仪表盘 ----
   overview(): Promise<Overview>;
+  /** 某账户某月的日历 + 连续签到 + 勋章计数（year/month 缺省为当前月） */
+  getHistory(id: string, year?: number, month?: number): Promise<HistorySnapshot>;
 
   // ---- 外观 ----
   getAppearance(): Promise<Appearance>;

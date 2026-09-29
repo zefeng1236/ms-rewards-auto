@@ -3,6 +3,7 @@ const fs = require("fs");
 const crypto = require("crypto");
 const { createConfig, DEFAULTS } = require("./config");
 const { createState } = require("./state");
+const { createHistory } = require("./history");
 const { hasAuthCookies } = require("./browser");
 const sp = require("./storage-path");
 
@@ -133,6 +134,9 @@ function context(id) {
     profileDir: getProfileDir(id),
     config: createConfig(dir),
     state: createState(dir),
+    // 每日运行历史（日历与勋章的数据源）。与 state 分开存：
+    // state 跨天会被清零，history 是只增不改的流水。
+    history: createHistory(dir),
   };
 }
 
