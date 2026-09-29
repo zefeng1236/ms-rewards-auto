@@ -2,9 +2,14 @@
  * 推送版式验收：打桩跑真实 src/notify.js 路径，检查最终正文。
  *
  * 为什么单独一个文件：
- *   推送格式涉及异步拼装（用户名+版本号 / 一言首末行 / 标题下沉），
+ *   推送格式涉及异步拼装（用户名+版本号 / 一言末行 / 标题是否下沉），
  *   静态正则只能证明「代码长这样」，证明不了「消息真的是这样」。
  *   这里把 fetch 换成桩、把 storage 指向临时目录，跑真实模块，断言最终报文。
+ *
+ * 版式口径（0.13.10.1 修正版）：
+ *   普通推送：标题 → 用户名+版本号 → 正文 → 空行 → 一言
+ *   每日汇总：用户名+版本号 → 正文 → 空行 → 一言（标题不合进正文）
+ *   一言**固定末行**，首行永远留给标题/用户名。
  *
  * 由 scripts/selfcheck.js 调用；也可单独执行：
  *   node scripts/verify-notify-format.js
@@ -83,12 +88,15 @@ const body = (i) => JSON.parse(pushes[i].body).text.content;
   const bad = [];
   const l1 = body(0).split("\n");
 
-  // ① 版式：一言 → 标题（下沉） → 用户名+版本号 → 正文 → 空行 → 一言
-  if (l1[0] !== QUOTE) bad.push(`第一行不是一句话（实际：${l1[0]}）`);
-  if (l1[1] !== TITLE) bad.push("标题没有下沉到一句话之下");
-  if (l1[2] !== head) bad.push(`第三行不是用户名+版本号（实际：${l1[2]}）`);
+  // ① 版式：标题 → 用户名+版本号 → 正文 → 空行 → 一言（一言固定在末行）
+  //    首行必须是标题 —— 多账户场景下一眼看出这条推送来自哪个账号，
+  //    绝不能被一句话挤走（0.13.10.1 曾短暂改成首行一言，属回归）。
+  if (l1[0] !== TITLE) bad.push(`第一行不是标题（实际：${l1[0]}）`);
+  if (l1[1] !== head) bad.push(`第二行不是用户名+版本号（实际：${l1[1]}）`);
   if (!/\n\n保持热爱，奔赴山海。 —— 测试出处$/.test(body(0))) bad.push("末尾缺「空一行 + 一句话」");
-  if ((body(0).match(/保持热爱/g) || []).length !== 2) bad.push("一句话应首尾各一次");
+  // 一言只在末行出现一次：首行若也出现，说明又退回了「首末各一次」的旧版式
+  if ((body(0).match(/保持热爱/g) || []).length !== 1) bad.push("一句话应只在末行出现一次");
+  if (/保持热爱/.test(l1[0]) || /保持热爱/.test(l1[1])) bad.push("一句话不该出现在首行/第二行");
 
   // ② 缓存策略：30 秒 TTL + 推送强制刷新
   //    - 推送走 force：每次推送各请求一次新句（上面 3 条开启一言的推送 = 3 次）
@@ -111,12 +119,11 @@ const body = (i) => JSON.parse(pushes[i].body).text.content;
   if (/保持热爱/.test(body(2))) bad.push("关闭一言后仍带一句话");
   if (body(2).trimEnd() !== `${TITLE}\n${head}\n本次无一言`) bad.push("关闭一言后版式异常");
 
-  // ④ 汇总：标题不合进正文，但一言仍须在首行与末行（且要走 force 刷新）
+  // ④ 汇总：首行是「用户名+版本号」（不是一言），一言在末行
   const sl = body(3).split("\n");
-  if (sl[0] !== QUOTE) bad.push(`汇总第一行不是一句话（实际：${sl[0]}）`);
+  if (sl[0] !== head) bad.push(`汇总第一行不是用户名+版本号（实际：${sl[0]}）`);
   if (!/\n\n保持热爱，奔赴山海。 —— 测试出处$/.test(body(3))) bad.push("汇总末尾缺「空一行 + 一句话」");
   if (sl.filter((x) => x.startsWith("用户名：")).length !== 1) bad.push("汇总用户名行重复或缺失");
-  if (!sl.includes(head)) bad.push("汇总缺用户名+版本号行");
   if (!sl.some((x) => x.startsWith("🏅 "))) bad.push("汇总目标行缺勋章图标");
 
   fs.rmSync(tmp, { recursive: true, force: true });
@@ -125,7 +132,7 @@ const body = (i) => JSON.parse(pushes[i].body).text.content;
     bad.forEach((b) => console.log("   - " + b));
     process.exit(1);
   }
-  console.log("✅ 推送版式验收通过（一句话首行/标题下沉/版本号/末行空一行/目标勋章，均经真实路径）");
+  console.log("✅ 推送版式验收通过（标题在前/用户名+版本号/末行空一行一言/目标勋章，均经真实路径）");
 })().catch((e) => {
   console.error("运行异常:", e);
   fs.rmSync(tmp, { recursive: true, force: true });

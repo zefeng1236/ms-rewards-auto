@@ -2537,11 +2537,11 @@ checkTrue("目标行实际输出带勋章图标", oneLine.startsWith("🏅 "), `
 const medalLine = goalsMod.formatOne({ name: "🏅 测试", current: 300, target: 300, reached: true, rewardName: "" });
 checkTrue("已带图标的名称不重复叠加", medalLine.startsWith("🏅 ") && !medalLine.startsWith("🏅 🏅 "), `实际: ${medalLine}`);
 
-// —— 通知外壳：版本号 + 一言首末行 + 无重复 ——
+// —— 通知外壳：版本号 + 一言固定末行 + 无重复 ——
 const notifySrc = fs.readFileSync(path.join(ROOT, "src", "notify.js"), "utf8");
 checkTrue("notify 复用 displayVersion() 而非手拼版本", /require\("\.\/version"\)/.test(notifySrc) && /displayVersion\(\)/.test(notifySrc));
-// sendText 必须仍只调用一次外壳拼装（把一句话抬到标题之上时改用了 opts，
-// 不能退化成「标题前拼一次 + 正文里再拼一次」两处拼装）
+// sendText 必须仍只调用一次外壳拼装（一言下沉到末行后，外壳是唯一拼装点，
+// 不能退化成「正文里拼一次 + 别处再拼一次」）
 checkTrue(
   "sendText 仅调用一次 withAccountHeader（外壳唯一拼装点）",
   // testPush 也用外壳（预览用），这里只要求 sendText 函数体内恰好拼装一次
@@ -2550,7 +2550,7 @@ checkTrue(
     const to = notifySrc.indexOf("async function sendSummary");
     return from >= 0 && to > from && (notifySrc.slice(from, to).match(/withAccountHeader\(/g) || []).length === 1;
   })() &&
-    /await withAccountHeader\(ctx, text, \{ skipTop: !!lead \}\)/.test(notifySrc)
+    /await withAccountHeader\(ctx, text, \{ force: true \}\)/.test(notifySrc)
 );
 checkTrue(
   "sendSummary 不再二次 withAccountHeader",
@@ -2559,21 +2559,26 @@ checkTrue(
 checkTrue(
   "一言关闭与否只由 quoteLine 一处判定（避免两处口径漂移）",
   /async function quoteLine\(notice, override, force = false\)/.test(notifySrc) &&
-    /const line = await quoteLine\(notice, opts\.quote\);/.test(notifySrc)
+    /const line = await quoteLine\(notice, opts\.quote, opts\.force === true\);/.test(notifySrc)
+);
+// 版式口径（0.13.10.1 修正）：一言**固定末行**，首行留给标题/用户名。
+// 曾短暂改成「首行一言、标题下沉」（靠 buildRequests 的 lead + skipTop），
+// 导致每日汇总首行变成一句话、把「用户名」挤走 —— 多账户时无法辨认来源。
+checkTrue(
+  "一言固定末行（buildRequests 不再往首行塞 lead）",
+  /const content = opts\.includeTitleInBody === false \? body : `\$\{title\}\\n\$\{body\}`;/.test(notifySrc) &&
+    // 回归反例：lead / skipTop 机制整体移除，防止有人再往首行塞
+    !/\bskipTop\b/.test(notifySrc) &&
+    !/opts\.lead/.test(notifySrc)
 );
 checkTrue(
-  "一句话顶到标题之上（buildRequests 支持 lead，标题下沉一行）",
-  /const lead = opts\.lead \? `\$\{opts\.lead\}\\n` : "";/.test(notifySrc) &&
-    /const titlePart = opts\.includeTitleInBody === false \? "" : `\$\{title\}\\n`;/.test(notifySrc) &&
-    /const content = `\$\{lead\}\$\{titlePart\}\$\{body\}`;/.test(notifySrc)
+  "首行不被一言挤走（正文里一言只追加在末尾）",
+  // withAccountHeader 里只允许「末尾追加」，不允许再出现 `body = \`${line}\n${body}\`` 的首行插入
+  /if \(!hasQuote\) body = `\$\{body\}\\n\\n\$\{line\}`;/.test(notifySrc) &&
+    !/body = `\$\{line\}\\n\$\{body\}`/.test(notifySrc)
 );
-checkTrue(
-  "汇总推送也带 lead（标题不进正文时一句话不被吞）",
-  /const lead = await quoteLine\(noticeCfg, undefined, true\);/.test(notifySrc) &&
-    // 回归反例：曾写过 `isSummary ? "" : ...`，导致汇总推送第一行变成用户名行
-    !/const lead = isSummary \? "" :/.test(notifySrc)
-);
-checkTrue("测试推送同样 force 刷新一言", /const lead = await quoteLine\(cfg, undefined, true\);/.test(notifySrc));
+checkTrue("推送时一言 force 刷新（跳过 30 秒 TTL）", /await withAccountHeader\(ctx, text, \{ force: true \}\)/.test(notifySrc) && /notice: cfg, force: true/.test(notifySrc));
+checkTrue("测试推送同样 force 刷新一言", /notice: cfg, force: true/.test(notifySrc));
 
 // —— 一次性完成：force 穿透到任务层，忽略单次数量限制 ——
 const tasksForceSrc = fs.readFileSync(path.join(ROOT, "src", "tasks.js"), "utf8");

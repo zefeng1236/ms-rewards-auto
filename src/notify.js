@@ -120,12 +120,7 @@ function ensureKeyword(content, keyword) {
 /** 统一构造各通道的请求参数，测试与正式推送共用，避免两套逻辑跑偏 */
 function buildRequests(notice, title, text, opts = {}) {
   const body = String(text == null ? "" : text);
-  // lead：需要顶到消息最前面的引导行（每日一言）。
-  // 合标题进正文时也要压在标题之上，因为「第一行必须是一言」。
-  const lead = opts.lead ? `${opts.lead}\n` : "";
-  // lead 与标题无关：即使标题不进正文（每日汇总），一句话也必须在最前面。
-  const titlePart = opts.includeTitleInBody === false ? "" : `${title}\n`;
-  const content = `${lead}${titlePart}${body}`;
+  const content = opts.includeTitleInBody === false ? body : `${title}\n${body}`;
   const list = [];
 
   const weworkUrl = normalizeWebhook(notice.wework, "wework");
@@ -304,24 +299,26 @@ function accountHeaderLine(ctx) {
  * 接口不可用或用户关闭时静默跳过，
  * 绝不能因为拿不到一句话就把整条推送卡住 —— 推送的价值在任务结果本身。
  *
- * 注意：本函数是 Novu 推送外壳的**唯一**拼装点。调用方（sendText）只调用它一次，
- * 别在上层提前 withAccountHeader 再传进来，否则首行/末行一言会重复出现两次。
+ * 注意：本函数是推送外壳的**唯一**拼装点。调用方（sendText）只调用它一次，
+ * 别在上层提前 withAccountHeader 再传进来，否则末尾一言会重复出现两次。
  *
  * @param {object} ctx     账户上下文（提供 name 与 config.notice）
  * @param {string} text    正文
  * @param {object} [opts]
  * @param {object} [opts.notice]   无账户上下文时直接传入推送配置（测试推送用）
  * @param {boolean} [opts.quote]   是否附加一言，默认按配置的 notice.hitokoto
+ * @param {boolean} [opts.force]   一言是否跳过 30 秒缓存取新句（推送时用）
  * @returns {Promise<string>}
  */
 /**
  * 取当天的一言正文（已拼接作者），关闭或接口不可用时返回空串。
  *
- * 抽成单一出口，是为了让「外壳拼装」与「把一句话抬到标题之上」两处
- * 共用同一条开关 + 降级判断，避免口径漂移导致一处加一处不加。
+ * 抽成单一出口，是为了让所有调用方共用同一条开关 + 降级判断，
+ * 避免口径漂移导致一处加一处不加。
  *
  * @param {object} notice     推送配置
  * @param {boolean} [override] 显式开关；未传则跟随 notice.hitokoto（缺省 true）
+ * @param {boolean} [force]    跳过 TTL 缓存重新请求（推送时取新句用）
  * @returns {Promise<string>}
  */
 async function quoteLine(notice, override, force = false) {
@@ -329,8 +326,6 @@ async function quoteLine(notice, override, force = false) {
   const off = override != null ? override === false : cfg.hitokoto === false;
   if (off) return "";
   try {
-    // force=true（推送时）跳过缓存取新句；后续同一次推送内的第二次调用
-    // 走默认缓存路径，拿到的是刚才 force 写进去的那句 → 首末行一致
     return hitokoto.format(await hitokoto.get({ force }));
   } catch {
     // 公益接口超时/不可用时静默跳过：只为美观，不值得阻塞任务推送
@@ -353,19 +348,16 @@ async function withAccountHeader(ctx, text, opts = {}) {
     }
   }
 
-  // 一言：默认跟随账户/全局的 notice.hitokoto 开关
+  // 一言：默认跟随账户/全局的 notice.hitokoto 开关。
+  // 位置固定在**消息末尾**（前面空一行）——首行留给标题/用户名，
+  // 多账户时一眼就能看出这条推送来自哪个账号，不会被一句话挤走。
   const notice =
     opts.notice || (ctx && ctx.config && typeof ctx.config.get === "function" ? ctx.config.get().notice : null);
-  const line = await quoteLine(notice, opts.quote);
+  const line = await quoteLine(notice, opts.quote, opts.force === true);
   if (line) {
     // 已经在别处加过同一句话就不要再加（防止重复）
     const hasQuote = body.includes(line);
-    if (!hasQuote) {
-      // opts.skipTop：调用方会把这句放到标题之上（见 sendText），
-      // 这里只在末尾追加，避免同一句话出现两次。
-      if (!opts.skipTop) body = `${line}\n${body}`;
-      body = `${body}\n\n${line}`;
-    }
+    if (!hasQuote) body = `${body}\n\n${line}`;
   }
   return body;
 }
@@ -381,21 +373,16 @@ async function sendText(ctx, title, text) {
   const noticeCfg = cfg.notice || {};
   const isSummary = /^Rewards 运行汇总/.test(String(title || ""));
 
-  // 需求口径：一言必须是消息的**第一行**。
-  // 标题被合进正文时（普通任务推送）会把一句话压到第二行，所以这里先把
-  // 一句话取出来交给 buildRequests 顶到最上面，正文里就不再重复占位。
-  // 推送时一律 force 取新句：
-  //   - 界面按 30 秒 TTL 缓存且后台暂停，不 force 可能推到用户当前正看着的旧句；
-  //   - 汇总推送（标题不合进正文）同样要刷新，否则只有末尾那一句是旧/同一句，
-  //     与「发送推送的时候要刷新」的要求不符。
-  // 同一次推送内 withAccountHeader 再调一次 quoteLine（走默认缓存路径），
-  // 拿到的正是刚被 force 写进去的那句 → 首末行一致，且不额外消耗接口请求。
-  const lead = await quoteLine(noticeCfg, undefined, true);
-  const content = await withAccountHeader(ctx, text, { skipTop: !!lead });
+  // 一言固定在**末行**（由 withAccountHeader 统一拼装，前面空一行）。
+  // 首行永远是标题（汇总推送则是不合标题、以「用户名」开头），
+  // 保证多账户场景下一眼看出这条推送来自哪个账号。
+  //
+  // 刷新口径：推送时 force 取新句（30 秒 TTL 太短，不 force 可能推到界面正显示的旧句）。
+  // force 只影响「取哪一句」，不影响「放在哪一行」。
+  const content = await withAccountHeader(ctx, text, { force: true });
 
   const reqs = buildRequests(noticeCfg, title, content, {
     includeTitleInBody: !isSummary,
-    lead,
   });
   if (!reqs.length) return [];
   const results = await Promise.allSettled(reqs.map((r) => fire(r)));
@@ -427,10 +414,10 @@ async function testPush(notice, label = "测试") {
   // 真实任务推送的完整观感，而不是只看到一句脱离上下文的测试文本。
   // 版本号由 accountHeaderLine 统一带出，正文里不再重复写一行，避免两处口径不一致
   const raw = `这是一条测试消息。\n发送时间：${new Date().toLocaleString("zh-CN")}\n若你收到此消息，说明该通道配置正确。`;
-  // 与真实任务推送同一版式：一言顶在最前面，标题下沉一行
-  const lead = await quoteLine(cfg, undefined, true);
-  const content = await withAccountHeader(null, raw, { notice: cfg, skipTop: !!lead });
-  const reqs = buildRequests(cfg, title, content, { lead });
+  // 与真实任务推送同一版式：标题在最前，一言在末尾（前空一行）。
+  // 测试推送没有账户上下文，用户名行自然省略。
+  const content = await withAccountHeader(null, raw, { notice: cfg, force: true });
+  const reqs = buildRequests(cfg, title, content);
 
   if (!reqs.length) {
     logger.warn("推送测试：没有配置任何通道，请先填写至少一个 Webhook 或 Key");
