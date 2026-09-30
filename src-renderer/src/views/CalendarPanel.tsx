@@ -10,6 +10,9 @@ const WEEK = ["一", "二", "三", "四", "五", "六", "日"];
 /** 每日格子的悬浮说明 */
 function dayTitle(d: CalendarDay): string {
   const parts = [`${d.key}`];
+  if (d.rest) parts.push(`法定假日 · ${d.holidayName || "休"}`);
+  else if (d.workday) parts.push("调休上班（班）");
+  else if (d.festival) parts.push(d.festival);
   if (!d.hasRecord) parts.push("当天未运行");
   else if (d.status === "done") parts.push(`全部完成（${d.done}/${d.total}）`);
   else if (d.status === "partial") parts.push(`部分完成（${d.done}/${d.total}）`);
@@ -160,16 +163,21 @@ export function CalendarPanel({ accounts }: { accounts: Account[] }) {
           {Array.from({ length: lead }, (_, i) => (
             <div key={`pad-${i}`} className="cal-cell cal-cell-pad" />
           ))}
-          {days.map((d) => (
-            <div
-              key={d.key}
-              className={`cal-cell cal-${d.status}${d.key === snap?.today ? " cal-today" : ""}${!d.hasRecord ? " cal-norecord" : ""}`}
-              title={dayTitle(d)}
-            >
-              <span className="cal-day">{d.day}</span>
-              {d.points > 0 ? <span className="cal-pts">{d.points}</span> : null}
-            </div>
-          ))}
+          {days.map((d) => {
+            const isBlue = !!d.rest || (!!d.weekend && !d.workday);
+            return (
+              <div
+                key={d.key}
+                className={`cal-cell cal-${d.status}${d.key === snap?.today ? " cal-today" : ""}${!d.hasRecord ? " cal-norecord" : ""}${isBlue ? " cal-blue" : ""}`}
+                title={dayTitle(d)}
+              >
+                <span className="cal-day">{d.day}</span>
+                <span className="cal-label">{d.label || "\u00A0"}</span>
+                {d.rest ? <i className="cal-tag cal-tag-rest">休</i> : null}
+                {d.workday ? <i className="cal-tag cal-tag-work">班</i> : null}
+              </div>
+            );
+          })}
           {loading ? <div className="cal-loading">读取中…</div> : null}
         </div>
 

@@ -2766,6 +2766,83 @@ for (const cls of ["cal-done", "cal-partial", "cal-idle", "cal-error"]) {
   checkTrue(`日历 CSS：${cls} 已定义且为浅调半透明`, new RegExp(`\\.${cls}\\s*\\{[^}]*background:\\s*rgb\\([^)]*\\/\\s*0?\\.\\d+\\)`).test(calCss));
 }
 
+// ============================ 节假日 / 农历 / 调休 ============================
+console.log("\n【O】法定节假日 / 农历 / 调休（0.13.11 增强）");
+const holidayMod = require(path.join(ROOT, "src", "holiday.js"));
+const holidaySrc = fs.readFileSync(path.join(ROOT, "src", "holiday.js"), "utf8");
+const historySrc = fs.readFileSync(path.join(ROOT, "src", "history.js"), "utf8");
+const idxSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "types", "index.ts"), "utf8");
+
+// —— 农历日名 / 节日短名（纯函数）——
+check("农历日名：2026-09-25（八月中秋）→ 十五", historyMod.lunarDayLabel("2026-09-25"), "十五");
+check("农历日名：2026-02-17（正月初一）→ 正月", historyMod.lunarDayLabel("2026-02-17"), "正月");
+check("农历日名：2026-12-24（冬月十六）→ 十六", historyMod.lunarDayLabel("2026-12-24"), "十六");
+check("短名：中秋节 → 中秋", historyMod.shortDayName("中秋节"), "中秋");
+check("短名：元旦/春节本身不带节不截断", historyMod.shortDayName("元旦"), "元旦");
+
+// —— 节假日数据归一化（网络数据的判据，纯函数无网络）——
+const hlNorm = holidayMod.normalizeDays([
+  { name: "中秋节", date: "2026-09-25", isOffDay: true },
+  { name: "国庆节", date: "2026-10-10", isOffDay: false },
+]);
+check("节假日：isOffDay:true → 法定放假日（休）", hlNorm["2026-09-25"].rest, true);
+check("节假日：isOffDay:false → 调休上班（班）", hlNorm["2026-10-10"].rest, false);
+check("节假日：节名保留供展示", hlNorm["2026-09-25"].name, "中秋节");
+checkTrue(
+  "节假日：双源抓取 + 磁盘缓存 + 后台刷新 + 启动预热齐备",
+  /fetchHolidayCn/.test(holidaySrc) && /fetchTimor/.test(holidaySrc) &&
+    /function dayHoliday/.test(holidaySrc) && /function warmup/.test(holidaySrc) &&
+    /CACHE_TTL_MS/.test(holidaySrc)
+);
+checkTrue("启动预热：electron-main 调用 holiday.warmup()", /holiday\.warmup\(\)/.test(mainSrcHist));
+checkTrue(
+  "历史：getMonth 拼装 weekend/lunar/festival/rest/workday/label",
+  /holiday\.dayHoliday\(key\)/.test(historySrc) &&
+    /label: rest \? holiName : festName \|\| lunarDayLabel\(key\)/.test(historySrc)
+);
+
+// —— getMonth 集成（离线可复现：周末/节日/农历均不依赖网络）——
+const tmpCal = fs.mkdtempSync(path.join(osMod.tmpdir(), "msr-cal-"));
+try {
+  const hhCal = historyMod.createHistory(tmpCal);
+  const mSep = hhCal.getMonth(2026, 9);
+  const byKey = (k) => mSep.days.find((x) => x.key === k) || {};
+  check("日历：9/25（周五）非周末", byKey("2026-09-25").weekend, false);
+  check("日历：9/26（周六）是周末", byKey("2026-09-26").weekend, true);
+  check("日历：9/27（周日）是周末", byKey("2026-09-27").weekend, true);
+  check("日历：9/25 是中秋 → 小字显示「中秋」", byKey("2026-09-25").label, "中秋");
+  check("日历：9/25 农历日名「十五」", byKey("2026-09-25").lunar, "十五");
+  check("日历：9/28（无节日普通日）小字=农历「十八」", byKey("2026-09-28").label, "十八");
+  check("日历：9/28 无传统节日", byKey("2026-09-28").festival, "");
+} finally {
+  fs.rmSync(tmpCal, { recursive: true, force: true });
+}
+
+// —— 前端渲染与配色 ——
+checkTrue(
+  "日历：渲染大数字 + 小字 + 休/班角标",
+  /cal-day/.test(calSrc) && /cal-label/.test(calSrc) && /cal-tag-rest/.test(calSrc) && /cal-tag-work/.test(calSrc)
+);
+checkTrue(
+  "日历：蓝数字判据 = 法定休 或（周末且非调休）",
+  /isBlue = !!d\.rest \|\| \(!!d\.weekend && !d\.workday\)/.test(calSrc)
+);
+checkTrue(
+  "日历 CSS：蓝数字 + 休/班角标样式",
+  /\.cal-blue \.cal-day/.test(calCss) && /\.cal-tag-rest/.test(calCss) && /\.cal-tag-work/.test(calCss)
+);
+checkTrue("日历 CSS：日期字号放大到 17px", /\.cal-day\s*\{[^}]*font-size:\s*17px/.test(calCss));
+checkTrue(
+  "类型：CalendarDay 含 rest/workday/weekend/lunar/label",
+  /rest\?: boolean/.test(idxSrc) && /workday\?: boolean/.test(idxSrc) &&
+    /weekend\?: boolean/.test(idxSrc) && /lunar\?: string/.test(idxSrc) && /label\?: string/.test(idxSrc)
+);
+checkTrue(
+  "mock：造周末/农历/中秋休/国庆班样例（dev:web 可预览角标）",
+  /holidayMap/.test(mockApiSrc) && /"2026-10-10": \{ name: "国庆", rest: false \}/.test(mockApiSrc) &&
+    /label: rest && holi \? holi\.name : fest \|\| lunar/.test(mockApiSrc)
+);
+
 /* ============ 汇总 ============ */
 console.log(`\n${"=".repeat(46)}`);
 console.log(`结果: ${pass} 通过 / ${fail} 失败`);

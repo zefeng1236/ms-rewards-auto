@@ -18,8 +18,35 @@
 const fs = require("fs");
 const path = require("path");
 const badgesMod = require("./badges");
+const lunar = require("./lunar");
+const holiday = require("./holiday");
 
 const { STATUS, STREAK_BADGES, PERFECT_BADGE, festivalOn, pad2 } = badgesMod;
+
+// ---- 农历日名 + 节日短名（供日历小字展示）----
+const LUNAR_DAYS = [
+  "初一", "初二", "初三", "初四", "初五", "初六", "初七", "初八", "初九", "初十",
+  "十一", "十二", "十三", "十四", "十五", "十六", "十七", "十八", "十九", "二十",
+  "廿一", "廿二", "廿三", "廿四", "廿五", "廿六", "廿七", "廿八", "廿九", "三十",
+];
+const LUNAR_MONTHS = ["正", "二", "三", "四", "五", "六", "七", "八", "九", "十", "冬", "腊"];
+
+/** 农历日名：初一是该农历月起点，显示月份名（如「八月」），其余显示日名（如「十五」） */
+function lunarDayLabel(key) {
+  const s = String(key || "").slice(0, 10);
+  const y = Number(s.slice(0, 4));
+  if (!y || y < 1900 || y > 2100) return "";
+  const info = lunar.solarToLunar(s);
+  if (!info) return "";
+  if (info.day === 1) return `${LUNAR_MONTHS[info.month - 1] || ""}月`;
+  return LUNAR_DAYS[info.day - 1] || "";
+}
+
+/** 节日短名：去掉尾部「节」让日历小字更紧凑（春节/元旦/除夕这类本就不带的不动） */
+function shortDayName(name) {
+  const s = String(name || "").trim();
+  return s.length > 2 ? s.replace(/节$/, "") : s;
+}
 
 /** 状态优先级：数字越大越好，只有更好的状态才能覆盖当天的旧记录 */
 const STATUS_RANK = {
@@ -243,6 +270,14 @@ function createHistory(dir) {
     for (let d = 1; d <= total; d++) {
       const key = dayKey(y, m, d);
       const rec = g.days[key];
+      const wdIdx = new Date(y, m - 1, d).getDay();
+      const weekend = wdIdx === 0 || wdIdx === 6;
+      const fest = festivalOn(key);
+      const holi = holiday.dayHoliday(key);
+      const festName = fest ? shortDayName(fest.name) : "";
+      const holiName = holi && holi.name ? shortDayName(holi.name) : "";
+      const rest = !!(holi && holi.rest);
+      const workday = !!(holi && !holi.rest);
       days.push({
         day: d,
         key,
@@ -251,6 +286,14 @@ function createHistory(dir) {
         total: rec ? Number(rec.total) || 0 : 0,
         points: rec ? Number(rec.points) || 0 : 0,
         hasRecord: !!rec,
+        weekend,
+        lunar: lunarDayLabel(key),
+        festival: festName,
+        holidayName: holiName,
+        rest,
+        workday,
+        // 小字展示优先级：法定休 > 传统节日 > 农历
+        label: rest ? holiName : festName || lunarDayLabel(key),
       });
     }
     return {
@@ -346,6 +389,8 @@ module.exports = {
   createHistory,
   computeStreak,
   isMonthPerfect,
+  lunarDayLabel,
+  shortDayName,
   STATUS,
   STATUS_RANK,
   dayKey,

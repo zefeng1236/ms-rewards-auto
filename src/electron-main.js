@@ -21,6 +21,7 @@ const rewards = require("./rewards");
 const logger = require("./logger");
 const notify = require("./notify");
 const hitokoto = require("./hitokoto");
+const holiday = require("./holiday");
 const bgLimit = require("./wallpaper-limit");
 const cancel = require("./cancel");
 const ensureDeps = require("./ensure-deps");
@@ -1534,6 +1535,9 @@ app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
 
   registerIpc();
+
+  // 预热法定节假日数据（今年 + 明年，后台拉取，不阻塞启动）
+  holiday.warmup();
 
   // 保险库自动解锁：先试系统钥匙串（日常免密），再试环境变量（Docker 场景）。
   // 都失败就保持锁定，等用户在界面输密码后再启动自动任务。

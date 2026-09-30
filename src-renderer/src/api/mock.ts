@@ -517,19 +517,59 @@ export function createMockApi(): ElectronApi {
       const m = month || now.getMonth() + 1;
       const total = new Date(y, m, 0).getDate();
       const pad = (n: number) => String(n).padStart(2, "0");
+      // 假农历日名（dev 预览用，非精确农历；真实数据由后端 lunar.js 算）
+      const LUNAR_DAYS = [
+        "初一", "初二", "初三", "初四", "初五", "初六", "初七", "初八", "初九", "初十",
+        "十一", "十二", "十三", "十四", "十五", "十六", "十七", "十八", "十九", "二十",
+        "廿一", "廿二", "廿三", "廿四", "廿五", "廿六", "廿七", "廿八", "廿九", "三十",
+      ];
+      // 2026 中秋/国庆 休班样例，方便预览「休/班」角标效果
+      const holidayMap: Record<string, { name: string; rest: boolean }> = {
+        "2026-09-25": { name: "中秋", rest: true },
+        "2026-09-26": { name: "中秋", rest: true },
+        "2026-09-27": { name: "中秋", rest: true },
+        "2026-10-01": { name: "国庆", rest: true },
+        "2026-10-02": { name: "国庆", rest: true },
+        "2026-10-03": { name: "国庆", rest: true },
+        "2026-10-04": { name: "国庆", rest: true },
+        "2026-10-05": { name: "国庆", rest: true },
+        "2026-10-06": { name: "国庆", rest: true },
+        "2026-10-07": { name: "国庆", rest: true },
+        "2026-10-10": { name: "国庆", rest: false },
+      };
+      const festMap: Record<string, string> = {
+        "2026-09-25": "中秋", // 农历八月十五
+        "2026-10-01": "国庆",
+        "2026-10-31": "万圣",
+      };
       // 用日期做伪随机，保证每次渲染同一天颜色不变
       const days = Array.from({ length: total }, (_, i) => {
         const d = i + 1;
+        const key = `${y}-${pad(m)}-${pad(d)}`;
         const seed = (y * 10000 + m * 100 + d) % 10;
         const status = seed < 6 ? "done" : seed < 8 ? "partial" : seed === 8 ? "error" : "idle";
+        const wd = new Date(y, m - 1, d).getDay();
+        const weekend = wd === 0 || wd === 6;
+        const holi = holidayMap[key];
+        const rest = !!holi && holi.rest;
+        const workday = !!holi && !holi.rest;
+        const fest = festMap[key] || "";
+        const lunar = LUNAR_DAYS[(d - 1) % 30];
         return {
           day: d,
-          key: `${y}-${pad(m)}-${pad(d)}`,
+          key,
           status: status as "done" | "partial" | "idle" | "error",
           done: status === "done" ? 5 : status === "partial" ? 3 : 0,
           total: 5,
           points: status === "done" ? 82 : status === "partial" ? 45 : 0,
           hasRecord: status !== "idle",
+          weekend,
+          lunar,
+          festival: fest,
+          holidayName: holi ? holi.name : "",
+          rest,
+          workday,
+          label: rest && holi ? holi.name : fest || lunar,
         };
       });
       return {

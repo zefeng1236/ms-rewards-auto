@@ -662,6 +662,20 @@ export interface CalendarDay {
   points: number;
   /** 是否有真实记录（false 表示这天从没跑过，颜色按 idle 画但提示不同） */
   hasRecord: boolean;
+  /** 是否周末（周六/周日）→ 蓝数字 */
+  weekend?: boolean;
+  /** 农历日名（如「十五」；初一是该农历月起点，显示月份名如「八月」） */
+  lunar?: string;
+  /** 传统节日短名（如「中秋」「七夕」，单日） */
+  festival?: string;
+  /** 法定节假日短名（如「中秋」「国庆」，来自网络，含多日假期与调休） */
+  holidayName?: string;
+  /** 法定放假日（蓝「休」角标） */
+  rest?: boolean;
+  /** 调休上班日（橙「班」角标） */
+  workday?: boolean;
+  /** 单元格小字的最终显示（法定休节名 > 传统节日 > 农历） */
+  label?: string;
 }
 
 /** 一个月的数据 */
