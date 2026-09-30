@@ -2875,6 +2875,22 @@ checkTrue(
     /\.cal-stats/.test(calCss) && /\.cal-stat-value/.test(calCss) && /\.cal-stat-label/.test(calCss)
 );
 
+// —— 滚轮翻月作用域 + 勋章墙展开动画（2026-09-30 二次反馈） ——
+checkTrue(
+  "日历：滚轮翻月只挂月份栏（cal-nav 带 ref，cal-grid 不带；wheel preventDefault 不带页面滚）",
+  /className="cal-nav" ref=\{boxRef\}/.test(calSrc) &&
+    !/cal-grid" ref=\{boxRef\}/.test(calSrc) &&
+    /addEventListener\("wheel", onWheel, \{ passive: false \}\)/.test(calSrc) &&
+    /也可在月份栏滚轮/.test(calSrc)
+);
+checkTrue(
+  "勋章墙：展开/收起动画（cal-badges-wrap 常驻 + grid-rows 0fr→1fr 过渡 + 淡入）",
+  /cal-badges-wrap/.test(calSrc) && /cal-badges-inner/.test(calSrc) &&
+    /\.cal-badges-wrap\s*\{[^}]*grid-template-rows:\s*0fr/.test(calCss) &&
+    /\.cal-badges-wrap\.open\s*\{[^}]*grid-template-rows:\s*1fr/.test(calCss) &&
+    /transition:\s*opacity[^;]*transform/.test(calCss)
+);
+
 /* ============ 汇总 ============ */
 console.log(`\n${"=".repeat(46)}`);
 console.log(`结果: ${pass} 通过 / ${fail} 失败`);

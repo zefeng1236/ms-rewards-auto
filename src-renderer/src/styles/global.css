@@ -3824,6 +3824,30 @@ html[data-preset="opaque"] .compat-toast {
   flex-direction: column;
   gap: 12px;
 }
+
+/* 展开/收起动画：grid-template-rows 0fr→1fr 平滑撑开（外层 overflow 裁切），
+   内容淡入 + 轻微上移；收起时反向 */
+.cal-badges-wrap {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.32s var(--ease);
+}
+.cal-badges-wrap.open {
+  grid-template-rows: 1fr;
+}
+.cal-badges-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+.cal-badges-wrap .cal-badges {
+  opacity: 0;
+  transform: translateY(-6px);
+  transition: opacity 0.28s var(--ease), transform 0.28s var(--ease);
+}
+.cal-badges-wrap.open .cal-badges {
+  opacity: 1;
+  transform: none;
+}
 .cal-bgroup-title {
   font-size: 12px;
   color: var(--text-dim);

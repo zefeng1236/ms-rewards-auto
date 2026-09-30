@@ -70,8 +70,11 @@ export function CalendarPanel({ accounts }: { accounts: Account[] }) {
     setMonth(d.getMonth() + 1);
   };
 
-  // 滚轮上下翻月。用原生 listener 而不是 React onWheel：
-  // React 的合成 wheel 是被动监听，调 preventDefault 会告警且拦不住页面滚动。
+  // 滚轮上下翻月 —— 只在月份导航条（‹ 年月 › / 回到本月）区域生效，
+  // 日历格子区/页面滚动不再切月（用户反馈「翻月太容易误触发」）。
+  // 用原生 listener 而不是 React onWheel：React 的合成 wheel 是被动监听，
+  // 调 preventDefault 会告警且拦不住页面滚动；这里 passive:false + preventDefault，
+  // 在月份栏滚动时彻底吃掉滚动，不带着页面一起滚。
   const boxRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = boxRef.current;
@@ -79,12 +82,13 @@ export function CalendarPanel({ accounts }: { accounts: Account[] }) {
     let lock = 0;
     const onWheel = (e: WheelEvent) => {
       if (Math.abs(e.deltaY) < 8) return;
+      e.preventDefault();
       const t = Date.now();
       if (t - lock < 420) return; // 节流，避免一次滚动翻好几月
       lock = t;
       shift(e.deltaY > 0 ? 1 : -1);
     };
-    el.addEventListener("wheel", onWheel, { passive: true });
+    el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
   }, [year, month]);
 
@@ -123,14 +127,14 @@ export function CalendarPanel({ accounts }: { accounts: Account[] }) {
               placeholder={accounts.length ? undefined : "暂无账号"}
             />
           </div>
-          <div className="cal-nav">
-            <button className="cal-nav-btn" onClick={() => shift(-1)} aria-label="上一月" title="上一月（也可滚轮上滑）">
+          <div className="cal-nav" ref={boxRef}>
+            <button className="cal-nav-btn" onClick={() => shift(-1)} aria-label="上一月" title="上一月（也可在月份栏滚轮上滑）">
               ‹
             </button>
             <span className="cal-nav-title">
               {year} 年 {month} 月
             </span>
-            <button className="cal-nav-btn" onClick={() => shift(1)} aria-label="下一月" title="下一月（也可滚轮下滑）">
+            <button className="cal-nav-btn" onClick={() => shift(1)} aria-label="下一月" title="下一月（也可在月份栏滚轮下滑）">
               ›
             </button>
             <button
@@ -163,7 +167,7 @@ export function CalendarPanel({ accounts }: { accounts: Account[] }) {
         </div>
 
         {/* ---- 日历网格 ---- */}
-        <div className="cal-grid" ref={boxRef}>
+        <div className="cal-grid">
           {WEEK.map((w) => (
             <div key={w} className="cal-week">
               {w}
@@ -217,13 +221,16 @@ export function CalendarPanel({ accounts }: { accounts: Account[] }) {
           </button>
         </div>
 
-        {showBadges ? (
-          <div className="cal-badges">
-            <BadgeGroup title="连续签到" list={badgesOf("streak")} badges={badges} />
-            <BadgeGroup title="月度成就" list={badgesOf("perfect")} badges={badges} />
-            <BadgeGroup title="节日专属" list={badgesOf("festival")} badges={badges} />
+        {/* 勋章墙：常驻挂载，展开/收起用 grid-rows 0fr→1fr 过渡（带淡入上移） */}
+        <div className={`cal-badges-wrap${showBadges ? " open" : ""}`}>
+          <div className="cal-badges-inner">
+            <div className="cal-badges">
+              <BadgeGroup title="连续签到" list={badgesOf("streak")} badges={badges} />
+              <BadgeGroup title="月度成就" list={badgesOf("perfect")} badges={badges} />
+              <BadgeGroup title="节日专属" list={badgesOf("festival")} badges={badges} />
+            </div>
           </div>
-        ) : null}
+        </div>
       </AppCard>
     </div>
   );
