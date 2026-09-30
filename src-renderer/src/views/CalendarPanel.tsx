@@ -10,9 +10,9 @@ const WEEK = ["一", "二", "三", "四", "五", "六", "日"];
 /** 每日格子的悬浮说明 */
 function dayTitle(d: CalendarDay): string {
   const parts = [`${d.key}`];
-  if (d.rest) parts.push(`法定假日 · ${d.holidayName || "休"}`);
+  if (d.rest) parts.push("法定假日（休）");
   else if (d.workday) parts.push("调休上班（班）");
-  else if (d.festival) parts.push(d.festival);
+  if (d.festival) parts.push(d.festival);
   if (!d.hasRecord) parts.push("当天未运行");
   else if (d.status === "done") parts.push(`全部完成（${d.done}/${d.total}）`);
   else if (d.status === "partial") parts.push(`部分完成（${d.done}/${d.total}）`);
@@ -104,8 +104,8 @@ export function CalendarPanel({ accounts }: { accounts: Account[] }) {
     <div className="block">
       <div className="block-head">
         <div>
-          <div className="block-title">签到日历</div>
-          <div className="block-sub">按天记录每个账号的完成情况，连续全勤可解锁勋章</div>
+          <div className="block-title">签到日历与勋章墙</div>
+          <div className="block-sub">按天记录每个账号的完成情况，含运行统计与成就勋章</div>
         </div>
       </div>
 
@@ -151,6 +151,15 @@ export function CalendarPanel({ accounts }: { accounts: Account[] }) {
           <span className="cal-streak-txt">
             您已使用本软件连续签到 <b>{streak}</b> 天，继续努力
           </span>
+        </div>
+
+        {/* ---- 运行统计概览 ---- */}
+        <div className="cal-stats">
+          <StatItem label="累计完成" value={snap?.stats?.doneDays ?? 0} unit="天" />
+          <StatItem label="最长连续" value={snap?.stats?.bestStreak ?? 0} unit="天" />
+          <StatItem label="总积分" value={snap?.stats?.totalPoints ?? 0} />
+          <StatItem label="获得勋章" value={snap?.stats?.badgeTotal ?? 0} unit="次" />
+          <StatItem label="追踪天数" value={snap?.stats?.trackedDays ?? 0} unit="天" />
         </div>
 
         {/* ---- 日历网格 ---- */}
@@ -252,6 +261,19 @@ function BadgeGroup({
           );
         })}
       </div>
+    </div>
+  );
+}
+
+/** 一枚统计卡（大数字 + 单位 + 标签） */
+function StatItem({ label, value, unit }: { label: string; value: number; unit?: string }) {
+  return (
+    <div className="cal-stat">
+      <div className="cal-stat-value">
+        {value}
+        {unit ? <span>{unit}</span> : null}
+      </div>
+      <div className="cal-stat-label">{label}</div>
     </div>
   );
 }

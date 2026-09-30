@@ -292,8 +292,9 @@ function createHistory(dir) {
         holidayName: holiName,
         rest,
         workday,
-        // 小字展示优先级：法定休 > 传统节日 > 农历
-        label: rest ? holiName : festName || lunarDayLabel(key),
+        // 小字展示：只在真正的节日当天显示节名；续假/调休其余日期一律显示农历
+        // （用户 2026-09-30：中秋只有 8/15 当天显「中秋」，9/26-27 续假显十六/十七）
+        label: festName || lunarDayLabel(key),
       });
     }
     return {

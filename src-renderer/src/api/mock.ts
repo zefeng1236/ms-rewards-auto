@@ -569,7 +569,7 @@ export function createMockApi(): ElectronApi {
           holidayName: holi ? holi.name : "",
           rest,
           workday,
-          label: rest && holi ? holi.name : fest || lunar,
+          label: fest || lunar,
         };
       });
       return {

@@ -89,6 +89,16 @@ const ICONS: Record<string, React.ReactNode> = {
       <path d="M12 8h.01" />
     </svg>
   ),
+  achievements: (
+    <svg {...ICON_PROPS}>
+      <path d="M7 4h10v5a5 5 0 0 1-10 0V4z" />
+      <path d="M17 5h3v1.5a3 3 0 0 1-3 3" />
+      <path d="M7 5H4v1.5a3 3 0 0 0 3 3" />
+      <path d="M12 14v3" />
+      <path d="M8 21h8" />
+      <path d="M9 21a3 3 0 0 1 6 0" />
+    </svg>
+  ),
 };
 
 type NavEntry = { key: ViewKey; label: string; icon: React.ReactNode };
@@ -97,6 +107,7 @@ const NAV_GROUPS: { label: string; items: NavEntry[] }[] = [
     label: "工作台",
     items: [
       { key: "dashboard", label: "仪表盘", icon: ICONS.dashboard },
+      { key: "achievements", label: "成就与统计", icon: ICONS.achievements },
       { key: "account", label: "账户详情", icon: ICONS.account },
       { key: "settings", label: "任务全局设置", icon: ICONS.settings },
       { key: "software", label: "软件设置", icon: ICONS.software },

@@ -5,7 +5,6 @@ import { api, IS_WEB } from "../api/ipc";
 import { useAppState } from "../hooks/useAppState";
 import { AskTextModal } from "../components/AskTextModal";
 import { WebLoginModal } from "../components/WebLoginModal";
-import { CalendarPanel } from "./CalendarPanel";
 import type { Account, AccountRunStatus } from "../types";
 
 /** 千分位格式化（仪表盘大数字每三位加逗号；强制 en-US 分组，不随系统 locale 变化） */
@@ -440,9 +439,6 @@ export function Dashboard({ onOpenAccount }: { onOpenAccount?: (id: string) => v
           />
         </AppCard>
       </div>
-
-      {/* 签到日历：一次展示一个月，下拉切换账号，滚轮/箭头翻月 */}
-      <CalendarPanel accounts={accounts} />
 
       <AskTextModal
         open={addOpen}

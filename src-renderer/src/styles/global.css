@@ -3611,6 +3611,38 @@ html[data-preset="opaque"] .compat-toast {
   color: var(--text);
 }
 
+/* ---- 运行统计卡（成就与统计页） ---- */
+.cal-stats {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+}
+.cal-stat {
+  padding: 10px 8px;
+  border-radius: 12px;
+  background: rgb(7 9 16 / 0.32);
+  border: 1px solid rgb(255 255 255 / 0.05);
+  text-align: center;
+}
+.cal-stat-value {
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.1;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.cal-stat-value span {
+  font-size: 11px;
+  font-weight: 500;
+  margin-left: 2px;
+  color: var(--text-dim);
+}
+.cal-stat-label {
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--faint);
+}
+
 /* ---- 日历网格 ---- */
 .cal-grid {
   display: grid;

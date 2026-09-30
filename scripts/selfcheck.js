@@ -2798,7 +2798,7 @@ checkTrue("启动预热：electron-main 调用 holiday.warmup()", /holiday\.warm
 checkTrue(
   "历史：getMonth 拼装 weekend/lunar/festival/rest/workday/label",
   /holiday\.dayHoliday\(key\)/.test(historySrc) &&
-    /label: rest \? holiName : festName \|\| lunarDayLabel\(key\)/.test(historySrc)
+    /label: festName \|\| lunarDayLabel\(key\)/.test(historySrc)
 );
 
 // —— getMonth 集成（离线可复现：周末/节日/农历均不依赖网络）——
@@ -2812,6 +2812,7 @@ try {
   check("日历：9/27（周日）是周末", byKey("2026-09-27").weekend, true);
   check("日历：9/25 是中秋 → 小字显示「中秋」", byKey("2026-09-25").label, "中秋");
   check("日历：9/25 农历日名「十五」", byKey("2026-09-25").lunar, "十五");
+  check("节假日：只标节日当天，9/26 中秋续假 → label 显农历「十六」不显中秋", byKey("2026-09-26").label, "十六");
   check("日历：9/28（无节日普通日）小字=农历「十八」", byKey("2026-09-28").label, "十八");
   check("日历：9/28 无传统节日", byKey("2026-09-28").festival, "");
 } finally {
@@ -2840,7 +2841,38 @@ checkTrue(
 checkTrue(
   "mock：造周末/农历/中秋休/国庆班样例（dev:web 可预览角标）",
   /holidayMap/.test(mockApiSrc) && /"2026-10-10": \{ name: "国庆", rest: false \}/.test(mockApiSrc) &&
-    /label: rest && holi \? holi\.name : fest \|\| lunar/.test(mockApiSrc)
+    /label: fest \|\| lunar/.test(mockApiSrc) // 只标节日当天，续假回落农历（批次5）
+);
+
+// ============ 【P】成就与统计独立页（仪表盘日历拆分） ============
+const appSrcView = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "App.tsx"), "utf8");
+const achvPath = path.join(ROOT, "src-renderer", "src", "views", "AchievementsView.tsx");
+const achvSrc = fs.existsSync(achvPath) ? fs.readFileSync(achvPath, "utf8") : "";
+checkTrue(
+  "页面：AchievementsView 独立页存在且包裹 CalendarPanel",
+  /CalendarPanel/.test(achvSrc)
+);
+checkTrue(
+  "页面：ViewKey 含 achievements 且 VIEW_META 标题为「成就与统计」",
+  /"achievements"/.test(appSrcView) && /成就与统计/.test(appSrcView)
+);
+checkTrue(
+  "页面：App 按 view === \"achievements\" 渲染 AchievementsView",
+  /view === "achievements" && <AchievementsView/.test(appSrcView)
+);
+checkTrue(
+  "页面：侧边栏含成就与统计导航项",
+  /achievements/.test(sidebarSrc) && /成就与统计/.test(sidebarSrc)
+);
+checkTrue(
+  "页面：仪表盘不再内嵌日历（已拆到独立页）",
+  !/CalendarPanel/.test(dashSrc)
+);
+checkTrue(
+  "页面：统计卡 cal-stats/StatItem 五项齐备 + CSS 落地",
+  /cal-stats/.test(calSrc) && /StatItem/.test(calSrc) &&
+    /累计完成/.test(calSrc) && /最长连续/.test(calSrc) && /总积分/.test(calSrc) &&
+    /\.cal-stats/.test(calCss) && /\.cal-stat-value/.test(calCss) && /\.cal-stat-label/.test(calCss)
 );
 
 /* ============ 汇总 ============ */

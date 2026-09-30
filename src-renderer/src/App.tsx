@@ -9,6 +9,7 @@ import { useLiquidGlassHalo } from "./hooks/useLiquidGlassHalo";
 import { Sidebar } from "./components/Sidebar";
 import { LogConsole } from "./components/LogConsole";
 import { Dashboard } from "./views/Dashboard";
+import { AchievementsView } from "./views/AchievementsView";
 import { AccountDetail } from "./views/AccountDetail";
 import { SettingsView } from "./views/SettingsView";
 import { SoftwareSettingsView } from "./views/SoftwareSettingsView";
@@ -19,10 +20,11 @@ import { ClosePrompt } from "./components/ClosePrompt";
 import { BgProgressBubble } from "./components/BgProgressBubble";
 import type { SetupState, VaultStatus } from "./types";
 
-export type ViewKey = "dashboard" | "account" | "settings" | "software" | "about";
+export type ViewKey = "dashboard" | "achievements" | "account" | "settings" | "software" | "about";
 
 const VIEW_META: Record<ViewKey, { title: string; desc: string }> = {
   dashboard: { title: "仪表盘", desc: "所有账户的运行概况与今日进度。" },
+  achievements: { title: "成就与统计", desc: "签到日历、运行统计与成就勋章。" },
   account: { title: "账户详情", desc: "单个账户的任务进度与独立配置。" },
   settings: { title: "任务全局设置", desc: "与任务执行有关的全局配置，所有「遵循全局设置」的账号共用，改动立即生效。" },
   software: { title: "软件设置", desc: "外观个性化、启动与托盘、浏览器与安全等软件自身的行为设置。" },
@@ -288,6 +290,7 @@ function Shell() {
             <div className="scroll-area">
               <div className="view-enter" key={view}>
                 {view === "dashboard" && <Dashboard onOpenAccount={openAccount} />}
+                {view === "achievements" && <AchievementsView />}
                 {view === "account" && (
                   <AccountDetail selectedId={selectedId} onSelect={setSelectedId} />
                 )}
