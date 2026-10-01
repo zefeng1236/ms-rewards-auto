@@ -10,5 +10,9 @@ import { CalendarPanel } from "./CalendarPanel";
  */
 export function AchievementsView() {
   const { accounts } = useAppState();
-  return <CalendarPanel accounts={accounts} />;
+  return (
+    <div className="achievements-view">
+      <CalendarPanel accounts={accounts} />
+    </div>
+  );
 }

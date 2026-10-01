@@ -270,7 +270,7 @@ function Shell() {
       <div style={shellStyle}>
         {bgLayer}
 
-        <div className="shell">
+        <div className={"shell" + (view === "achievements" ? " shell-achievements" : "")}>
           <Sidebar
             view={view}
             onViewChange={setView}

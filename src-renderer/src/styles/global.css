@@ -3957,3 +3957,241 @@ html[data-preset="opaque"] .compat-toast {
   padding: 1px 4px;
   font-variant-numeric: tabular-nums;
 }
+
+/* Web 成就页紧凑密度：宽屏不再按 cqw 无限放大控件，桌面端保持原规格。 */
+:root[data-web="1"] .achievements-view .cal-card {
+  gap: 10px;
+}
+:root[data-web="1"] .achievements-view .block-head {
+  margin-bottom: 6px;
+}
+:root[data-web="1"] .achievements-view .cal-top {
+  gap: 8px;
+}
+:root[data-web="1"] .achievements-view .cal-pick-label {
+  font-size: clamp(11px, 1.2cqw, 14px);
+}
+:root[data-web="1"] .achievements-view .cal-nav {
+  gap: 4px;
+}
+:root[data-web="1"] .achievements-view .cal-nav-title {
+  min-width: clamp(90px, 11cqw, 180px);
+  font-size: clamp(12px, 1.35cqw, 18px);
+}
+:root[data-web="1"] .achievements-view .cal-nav-btn,
+:root[data-web="1"] .achievements-view .cal-nav-today {
+  height: clamp(28px, 2.5cqw, 36px);
+}
+:root[data-web="1"] .achievements-view .cal-nav-btn {
+  width: clamp(28px, 2.5cqw, 36px);
+  font-size: clamp(16px, 1.5cqw, 20px);
+}
+:root[data-web="1"] .achievements-view .cal-nav-today {
+  padding: 0 8px;
+  font-size: clamp(11px, 1.1cqw, 14px);
+}
+:root[data-web="1"] .achievements-view .cal-streak {
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
+}
+:root[data-web="1"] .achievements-view .cal-streak-num {
+  font-size: clamp(22px, 2cqw, 30px);
+}
+:root[data-web="1"] .achievements-view .cal-streak-txt {
+  font-size: clamp(12px, 1.1cqw, 14px);
+}
+:root[data-web="1"] .achievements-view .cal-stats {
+  gap: 6px;
+}
+:root[data-web="1"] .achievements-view .cal-stat {
+  padding: 8px 6px;
+  border-radius: 9px;
+}
+:root[data-web="1"] .achievements-view .cal-stat-value {
+  font-size: clamp(18px, 1.7cqw, 26px);
+}
+:root[data-web="1"] .achievements-view .cal-stat-value span,
+:root[data-web="1"] .achievements-view .cal-stat-label {
+  font-size: clamp(10px, 1cqw, 13px);
+}
+:root[data-web="1"] .achievements-view .cal-grid {
+  gap: 4px;
+  padding: 8px;
+  border-radius: 12px;
+}
+:root[data-web="1"] .achievements-view .cal-week {
+  font-size: clamp(10px, 1cqw, 13px);
+}
+:root[data-web="1"] .achievements-view .cal-cell {
+  aspect-ratio: auto;
+  height: clamp(68px, 6.5cqw, 96px);
+  min-height: 0;
+  gap: 1px;
+  border-radius: 8px;
+  font-size: clamp(11px, 1.1cqw, 14px);
+}
+:root[data-web="1"] .achievements-view .cal-day {
+  font-size: clamp(15px, 1.5cqw, 22px);
+}
+:root[data-web="1"] .achievements-view .cal-label {
+  font-size: clamp(10px, 0.9cqw, 13px);
+}
+:root[data-web="1"] .achievements-view .cal-tag {
+  top: 2px;
+  right: 3px;
+  width: clamp(13px, 1.25cqw, 18px);
+  height: clamp(13px, 1.25cqw, 18px);
+  font-size: clamp(9px, 0.9cqw, 12px);
+}
+:root[data-web="1"] .achievements-view .cal-loading {
+  font-size: clamp(12px, 1.1cqw, 15px);
+}
+:root[data-web="1"] .achievements-view .cal-legend {
+  gap: 10px;
+  font-size: clamp(11px, 1.05cqw, 14px);
+}
+:root[data-web="1"] .achievements-view .cal-dot {
+  width: 8px;
+  height: 8px;
+}
+:root[data-web="1"] .achievements-view .cal-badges-head {
+  padding-top: 9px;
+}
+:root[data-web="1"] .achievements-view .cal-badges-title {
+  font-size: clamp(12px, 1.25cqw, 16px);
+}
+:root[data-web="1"] .achievements-view .cal-badges-title em {
+  font-size: clamp(11px, 1cqw, 13px);
+}
+:root[data-web="1"] .achievements-view .cal-badges {
+  gap: 10px;
+}
+:root[data-web="1"] .achievements-view .cal-bgroup-title {
+  margin-bottom: 5px;
+  font-size: clamp(11px, 1.1cqw, 14px);
+}
+:root[data-web="1"] .achievements-view .cal-bgroup-title em {
+  font-size: clamp(10px, 0.95cqw, 12px);
+}
+:root[data-web="1"] .achievements-view .cal-blist {
+  grid-template-columns: repeat(auto-fill, minmax(clamp(70px, 7.25cqw, 112px), 1fr));
+  gap: 6px;
+}
+:root[data-web="1"] .achievements-view .cal-badge {
+  gap: 3px;
+  padding: 6px 4px 5px;
+  border-radius: 9px;
+}
+:root[data-web="1"] .achievements-view .cal-badge > svg {
+  width: 26px;
+  height: 26px;
+}
+:root[data-web="1"] .achievements-view .cal-bname {
+  font-size: clamp(10px, 1.05cqw, 14px);
+}
+:root[data-web="1"] .achievements-view .cal-bcount {
+  top: 3px;
+  right: 4px;
+  font-size: clamp(9px, 0.9cqw, 12px);
+}
+@media (max-width: 720px) {
+  :root[data-web="1"] .shell.shell-achievements {
+    flex-direction: column;
+  }
+  :root[data-web="1"] .shell.shell-achievements .sidenav {
+    width: 100%;
+    height: auto;
+    max-height: 142px;
+    flex: 0 0 auto;
+    gap: 2px;
+    padding: 7px 10px;
+    overflow: hidden;
+  }
+  :root[data-web="1"] .shell.shell-achievements .nav-brand {
+    gap: 7px;
+    padding: 0 4px 5px;
+  }
+  :root[data-web="1"] .shell.shell-achievements .nav-logo-img {
+    width: 26px;
+    height: 26px;
+  }
+  :root[data-web="1"] .shell.shell-achievements .nav-title {
+    font-size: 12px;
+  }
+  :root[data-web="1"] .shell.shell-achievements .nav-sub {
+    font-size: 10px;
+  }
+  :root[data-web="1"] .shell.shell-achievements .nav-list {
+    display: block;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+  :root[data-web="1"] .shell.shell-achievements .nav-list::-webkit-scrollbar,
+  :root[data-web="1"] .shell.shell-achievements .nav-foot::-webkit-scrollbar {
+    display: none;
+  }
+  :root[data-web="1"] .shell.shell-achievements .nav-switch,
+  :root[data-web="1"] .shell.shell-achievements .nav-group {
+    flex-direction: row;
+    align-items: center;
+    gap: 4px;
+    width: max-content;
+  }
+  :root[data-web="1"] .shell.shell-achievements .nav-group + .nav-group {
+    margin-top: 0;
+    margin-left: 4px;
+  }
+  :root[data-web="1"] .shell.shell-achievements .nav-group-label,
+  :root[data-web="1"] .shell.shell-achievements .nav-indicator {
+    display: none;
+  }
+  :root[data-web="1"] .shell.shell-achievements .nav-item {
+    width: auto;
+    min-height: 32px;
+    padding: 6px 8px;
+    gap: 6px;
+    white-space: nowrap;
+    font-size: 12px;
+  }
+  :root[data-web="1"] .shell.shell-achievements .nav-item.is-active {
+    background: color-mix(in srgb, var(--text) 9%, transparent);
+  }
+  :root[data-web="1"] .shell.shell-achievements .nav-foot {
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    margin-top: 0;
+    padding-top: 5px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    white-space: nowrap;
+  }
+  :root[data-web="1"] .shell.shell-achievements .nav-foot > .hint,
+  :root[data-web="1"] .shell.shell-achievements .nav-foot > .nav-hitokoto,
+  :root[data-web="1"] .shell.shell-achievements .nav-foot > .nav-version {
+    display: none;
+  }
+  :root[data-web="1"] .shell.shell-achievements .nav-foot > *,
+  :root[data-web="1"] .shell.shell-achievements .nav-install-wrap {
+    flex: 0 0 auto;
+  }
+  :root[data-web="1"] .shell.shell-achievements .content {
+    min-height: 0;
+  }
+  :root[data-web="1"] .shell.shell-achievements .topbar {
+    gap: 8px;
+    padding: 10px 14px 8px;
+  }
+  :root[data-web="1"] .shell.shell-achievements .scroll-area {
+    padding: 2px 12px 18px;
+  }
+  :root[data-web="1"] .achievements-view .cal-cell {
+    width: 100%;
+    min-width: 0;
+    aspect-ratio: 1 / 1;
+    height: auto;
+    min-height: 0;
+  }
+}

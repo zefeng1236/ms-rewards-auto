@@ -2975,6 +2975,23 @@ checkTrue(
     /累计完成/.test(calSrc) && /最长连续/.test(calSrc) && /总积分/.test(calSrc) &&
     /\.cal-stats/.test(calCss) && /\.cal-stat-value/.test(calCss) && /\.cal-stat-label/.test(calCss)
 );
+const compactAchievements = [
+  /:root\[data-web="1"\]\s+\.achievements-view \.cal-stat-value\s*\{[^}]*font-size:\s*clamp\(18px,\s*1\.7cqw,\s*26px\)/,
+  /:root\[data-web="1"\]\s+\.achievements-view \.cal-cell\s*\{[^}]*aspect-ratio:\s*auto[^}]*height:\s*clamp\(68px,\s*6\.5cqw,\s*96px\)[^}]*min-height:\s*0/,
+  /:root\[data-web="1"\]\s+\.achievements-view \.cal-bname\s*\{[^}]*font-size:\s*clamp\(10px,\s*1\.05cqw,\s*14px\)/,
+];
+checkTrue(
+  "网页版成就页独立作用域启用紧凑统计、日历与勋章规格",
+  /className="achievements-view"/.test(achvSrc) && compactAchievements.every((rule) => rule.test(calCss))
+);
+checkTrue(
+  "Web 成就页移动端释放内容宽度并将导航切为横向",
+  /view === "achievements" \? " shell-achievements"/.test(appSrcView) &&
+    /\.shell\.shell-achievements \{\s*flex-direction:\s*column/.test(calCss) &&
+    /\.shell\.shell-achievements \.sidenav \{[^}]*width:\s*100%/.test(calCss) &&
+    /\.shell\.shell-achievements \.nav-switch,[\s\S]*?flex-direction:\s*row/.test(calCss) &&
+    /\.achievements-view \.cal-cell\s*\{[^}]*min-width:\s*0[^}]*min-height:\s*0/.test(calCss)
+);
 
 // —— 滚轮翻月作用域 + 勋章墙展开动画（2026-09-30 二次反馈） ——
 checkTrue(
