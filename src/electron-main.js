@@ -935,6 +935,20 @@ function registerIpc() {
     return r;
   });
 
+  // ---- 窗口标题栏（一言显示在此处时） ----
+  // 用户把一言位置设为「标题栏」时，渲染进程把当前这句话报上来，我们把它
+  // 拼进原生窗口标题（任务栏 / Alt+Tab 也看得到）。传空串 = 恢复原标题。
+  // 注意：原生标题栏文字由系统绘制，过长会被系统截断，所以这里只做拼接、
+  // 不做超长省略——截断规则交给 Windows，避免和窗口控件挤在一起。
+  ipcMain.handle("window:setSubtitle", (_e, text) => {
+    const base = `MS Rewards 自动任务 v${displayVersion()}`;
+    const sub = typeof text === "string" ? text.trim() : "";
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setTitle(sub ? `${base} · ${sub}` : base);
+    }
+    return true;
+  });
+
   // ---- 仪表盘聚合 ----
   ipcMain.handle("app:overview", () => {
     try {

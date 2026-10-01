@@ -109,11 +109,11 @@ export interface AppConfig {
    */
   limits: {
     random: boolean;
-    /** 阅读文章每次最多几篇，0 = 不限制 */
+    /** 阅读文章每次最多几篇，0 = 不限制（默认 6） */
     read: number;
-    /** 积分活动每次最多几个，0 = 不限制 */
+    /** 积分活动每次最多几个，0 = 不限制（默认 0） */
     promos: number;
-    /** 搜索每次每轮的次数，0 = 沿用内置随机节奏（4–7，一次性完成模式 6–9） */
+    /** 搜索每次每轮的次数，0 = 沿用内置随机节奏（4–7，一次性完成模式 6–9）；默认 6 */
     search: number;
   };
   schedule: {
@@ -144,7 +144,7 @@ export interface AppConfig {
      * 一言在界面上的显示位置：
      *   sidebar     —— 左下角侧边栏、贴窗口底部（默认）
      *   bottomRight —— 右下角、贴窗口底部
-     *   topbar      —— 标题栏（压缩成一行小字）
+     *   topbar      —— 窗口原生标题栏（拼在「MS Rewards 自动任务 vX · 」之后）
      */
     hitokotoPosition: HitokotoPosition;
   };

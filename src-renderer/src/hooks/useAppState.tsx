@@ -146,7 +146,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       return;
     }
     let alive = true;
-    const TICK_MS = 30_000;
+    // 默认 15 秒换一句随机句；后端 TTL 同为 15 秒，两边同频避免白跑请求
+    const TICK_MS = 15_000;
 
     const fetchQuote = () => {
       api

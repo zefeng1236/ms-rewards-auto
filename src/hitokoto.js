@@ -5,8 +5,8 @@ const sp = require("./storage-path");
 
 const API_URL = "https://v1.hitokoto.cn/?encode=json&max_length=30";
 const CACHE_FILE = sp.resolve("hitokoto.json");
-/** 缓存有效期（毫秒）。用户要求默认 30 秒换一次。 */
-const TTL_MS = 30_000;
+/** 缓存有效期（毫秒）。默认 15 秒换一次随机句。 */
+const TTL_MS = 15_000;
 let memory = null;
 
 function normalize(raw) {

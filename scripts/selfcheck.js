@@ -449,9 +449,9 @@ check("老配置归一化补上 20/300 且默认开启", [scOld.randomDelay, scO
 const cfgDefaults = require(path.join(ROOT, "src", "config.js")).DEFAULTS;
 const globalDefaults = require(path.join(ROOT, "src", "global-config.js")).GLOBAL_DEFAULTS;
 const mockSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "api", "mock.ts"), "utf8");
-check("config.DEFAULTS 含 limits", cfgDefaults.limits, { random: false, read: 0, promos: 0, search: 0 });
-check("global-config 默认值同步含 limits", globalDefaults.limits, { random: false, read: 0, promos: 0, search: 0 });
-checkTrue("渲染层 mock 默认值同步含 limits（含 search）", /limits: \{ random: false, read: 0, promos: 0, search: 0 \}/.test(mockSrc));
+check("config.DEFAULTS 含 limits", cfgDefaults.limits, { random: false, read: 6, promos: 0, search: 6 });
+check("global-config 默认值同步含 limits", globalDefaults.limits, { random: false, read: 6, promos: 0, search: 6 });
+checkTrue("渲染层 mock 默认值同步含 limits（含 search）", /limits: \{ random: false, read: 6, promos: 0, search: 6 \}/.test(mockSrc));
 // 0.9.4 白屏根因：global-config 的 GLOBAL_DEFAULTS 缺 goals，旧配置文件只有
 // { enable: true } 无 items，全局设置页 value.goals.items 抛 TypeError。必须与
 // config.DEFAULTS.goals 对齐，带 items: [] 兜底。
@@ -2598,10 +2598,60 @@ check("global-config 默认值同步含位置", globalDefaults.notice.hitokotoPo
 checkTrue("渲染层 mock 默认值同步含位置", /hitokotoPosition: "sidebar"/.test(mockSrc));
 checkTrue("设置页出现一只言位置下拉", /显示位置/.test(formSrc) && /hitokotoPosition/.test(formSrc));
 
-// —— 一言：30 秒轮询 + 后台暂停 + 点击复制（批次 C）——
+// —— 一言「标题栏」位置 = 窗口原生标题栏（2026-10-01 用户反馈：应落在系统标题栏）——
+// 链路：App 上报 → preload 暴露 setWindowSubtitle → 主进程拼 base + 一言后 setTitle。
+// 反例防线：不得退回「应用内顶栏渲染一行小字」（旧 hk-inline 写法）。
+// 独立读源，避免与其他段落同名变量冲突。
+const mainSrcTb = fs.readFileSync(path.join(ROOT, "src", "electron-main.js"), "utf8");
+const preloadSrcTb = fs.readFileSync(path.join(ROOT, "src", "electron-preload.js"), "utf8");
+const appSrcTb = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "App.tsx"), "utf8");
+checkTrue(
+  "标题栏一言：App 仅在 topbar 位置上报，切走/关闭时传空串还原",
+  /hitokotoPosition === "topbar" && !!hitokoto/.test(appSrcTb) &&
+    /setWindowSubtitle\(onTopbar \? hitokoto : ""\)/.test(appSrcTb)
+);
+checkTrue("标题栏一言：顶栏不再自渲染（hk-inline 已移除）", !/hk-inline/.test(appSrcTb));
+checkTrue(
+  "标题栏一言：preload 暴露 setWindowSubtitle",
+  /setWindowSubtitle: \(text\) => ipcRenderer\.invoke\("window:setSubtitle"/.test(preloadSrcTb)
+);
+checkTrue(
+  "标题栏一言：主进程拼进原生窗口标题（setTitle + 版本号前缀）",
+  /ipcMain\.handle\("window:setSubtitle"/.test(mainSrcTb) &&
+    /MS Rewards 自动任务 v\$\{displayVersion\(\)\}/.test(mainSrcTb) &&
+    /mainWindow\.setTitle\(sub \? `\$\{base\} · \$\{sub\}` : base\)/.test(mainSrcTb)
+);
+checkTrue(
+  "标题栏一言：浏览器/mock 端同步 document.title 兜底",
+  /setWindowSubtitle: async \(text: string\)/.test(mockSrc) && /document\.title = text/.test(mockSrc)
+);
+
+// —— 关于页「每日一言」板块（2026-10-01 用户要求）——
+const aboutSrcAq = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "views", "About.tsx"), "utf8");
+const cssAq = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "styles", "global.css"), "utf8");
+checkTrue(
+  "关于页：存在「每日一言」板块且展示当前一言",
+  /每日一言/.test(aboutSrcAq) && /useAppState/.test(aboutSrcAq) && /about-quote-text/.test(aboutSrcAq)
+);
+checkTrue(
+  "关于页一言：支持复制当前一言",
+  /const onCopyQuote = async/.test(aboutSrcAq) && /copyText\(hitokoto\)/.test(aboutSrcAq)
+);
+checkTrue("关于页一言：样式落地（引用块 + 装饰引号）", /\.about-quote\s*\{/.test(cssAq) && /\.about-quote-text\s*\{/.test(cssAq));
+
+// —— mock 全局配置须可写（否则预览里全局项改完立刻被冲回默认，误判功能坏）——
+checkTrue(
+  "mock：全局配置可写（preview 改动不被冲回默认）",
+  /let defaultConfig: AppConfig = mergeDeep/.test(mockSrc) &&
+    /setGlobalConfig: async \(patch\) => \{[\s\S]{0,120}defaultConfig = mergeDeep\(defaultConfig, patch\)/.test(mockSrc)
+);
+
+// —— 一言：15 秒轮询 + 后台暂停 + 点击复制（批次 C）——
 const hookSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "hooks", "useAppState.tsx"), "utf8");
 const hkInterval = hookSrc.slice(hookSrc.indexOf("hitokotoEnabled ="), hookSrc.indexOf("}, [hitokotoEnabled, globalConfig])"));
-checkTrue("一言轮询间隔为 30 秒（非按天）", /const TICK_MS = 30_000;/.test(hkInterval));
+checkTrue("一言轮询间隔为 15 秒（非按天）", /const TICK_MS = 15_000;/.test(hkInterval));
+const hkSrcFile = fs.readFileSync(path.join(ROOT, "src", "hitokoto.js"), "utf8");
+checkTrue("一言后端缓存 TTL 同为 15 秒（前后端同频）", /const TTL_MS = 15_000;/.test(hkSrcFile));
 checkTrue(
   "一言后台（窗口隐藏）时停止轮询，切回前台立即刷新",
   /addEventListener\("visibilitychange", onVisibility\)/.test(hkInterval) &&
@@ -2620,8 +2670,9 @@ const globalCssHk = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "styl
 for (const [label, src] of [["App.tsx", appSrcHk], ["Sidebar.tsx", sidebarSrcHk]]) {
   checkTrue(`${label} 支持点击一言复制到剪贴板`, /const copyHitokoto = /.test(src) && /writeText\(hitokoto\)/.test(src));
 }
-// 一言出现的三处容器：侧边栏 / 标题栏 / 右下角，都必须挂上可点击的钩子
-checkTrue("三个展示位置都挂 hk-clickable 复制钩子", (appSrcHk.match(/hk-clickable/g) || []).length === 2 && /hk-clickable/.test(sidebarSrcHk));
+// 一言在界面内出现的两处容器：侧边栏 / 右下角，都必须挂上可点击的钩子。
+// （标题栏位置已迁到**窗口原生标题栏**，由系统绘制、无法挂点击钩子，见上方「标题栏一言」组）
+checkTrue("界面内两处（侧边栏 / 右下角）都挂 hk-clickable 复制钩子", (appSrcHk.match(/hk-clickable/g) || []).length === 1 && /hk-clickable/.test(sidebarSrcHk));
 checkTrue("global.css 定义 .hk-clickable 悬停反馈", /\.hk-clickable/.test(globalCssHk) && /\.hk-clickable:hover/.test(globalCssHk));
 
 // —— 推送版式：跑真实路径（桩掉 fetch / 临时 storage），断言最终报文 ——

@@ -2906,6 +2906,30 @@ html[data-preset="opaque"] .compat-toast {
   margin-top: 14px;
 }
 
+/* 每日一言（关于页）：引号装饰 + 稍大的引文排版，比正文显眼、又不喧宾夺主 */
+.about-quote {
+  position: relative;
+  margin: 0;
+  padding: 6px 0 6px 30px;
+}
+.about-quote-mark {
+  position: absolute;
+  left: 0;
+  top: -6px;
+  font-size: 40px;
+  line-height: 1;
+  color: var(--lg-text-secondary);
+  opacity: 0.4;
+  font-family: Georgia, "Times New Roman", serif;
+}
+.about-quote-text {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--lg-text-primary, var(--text));
+  user-select: text;
+}
+
 /* 依赖分组标题 */
 .dep-group-title {
   font-size: 11.5px;
@@ -3456,15 +3480,14 @@ html[data-preset="opaque"] .compat-toast {
    每日一言（Hitokoto）
    ----------------------------------------------------------
    三处位置共用一套视觉规格：小字 + 次要文字色，不抢界面焦点。
-   差别只在定位与换行策略：侧边栏可折行，标题栏与右下角必须单行截断
-   （前者怕顶栏被撑高，后者怕浮标越铺越长）。
+   差别只在定位与换行策略：侧边栏可折行，右下角必须单行截断（怕浮标越铺越长）。
 
    可选位置来自 notice.hitokotoPosition：
-     sidebar（默认，左下角侧边栏贴底） / bottomRight（右下角贴底） / topbar（标题栏）
+     sidebar（默认，左下角侧边栏贴底） / bottomRight（右下角贴底）
+     / topbar（**窗口原生标题栏**，由主进程 setTitle 绘制，本文件无对应样式）
    ========================================================== */
 .nav-hitokoto,
-.hk-float,
-.hk-inline {
+.hk-float {
   font-size: 11px;
   line-height: 1.5;
   color: var(--lg-text-secondary);
@@ -3496,16 +3519,8 @@ html[data-preset="opaque"] .compat-toast {
   backdrop-filter: blur(10px);
 }
 
-/* 标题栏：一行小字，宽度跟随标题块，绝不换行把顶栏撑高 */
-.hk-inline {
-  margin-top: 5px;
-  max-width: 100%;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* 点击复制：三个位置共用，指针变手型提示可交互 */
+/* 点击复制：侧边栏 / 右下角位置共用，指针变手型提示可交互。
+   （标题栏位置由系统绘制，点击复制只在界面内生效，故不在此列） */
 .hk-clickable {
   cursor: pointer;
   transition: opacity 0.15s;

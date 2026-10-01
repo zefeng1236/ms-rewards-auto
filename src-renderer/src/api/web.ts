@@ -1,4 +1,5 @@
 import type { ElectronApi } from "../types/electron";
+import { DISPLAY_VERSION } from "../version";
 import type {
   Account,
   AccountLogEntry,
@@ -325,6 +326,14 @@ export function createWebApi(): ElectronApi {
 
     /* ---------------- 每日一言 ---------------- */
     getHitokoto: () => rpc<Hitokoto | null>("getHitokoto"),
+    // 浏览器版把一言同步到标签页标题（等价于桌面版的原生窗口标题栏）
+    setWindowSubtitle: async (text: string) => {
+      if (typeof document !== "undefined") {
+        const base = `MS Rewards 自动任务 v${DISPLAY_VERSION}`;
+        document.title = text && text.trim() ? `${base} · ${text.trim()}` : base;
+      }
+      return true;
+    },
 
     /* ---------------- 启动与托盘 ---------------- */
     getLaunch: () => rpc<LaunchConfig>("getLaunch"),

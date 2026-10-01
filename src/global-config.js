@@ -36,12 +36,13 @@ const GLOBAL_DEFAULTS = {
     api: "hot.nntool.cc",
   },
   // 单次执行数量上限：0 = 不限制（一次做完）；random 打开后随机 ±2–4，见 src/task-limit.js
+  // 默认把当天任务摊到多轮：阅读每轮 6 篇、搜索每轮 6 次；积分活动仍不限制（一次做完）。
   limits: {
     random: false,
-    read: 0,
+    read: 6,
     promos: 0,
     // 搜索每轮次数：0 = 沿用内置随机节奏（4–7，force 模式 6–9）；>0 = 固定值
-    search: 0,
+    search: 6,
   },
   schedule: {
     enable: true,

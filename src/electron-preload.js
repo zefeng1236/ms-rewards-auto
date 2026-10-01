@@ -74,6 +74,8 @@ contextBridge.exposeInMainWorld("api", {
 
   // 每日一言：后端按天缓存，界面与推送共用同一句（避免重复请求公益接口）
   getHitokoto: () => ipcRenderer.invoke("hitokoto:get"),
+  // 把一言送到窗口原生标题栏（位置设为 topbar 时；传空串恢复原标题）
+  setWindowSubtitle: (text) => ipcRenderer.invoke("window:setSubtitle", text),
 
   // 推送通知测试：把当前表单填的通道试发一遍，日志输出具体（脱敏）地址
   testPush: (notice) => ipcRenderer.invoke("notify:test", notice),

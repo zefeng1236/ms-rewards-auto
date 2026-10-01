@@ -119,6 +119,12 @@ export interface ElectronApi {
    */
   getHitokoto(): Promise<Hitokoto | null>;
 
+  /**
+   * 把一言送到窗口原生标题栏（仅「标题栏」位置时调用）。
+   * 传空串恢复原标题；浏览器 / mock 环境为 no-op。
+   */
+  setWindowSubtitle(text: string): Promise<boolean>;
+
   // ---- 推送测试 ----
   testPush(notice: AppConfig["notice"]): Promise<PushTestResult>;
 

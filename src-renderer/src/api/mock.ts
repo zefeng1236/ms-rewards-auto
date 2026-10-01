@@ -14,6 +14,8 @@ import type {
   VaultStatus,
 } from "../types";
 import type { ElectronApi } from "../types/electron";
+import { DISPLAY_VERSION } from "../version";
+import { mergeDeep } from "../utils";
 
 /**
  * 浏览器直开（非 Electron）时使用的假后端。
@@ -28,7 +30,7 @@ const DEFAULT_CONFIG: AppConfig = {
   tasks: { sign: true, read: true, daily: true, promos: true, claim: false, search: true },
   region: { lock: true, ipProvider: "bing" },
   search: { span: 30, api: "offline" },
-  limits: { random: false, read: 0, promos: 0, search: 0 },
+  limits: { random: false, read: 6, promos: 0, search: 6 },
   schedule: {
     enable: true,
     mode: "interval",
@@ -61,6 +63,16 @@ const DEFAULT_CONFIG: AppConfig = {
     fingerprint: { enable: true, seed: 0, brand: "Chrome", hardwareConcurrency: 0, platform: "windows", mirror: "cdn.gh-proxy.org" },
   },
 };
+
+/**
+ * 全局配置的**可变副本**（仅 mock 用）。
+ *
+ * 预览环境需要「改了就是改了」：若 getGlobalConfig 每次都返回常量，设置页改完
+ * 立刻被 refreshGlobalConfig 冲回默认值 —— 一言「显示位置」这类全局项在浏览器
+ * 预览里根本切不动，容易被误判成功能坏了（2026-10-01 排查标题栏一言时踩到）。
+ * 账户级仍用只读的 DEFAULT_CONFIG，避免污染各账户初始值。
+ */
+let defaultConfig: AppConfig = mergeDeep({} as AppConfig, DEFAULT_CONFIG) as AppConfig;
 
 const DEFAULT_APPEARANCE: Appearance = {
   preset: "normal",
@@ -350,13 +362,18 @@ export function createMockApi(): ElectronApi {
       return true;
     },
 
-    getConfig: async () => ({ ...DEFAULT_CONFIG }),
-    setConfig: async (_id, patch) => ({ ...DEFAULT_CONFIG, ...patch }) as AppConfig,
+    getConfig: async () => ({ ...defaultConfig }),
+    setConfig: async (_id, patch) => ({ ...defaultConfig, ...patch }) as AppConfig,
     getOverrides: async () => ({}),
     setUseGlobal: async () => true,
 
-    getGlobalConfig: async () => ({ ...DEFAULT_CONFIG }),
-    setGlobalConfig: async (patch) => ({ ...DEFAULT_CONFIG, ...patch }) as AppConfig,
+    // 预览环境保留写入（否则设置页改完立刻被 refreshGlobalConfig 冲回默认值，
+    // 一言「显示位置」这类全局项在浏览器预览里根本切不动，容易误判成功能失效）
+    getGlobalConfig: async () => ({ ...defaultConfig }),
+    setGlobalConfig: async (patch) => {
+      defaultConfig = mergeDeep(defaultConfig, patch) as AppConfig;
+      return { ...defaultConfig };
+    },
 
     overview: async () => {
       const stats: Overview["stats"] = {
@@ -452,6 +469,14 @@ export function createMockApi(): ElectronApi {
     passkeyRemove: async () => ({ ok: false, error: "浏览器预览模式不支持通行密钥" }),
 
     getHitokoto: async () => MOCK_HITOKOTO(),
+    // 预览模式没有原生窗口标题栏，仅同步一份到 document.title 方便肉眼验证
+    setWindowSubtitle: async (text: string) => {
+      if (typeof document !== "undefined") {
+        const base = `MS Rewards 自动任务 v${DISPLAY_VERSION}`;
+        document.title = text && text.trim() ? `${base} · ${text.trim()}` : base;
+      }
+      return true;
+    },
 
     testPush: async () => ({ ok: false, error: "浏览器预览模式不支持推送" }),
 
@@ -667,7 +692,7 @@ export function createMockApi(): ElectronApi {
       return {
         ok: true,
         updateAvailable: true,
-        currentVersion: "0.13.11",
+        currentVersion: "0.13.12",
         latestVersion: "0.14.0",
         downloadUrl: "https://github.com/zefeng1236/ms-rewards-auto/releases/download/v0.14.0/MS-Rewards-Auto-Setup-0.14.0.exe",
         assetName: "MS-Rewards-Auto-Setup-0.14.0.exe",

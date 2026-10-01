@@ -26,7 +26,7 @@ const SCOPE_OPTIONS: SelectOption[] = [{ label: "总积分余额", value: "balan
 const HITOKOTO_POSITION_OPTIONS: SelectOption[] = [
   { label: "左下角侧边栏（贴底部）", value: "sidebar" },
   { label: "右下角（贴底部）", value: "bottomRight" },
-  { label: "标题栏（一行）", value: "topbar" },
+  { label: "标题栏（原生窗口标题栏，任务栏可见）", value: "topbar" },
 ];
 
 const TASK_LABELS: { key: keyof AppConfig["tasks"]; label: string; hint?: string }[] = [
@@ -400,7 +400,7 @@ export function SettingsForm({
           <div className="form-grid" style={{ marginTop: 12 }}>
             <SelectField
               label="显示位置"
-              hint="界面中小字展示的位置；标题栏位置会压缩成一行显示"
+              hint="界面中小字展示的位置；选「标题栏」会送到窗口原生标题栏（任务栏也可见）"
               value={hitokotoPos}
               options={HITOKOTO_POSITION_OPTIONS}
               onChange={(v) =>

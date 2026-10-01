@@ -84,6 +84,18 @@ function Shell() {
     return off;
   }, []);
 
+  // 一言位置选「标题栏」时，把它送进**窗口原生标题栏**（任务栏 / Alt+Tab 同显），
+  // 既不是应用内的一行小字，也不再叠加渲染；位置切走或一言关闭时传空串还原标题。
+  // 依赖里带上 hitokotoPosition，切位置能立刻回滚/生效。
+  useEffect(() => {
+    const onTopbar = hitokotoPosition === "topbar" && !!hitokoto;
+    void api.setWindowSubtitle(onTopbar ? hitokoto : "");
+    // 卸载（退出/热重载）时还原，避免标题残留上一句
+    return () => {
+      void api.setWindowSubtitle("");
+    };
+  }, [hitokoto, hitokotoPosition]);
+
   useEffect(() => {
     api
       .getSetup()
@@ -271,13 +283,8 @@ function Shell() {
               <div style={{ position: "relative", zIndex: 1, minWidth: 0 }}>
                 <h1>{meta.title}</h1>
                 <p>{meta.desc}</p>
-                {/* 一言（标题栏位置）：单行小字，超出省略——
-                    刻意不放右下角那种多行排版，标题栏的高度只有这么点 */}
-                {hitokoto && hitokotoPosition === "topbar" && (
-                  <div className="hk-inline hk-clickable" title="点击复制" onClick={copyHitokoto}>
-                    {hitokoto}
-                  </div>
-                )}
+                {/* 一言选「标题栏」时不再在这里渲染——已改为送进窗口**原生标题栏**
+                    （见上面的 setWindowSubtitle 效应），避免两处重复显示同一句话 */}
               </div>
               <div className="topbar-actions" style={{ position: "relative", zIndex: 1 }}>
                 <TopbarActions view={view} />

@@ -1,5 +1,7 @@
+import { useState } from "react";
 import { GlassButton, GlassSurface } from "@ttqtt/liquid-glass-react";
 import { AppCard, Tag, toast } from "../components/liquidGlassCompat";
+import { useAppState } from "../hooks/useAppState";
 
 /**
  * 关于页面：版本信息 + 第三方依赖清单 + 友情链接。
@@ -34,7 +36,7 @@ async function copyText(text: string): Promise<boolean> {
   }
 }
 
-const APP_VERSION = "0.13.11";
+const APP_VERSION = "0.13.12";
 
 /** 直接依赖（package.json 中声明的运行时依赖） */
 const DIRECT_DEPS: { name: string; version: string; license: string; desc: string; url: string }[] = [
@@ -194,10 +196,25 @@ const LINKS: {
 ];
 
 export function About() {
+  const { hitokoto } = useAppState();
+  const [quoteCopied, setQuoteCopied] = useState(false);
+
   const onCopy = async (text: string, label: string) => {
     const ok = await copyText(text);
     if (ok) toast.success(`${label}已复制到剪贴板`);
     else toast.error("复制失败，请手动选中链接复制");
+  };
+
+  /** 复制当前一言（与界面角落小字点击复制同源） */
+  const onCopyQuote = async () => {
+    if (!hitokoto) return;
+    const ok = await copyText(hitokoto);
+    if (ok) {
+      setQuoteCopied(true);
+      window.setTimeout(() => setQuoteCopied(false), 1600);
+    } else {
+      toast.error("复制失败，请手动选中复制");
+    }
   };
 
   return (
@@ -225,6 +242,40 @@ export function About() {
                 <b>非MS官方授权产品</b>，与 Microsoft Corporation 无任何关联。
               </div>
             </div>
+          </div>
+        </AppCard>
+      </div>
+
+      {/* ---- 每日一言 ---- */}
+      <div className="block">
+        <div className="block-head">
+          <div>
+            <div className="block-title">每日一言</div>
+            <div className="block-sub">每 15 秒随机换一句，来自一言公益接口（v1.hitokoto.cn）</div>
+          </div>
+          {hitokoto && (
+            <GlassButton variant="plain" controlSize="small" onClick={() => void onCopyQuote()}>
+              {quoteCopied ? "✓ 已复制" : "⧉ 复制"}
+            </GlassButton>
+          )}
+        </div>
+
+        <AppCard padding={16}>
+          {hitokoto ? (
+            <blockquote className="about-quote">
+              <span className="about-quote-mark" aria-hidden="true">
+                “
+              </span>
+              <p className="about-quote-text">{hitokoto}</p>
+            </blockquote>
+          ) : (
+            <div className="hint">
+              暂未取到一言。请在「全局设置 → 推送通知」开启「每日一言」；接口不可用时此处留空，不影响其它功能。
+            </div>
+          )}
+          <div className="hint" style={{ marginTop: 12 }}>
+            这里展示的与界面角落显示的是同一句（后端 15 秒缓存 + 前端 15 秒轮询）。
+            一言内容由第三方公益接口提供，与本软件无关。
           </div>
         </AppCard>
       </div>
