@@ -2,6 +2,41 @@
 
 本文件记录各版本的重要变更。版本格式为主版本.次版本.修订号，带 `-beta` 后缀的为测试版本。带「.N」四位小版本的为内部交付号（安装包文件名与 exe FileVersion 使用），主版本段仍为 0.9.4。
 
+## 0.13.13
+
+发布日期：2026-10-01 · Docker 版镜像 `ghcr.io/zefeng1236/ms-rewards-auto:0.13.13`
+
+本轮为一言的两项增强：句子类型可选 + 加入 hitokoto.cn 友情链接。
+
+### 变更
+
+- **一言新增「句子类型」可选设置**（接口 `c` 参数，多选）：设置页「推送通知 → 句子类型」
+  给出官方 11 类（动画 / 漫画 / 游戏 / 文学 / 原创 / 来自网络 / 其他 / 影视 / 诗词 /
+  网易云 / 哲学 / 抖机灵），默认「全部（不限）」保持原随机行为。勾选后只从选中类型里取句，
+  改动 15 秒内换新范围的一句。类型与缓存绑定：切类型不会残留上一范围的句子。
+  取句的三处调用（主进程 IPC / Web API / 推送）都按全局配置透传类型。
+  依据：https://developer.hitokoto.cn/sentence/
+- **关于页「友情链接」新增一言 Hitokoto**：地址指向其站点，
+  **图标取自 hitokoto.cn 官方站点**（favicon 内嵌的 256px PNG，紫色六边形）。
+  为不影响原有 GitHub Mark 的暗色反相逻辑，把反色滤镜从 `.friend-mark-img` 收窄到
+  独立的 `.friend-mark-invert` —— 紫色图标在暗色主题下一起反相会变绿。
+- **关于页「每日一言」补来源链接与类型说明**：注明句子来自 hitokoto.cn 公益接口，
+  并提示可在「全局设置 → 推送通知」选类型。
+
+### 开发
+
+- tsc 0 错；selfcheck **575 通过 / 0 失败**（新增句子类型 10 条：类型表 a–l 与官方文档
+  逐项一致、`buildUrl` 拼 `c` 参数、归一化丢非法值去重、四处默认值空数组、设置页 chip
+  表跨文件同步、三处调用透传 types）。
+- 反例验证 3 组全红且已还原：①设置页类型标签改名 → 1 红；②主进程去掉 `types` 透传 → 1 红；
+  ③`buildUrl` 不拼 `c` 参数 → 1 红。
+- 公益接口**实测**：`types=['i']` 返回诗词（`type=i`）、`types=['h']` 返回影视（`type=h`）、
+  不限类型返回 `type=a`，与参数一一对应。
+- 浏览器实测（playwright + msedge）：13 个 chip（含「全部（不限）」）、初始仅「全部」选中、
+  点「诗词」后只剩诗词、切页返回仍保留选择；关于页一言友链地址与图标均加载成功（`naturalWidth>0`）。
+- verify-pack 新增 4 条断言（`asarHasHkTypeApi` / `asarHkTypesDefaultsBlank` /
+  `jsHasHkTypeChips` / `jsHasHkFriendLink`），result + checks 两处同步。
+
 ## 0.13.12
 
 发布日期：2026-10-01 · Docker 版镜像 `ghcr.io/zefeng1236/ms-rewards-auto:0.13.12`

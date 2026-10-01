@@ -2488,7 +2488,26 @@ if (require.cache[require.resolve(path.join(ROOT, "src", "hitokoto.js"))]) {
   delete require.cache[require.resolve(path.join(ROOT, "src", "hitokoto.js"))];
 }
 const hk = require(path.join(ROOT, "src", "hitokoto.js"));
-check("一言 API 指向官方公益接口", hk.API_URL, "https://v1.hitokoto.cn/?encode=json&max_length=30");
+// API_URL 是**基址**，参数在 buildUrl() 里拼（句子类型 c 是可配的）
+check("一言 API 基址指向官方公益接口", hk.API_URL, "https://v1.hitokoto.cn/");
+check(
+  "一言取句地址缺省带 encode/json 与 max_length",
+  hk.buildUrl(),
+  "https://v1.hitokoto.cn/?encode=json&max_length=30"
+);
+// 句子类型（0.13.13）：接口 c 参数，可多选，空 = 不限类型
+check("一言句子类型多选拼接 c 参数", hk.buildUrl(["a", "d"]), "https://v1.hitokoto.cn/?encode=json&max_length=30&c=a&c=d");
+check("一言句子类型按 TYPES 顺序去重（乱序+重复）", hk.normalizeTypes(["d", "a", "d", "a"]), ["a", "d"]);
+check("一言句子类型丢弃非法字母", hk.normalizeTypes(["a", "z", "", "9"]), ["a"]);
+check("一言句子类型缺省/空值 = 不限类型", [hk.normalizeTypes(undefined), hk.normalizeTypes([])], [[], []]);
+check(
+  "一言句子类型表（a–l）与官方文档一致",
+  hk.TYPES.map((t) => `${t.key}${t.label}`),
+  [
+    "a动画", "b漫画", "c游戏", "d文学", "e原创", "f来自网络",
+    "g其他", "h影视", "i诗词", "j网易云", "k哲学", "l抖机灵",
+  ]
+);
 // ts 是「取得时刻」的动态时间戳（30 秒 TTL 判据），不能参与深比较，单独断言
 const hkNorm = hk.normalize({ hitokoto: " 你好 ", from: "书", from_who: "作者", uuid: "u1" });
 check(
@@ -2597,6 +2616,31 @@ check("config.DEFAULTS.notice 含 hitokoto 开关与位置", cfgDefaults.notice.
 check("global-config 默认值同步含位置", globalDefaults.notice.hitokotoPosition, "sidebar");
 checkTrue("渲染层 mock 默认值同步含位置", /hitokotoPosition: "sidebar"/.test(mockSrc));
 checkTrue("设置页出现一只言位置下拉", /显示位置/.test(formSrc) && /hitokotoPosition/.test(formSrc));
+
+// —— 一言句子类型（0.13.13）：类型表跨文件同步 + 三处取句都传 types ——
+// 独立读源，不复用别处变量（同文件内重复声明会 SyntaxError，未定义则是 ReferenceError）
+const hkMainSrc = fs.readFileSync(path.join(ROOT, "src", "electron-main.js"), "utf8");
+const hkWebApiSrc = fs.readFileSync(path.join(ROOT, "src", "web-api.js"), "utf8");
+const hkTypesSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "types", "index.ts"), "utf8");
+checkTrue("config 默认一言不限类型", Array.isArray(cfgDefaults.notice.hitokotoTypes) && cfgDefaults.notice.hitokotoTypes.length === 0);
+checkTrue("global-config 默认一言不限类型", Array.isArray(globalDefaults.notice.hitokotoTypes) && globalDefaults.notice.hitokotoTypes.length === 0);
+checkTrue("mock 默认一言不限类型", /hitokotoTypes: \[\]/.test(mockSrc));
+checkTrue("渲染层类型声明包含 hitokotoTypes", /hitokotoTypes: string\[\]/.test(hkTypesSrc));
+checkTrue(
+  "设置页句子类型 chip 表与后端 TYPES 逐项一致（12 类）",
+  /HITOKOTO_TYPE_OPTIONS/.test(formSrc) &&
+    ["a动画", "b漫画", "c游戏", "d文学", "e原创", "f来自网络", "g其他", "h影视", "i诗词", "j网易云", "k哲学", "l抖机灵"].every(
+      (pair) => formSrc.includes(`label: "${pair.slice(1)}", value: "${pair.slice(0, 1)}"`)
+    )
+);
+checkTrue(
+  "设置页把非法/缺失的类型当「不限」处理（不抛错）",
+  /Array\.isArray\(value\.notice\?\.hitokotoTypes\)/.test(formSrc)
+);
+// 取句三处（主进程 IPC / Web API / 推送）都必须把类型透传给后端
+checkTrue("主进程 hitokoto:get 透传全局配置的句子类型", /hitokoto\.get\(\{ types: globalConfig\.get\(\)\?\.notice\?\.hitokotoTypes \}\)/.test(hkMainSrc));
+checkTrue("Web API getHitokoto 透传句子类型", /hitokoto\.get\(\{ types: globalConfig\.get\(\)\?\.notice\?\.hitokotoTypes \}\)/.test(hkWebApiSrc));
+checkTrue("推送 quoteLine 透传句子类型", /hitokoto\.get\(\{ force, types: cfg\.hitokotoTypes \}\)/.test(notifySrc));
 
 // —— 一言「标题栏」位置 = 窗口原生标题栏（2026-10-01 用户反馈：应落在系统标题栏）——
 // 链路：App 上报 → preload 暴露 setWindowSubtitle → 主进程拼 base + 一言后 setTitle。

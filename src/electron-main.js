@@ -1503,7 +1503,8 @@ function registerIpc() {
   // ---- 每日一言（界面取当天那一句，与推送共用同一份按天缓存）----
   ipcMain.handle("hitokoto:get", async () => {
     try {
-      return await hitokoto.get();
+      // 句子类型来自全局设置（接口 c 参数）；空数组 = 不限类型
+      return await hitokoto.get({ types: globalConfig.get()?.notice?.hitokotoTypes });
     } catch {
       return null;
     }

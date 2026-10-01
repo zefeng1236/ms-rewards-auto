@@ -1342,6 +1342,33 @@ html[data-preset="opaque"] .compat-toast {
   color: var(--text);
 }
 
+/* ---- 一言句子类型 chip（设置页多选） ---- */
+.hk-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.hk-chip {
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text-dim);
+  font-size: 11.5px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color 0.14s ease, background 0.14s ease, color 0.14s ease;
+}
+.hk-chip:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+.hk-chip.active {
+  border-color: var(--accent);
+  background: rgb(59 130 246 / 0.16);
+  color: var(--text);
+}
+
 /* ---- 壁纸预览 ---- */
 .bg-ctrl {
   margin-top: 12px;
@@ -3162,7 +3189,9 @@ html[data-preset="opaque"] .compat-toast {
 .friend-mark-img {
   object-fit: contain;
 }
-:root[data-theme="dark"] .friend-mark-img {
+/* 反色只给 GitHub Mark（深色主题下黑标不可见）。一言 favicon 是紫色六边形，
+   一起反相会变绿，所以用独立类名 .friend-mark-invert 单独挂给需要反色的那一个。 */
+:root[data-theme="dark"] .friend-mark-invert {
   filter: invert(1);
 }
 

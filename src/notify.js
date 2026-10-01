@@ -299,7 +299,8 @@ function accountHeaderLine(ctx) {
  *   - 新鲜度：推送时 force 跳过 TTL 取新句，只影响「取哪一句」。
  * 早先版本为了让汇总推送刷新一言而误改位置，把用户名挤到了第二行。
  *
- * 一言按 30 秒 TTL 缓存（见 ./hitokoto.js），推送时 force 跳过缓存取新句。
+ * 一言按 15 秒 TTL 缓存（见 ./hitokoto.js），推送时 force 跳过缓存取新句。
+ * 句子类型跟随 notice.hitokotoTypes（接口 c 参数，空数组 = 不限类型）。
  * 接口不可用或用户关闭时静默跳过，
  * 绝不能因为拿不到一句话就把整条推送卡住 —— 推送的价值在任务结果本身。
  *
@@ -330,7 +331,8 @@ async function quoteLine(notice, override, force = false) {
   const off = override != null ? override === false : cfg.hitokoto === false;
   if (off) return "";
   try {
-    return hitokoto.format(await hitokoto.get({ force }));
+    // 句子类型跟随全局设置（接口 c 参数）；空数组 = 不限类型
+    return hitokoto.format(await hitokoto.get({ force, types: cfg.hitokotoTypes }));
   } catch {
     // 公益接口超时/不可用时静默跳过：只为美观，不值得阻塞任务推送
     return "";

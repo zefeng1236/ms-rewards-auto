@@ -147,6 +147,12 @@ export interface AppConfig {
      *   topbar      —— 窗口原生标题栏（拼在「MS Rewards 自动任务 vX · 」之后）
      */
     hitokotoPosition: HitokotoPosition;
+    /**
+     * 一言句子类型（接口 c 参数）。字母数组，空数组 = 不限类型（默认，全类型随机）。
+     * 取值见 src/hitokoto.js 的 TYPES：a 动画 / b 漫画 / c 游戏 / d 文学 / e 原创 /
+     * f 来自网络 / g 其他 / h 影视 / i 诗词 / j 网易云 / k 哲学 / l 抖机灵。
+     */
+    hitokotoTypes: string[];
   };
   logging: {
     /** 历史日志保留天数，默认 7，范围 1–365 */

@@ -78,8 +78,11 @@ const DEFAULTS = {
     pushme: "",
     bark: "",
     hitokoto: true,
-    // 一言在界面上的显示位置：sidebar 左下角侧边栏贴底（默认）| bottomRight 右下角贴底 | topbar 标题栏一行
+    // 一言在界面上的显示位置：sidebar 左下角侧边栏贴底（默认）| bottomRight 右下角贴底 | topbar 窗口原生标题栏
     hitokotoPosition: "sidebar",
+    // 一言句子类型（接口 c 参数）：字母数组，空数组 = 不限类型（官方默认，全类型随机）
+    // 取值见 src/hitokoto.js 的 TYPES（a 动画 … l 抖机灵）
+    hitokotoTypes: [],
   },
   // 日志保留策略（仅全局设置生效；账户独立设置保持同一结构便于表单复用）
   logging: {

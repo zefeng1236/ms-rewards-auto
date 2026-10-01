@@ -65,9 +65,11 @@ const GLOBAL_DEFAULTS = {
     pushme: "",
     bark: "",
     hitokoto: true,
-    // 一言在界面上的显示位置：sidebar 左下角侧边栏贴底（默认）| bottomRight 右下角贴底 | topbar 标题栏一行
+    // 一言在界面上的显示位置：sidebar 左下角侧边栏贴底（默认）| bottomRight 右下角贴底 | topbar 窗口原生标题栏
     // ⚠️ 必须与 src/config.js 的 DEFAULTS.notice 逐字段对齐（详见文件顶部说明）
     hitokotoPosition: "sidebar",
+    // 一言句子类型（接口 c 参数）：字母数组，空数组 = 不限类型（全类型随机）
+    hitokotoTypes: [],
   },
   // 日志设置（应用级）：历史日志按账号、按天保留
   logging: {

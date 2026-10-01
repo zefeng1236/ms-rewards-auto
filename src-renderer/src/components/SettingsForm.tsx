@@ -29,6 +29,26 @@ const HITOKOTO_POSITION_OPTIONS: SelectOption[] = [
   { label: "标题栏（原生窗口标题栏，任务栏可见）", value: "topbar" },
 ];
 
+/**
+ * 每日一言的句子类型（接口 c 参数，可多选）。
+ * ⚠️ label/value 必须与 src/hitokoto.js 的 TYPES 保持一致（selfcheck 有跨文件守卫）。
+ * 数据源：https://developer.hitokoto.cn/sentence/
+ */
+const HITOKOTO_TYPE_OPTIONS: SelectOption[] = [
+  { label: "动画", value: "a" },
+  { label: "漫画", value: "b" },
+  { label: "游戏", value: "c" },
+  { label: "文学", value: "d" },
+  { label: "原创", value: "e" },
+  { label: "来自网络", value: "f" },
+  { label: "其他", value: "g" },
+  { label: "影视", value: "h" },
+  { label: "诗词", value: "i" },
+  { label: "网易云", value: "j" },
+  { label: "哲学", value: "k" },
+  { label: "抖机灵", value: "l" },
+];
+
 const TASK_LABELS: { key: keyof AppConfig["tasks"]; label: string; hint?: string }[] = [
   { key: "sign", label: "每日签入", hint: "每日打卡签到，获得固定积分奖励" },
   { key: "read", label: "阅读文章", hint: "自动阅读 MSN 文章，每篇 3 分，满额 30 分" },
@@ -127,6 +147,12 @@ export function SettingsForm({
   const hitokotoPos = HITOKOTO_POSITION_OPTIONS.some((o) => o.value === value.notice?.hitokotoPosition)
     ? String(value.notice?.hitokotoPosition)
     : "sidebar";
+  // 句子类型：旧配置缺字段 / 被改坏时当作「不限类型」（与后端 normalizeTypes 同口径）
+  const hitokotoTypes = Array.isArray(value.notice?.hitokotoTypes)
+    ? HITOKOTO_TYPE_OPTIONS.filter((o) => value.notice?.hitokotoTypes?.includes(o.value)).map((o) => o.value)
+    : [];
+  const setHitokotoTypes = (next: string[]) =>
+    onChange({ notice: { hitokotoTypes: next } } as DeepPartial<AppConfig>);
 
   return (
     <div className="settings-form">
@@ -407,6 +433,43 @@ export function SettingsForm({
                 onChange({ notice: { hitokotoPosition: v as AppConfig["notice"]["hitokotoPosition"] } })
               }
             />
+          </div>
+        )}
+        {hitokotoOn && showHitokotoPosition && (
+          <div style={{ marginTop: 12 }}>
+            <span className="field-label">句子类型</span>
+            <div className="hk-chips">
+              <button
+                type="button"
+                className={`hk-chip${hitokotoTypes.length === 0 ? " active" : ""}`}
+                onClick={() => setHitokotoTypes([])}
+                title="不限类型，全库随机"
+              >
+                全部（不限）
+              </button>
+              {HITOKOTO_TYPE_OPTIONS.map((o) => (
+                <button
+                  key={o.value}
+                  type="button"
+                  className={`hk-chip${hitokotoTypes.includes(o.value) ? " active" : ""}`}
+                  onClick={() =>
+                    setHitokotoTypes(
+                      hitokotoTypes.includes(o.value)
+                        ? hitokotoTypes.filter((v) => v !== o.value)
+                        : HITOKOTO_TYPE_OPTIONS.filter(
+                            (x) => x.value === o.value || hitokotoTypes.includes(x.value)
+                          ).map((x) => x.value)
+                    )
+                  }
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
+            <div className="hint" style={{ marginTop: 6 }}>
+              勾选后只从这些类型里取句（多选，清空回到全部）；改动后 15 秒内换一句新范围的句。
+              数据源：<a href="https://developer.hitokoto.cn/sentence/" target="_blank" rel="noreferrer">一言开发者中心</a>
+            </div>
           </div>
         )}
         {onTestPush && (

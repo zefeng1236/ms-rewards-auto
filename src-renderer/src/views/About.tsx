@@ -36,7 +36,7 @@ async function copyText(text: string): Promise<boolean> {
   }
 }
 
-const APP_VERSION = "0.13.12";
+const APP_VERSION = "0.13.13";
 
 /** 直接依赖（package.json 中声明的运行时依赖） */
 const DIRECT_DEPS: { name: string; version: string; license: string; desc: string; url: string }[] = [
@@ -158,7 +158,11 @@ const CREDITS: Credit[] = [
   },
 ];
 
-/** 友情链接：作者邀请 / 赞助通道（logo 字段为图片型标识，如 gh-proxy 的官方 GitHub Mark） */
+/**
+ * 友情链接：作者邀请 / 赞助通道 / 公益服务。
+ * logo 字段为图片型标识（gh-proxy 的官方 GitHub Mark、hitokoto.cn 官方站点图标），
+ * 有 logo 的条目走 <img> 分支；没有的走内联 SVG。
+ */
 const LINKS: {
   key: string;
   href: string;
@@ -192,6 +196,15 @@ const LINKS: {
     desc: "支持API、Git Clone、Releases、Archive、Gist、Raw 文件代理加速下载服务",
     tint: "#24292f",
     logo: "https://r2.gh-proxy.com/GitHub-Mark-ea2971cee799.png",
+  },
+  {
+    key: "hitokoto",
+    href: "https://hitokoto.cn/?uuid=c232591b-933d-4301-916a-c026fd39b95c",
+    name: "一言 Hitokoto",
+    title: "公益一言接口",
+    desc: "本软件「每日一言」的句子全部来自它；图标取自 hitokoto.cn 官方站点",
+    tint: "#8b3dff",
+    logo: "https://hitokoto.cn/favicon.ico",
   },
 ];
 
@@ -275,7 +288,8 @@ export function About() {
           )}
           <div className="hint" style={{ marginTop: 12 }}>
             这里展示的与界面角落显示的是同一句（后端 15 秒缓存 + 前端 15 秒轮询）。
-            一言内容由第三方公益接口提供，与本软件无关。
+            一言内容由公益接口 <a href="https://hitokoto.cn/" target="_blank" rel="noreferrer">hitokoto.cn</a>{" "}
+            提供，与本软件无关；可在「全局设置 → 推送通知」里选句子类型。
           </div>
         </AppCard>
       </div>
@@ -416,10 +430,12 @@ export function About() {
             {LINKS.map((l) => (
               <div className="friend-item" key={l.key}>
                 <GlassSurface className="friend-logo" radius={14}>
-                  {l.key === "ghproxy" ? (
-                    /* gh-proxy 官方 GitHub Mark（图片型标识）：深色主题下黑标不可见，反色成白标 */
+                  {l.logo ? (
+                    /* 图片型标识（gh-proxy 官方 GitHub Mark / 一言官方 favicon 里的 256px PNG）。
+                       ⚠️ 反色滤镜只给 .friend-mark-invert —— 一言是紫色六边形，暗色主题下
+                       一起反相会变绿，别再把 invert 挂回 .friend-mark-img 上。 */
                     <img
-                      className="friend-mark friend-mark-img"
+                      className={`friend-mark friend-mark-img${l.key === "ghproxy" ? " friend-mark-invert" : ""}`}
                       src={l.logo}
                       alt=""
                       draggable={false}
@@ -524,7 +540,16 @@ export function About() {
                 <div className="friend-main">
                   <div className="friend-head">
                     <span className="friend-name">{l.name}</span>
-                    <Tag color={l.key === "akile" ? "accent" : l.key === "ghproxy" ? "default" : "success"} size="sm">
+                    <Tag
+                      color={
+                        l.key === "akile" || l.key === "hitokoto"
+                          ? "accent"
+                          : l.key === "ghproxy"
+                            ? "default"
+                            : "success"
+                      }
+                      size="sm"
+                    >
                       {l.title}
                     </Tag>
                   </div>
@@ -535,10 +560,13 @@ export function About() {
                 </div>
 
                 <div className="friend-actions">
-                  <GlassButton variant={l.key === "ghproxy" ? "glass" : "glassProminent"} controlSize="small"
+                  {/* 「前往注册」只给作者邀请链接；工具站/公益站统一用「打开」 */}
+                  <GlassButton
+                    variant={l.key === "akile" || l.key === "workbuddy" ? "glassProminent" : "glass"}
+                    controlSize="small"
                     onClick={() => window.open(l.href, "_blank", "noopener")}
                   >
-                    {l.key === "ghproxy" ? "↗ 打开" : "↗ 前往注册"}
+                    {l.key === "akile" || l.key === "workbuddy" ? "↗ 前往注册" : "↗ 打开"}
                   </GlassButton>
                   <GlassButton variant="plain" controlSize="small" onClick={() => void onCopy(l.href, l.name)}>
                     ⧉ 复制链接
@@ -550,7 +578,7 @@ export function About() {
 
           <div className="hint" style={{ marginTop: 14 }}>
             「前往注册」为作者邀请链接，你注册后作者可获得少量额度回馈，价格与常规注册一致，
-            不会增加你的任何成本；工具站类链接（如 GitHub 加速代理）与作者无利益关系。
+            不会增加你的任何成本；工具站与公益站（如 GitHub 加速代理、一言）与作者无利益关系。
           </div>
         </AppCard>
       </div>
