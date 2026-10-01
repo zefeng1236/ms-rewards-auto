@@ -4095,6 +4095,112 @@ html[data-preset="opaque"] .compat-toast {
   right: 4px;
   font-size: clamp(9px, 0.9cqw, 12px);
 }
+/* ==========================================================================
+   成就与统计：版式约束（用户反馈「桌面全屏字太大、日历没必要全屏」）
+   ① 内容限宽居中：宽屏不再把日历拉满屏，到合适宽度后居中、两侧留白；
+   ② 勋章墙在宽屏移到日历右侧（两栏），窄屏仍回到日历下方；
+   ③ 收紧 cqw 上限：字号到合适大小即封顶，不再随屏幕继续放大。
+   作用域只包住 .achievements-view，桌面版与 Web 版共用；Web 版的更紧规则
+   特异性更高（:root[data-web="1"] …），仍优先于这里。
+   ========================================================================== */
+.achievements-view {
+  width: 100%;
+  max-width: 1460px;
+  margin-inline: auto;
+}
+/* 卡内分区：默认纵向堆叠（窄屏 / 小窗） */
+.achievements-view .cal-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas:
+    "top"
+    "streak"
+    "stats"
+    "cal"
+    "legend"
+    "badges";
+  row-gap: 14px;
+  column-gap: 0;
+}
+.achievements-view .cal-top { grid-area: top; }
+.achievements-view .cal-streak { grid-area: streak; }
+.achievements-view .cal-stats { grid-area: stats; }
+.achievements-view .cal-grid { grid-area: cal; }
+.achievements-view .cal-legend { grid-area: legend; }
+/* 勋章墙整体容器：标题 + 展开区，宽屏时作为一个整体落位到右栏 */
+.achievements-view .cal-badges-col {
+  grid-area: badges;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+/* 宽屏：勋章墙移到日历右侧（左列日历 + 图例，右列勋章墙整体） */
+@media (min-width: 1280px) {
+  .achievements-view .cal-card {
+    grid-template-columns: minmax(0, 1fr) clamp(300px, 32cqw, 420px);
+    grid-template-areas:
+      "top    top"
+      "streak streak"
+      "stats  stats"
+      "cal    badges"
+      "legend badges";
+    column-gap: 14px;
+    align-items: start;
+  }
+  .achievements-view .cal-badges-col .cal-badges-head {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+  }
+}
+
+/* 字号 / 控件封顶：到合适大小即停 */
+.achievements-view .cal-pick-label { font-size: clamp(12px, 1.5cqw, 18px); }
+.achievements-view .cal-nav-title {
+  min-width: clamp(96px, 12cqw, 190px);
+  font-size: clamp(13px, 1.625cqw, 22px);
+}
+.achievements-view .cal-nav-btn {
+  width: clamp(28px, 3.5cqw, 38px);
+  height: clamp(28px, 3.5cqw, 38px);
+  font-size: clamp(16px, 2cqw, 22px);
+}
+.achievements-view .cal-nav-today {
+  height: clamp(28px, 3.5cqw, 38px);
+  font-size: clamp(12px, 1.5cqw, 15px);
+}
+.achievements-view .cal-streak-num { font-size: clamp(26px, 3.25cqw, 40px); }
+.achievements-view .cal-streak-txt { font-size: clamp(13px, 1.625cqw, 20px); }
+.achievements-view .cal-stat-value { font-size: clamp(20px, 2.5cqw, 32px); }
+.achievements-view .cal-stat-value span,
+.achievements-view .cal-stat-label { font-size: clamp(11px, 1.375cqw, 16px); }
+.achievements-view .cal-week { font-size: clamp(11px, 1.375cqw, 16px); }
+.achievements-view .cal-cell {
+  min-height: clamp(52px, 6.5cqw, 112px);
+  font-size: clamp(12px, 1.5cqw, 16px);
+}
+.achievements-view .cal-day { font-size: clamp(17px, 2.125cqw, 30px); }
+.achievements-view .cal-label { font-size: clamp(9.5px, 1.19cqw, 15px); }
+.achievements-view .cal-pts { font-size: clamp(9px, 1.125cqw, 14px); }
+.achievements-view .cal-tag {
+  width: clamp(14px, 1.75cqw, 24px);
+  height: clamp(14px, 1.75cqw, 24px);
+  font-size: clamp(9px, 1.125cqw, 13px);
+}
+.achievements-view .cal-loading { font-size: clamp(12px, 1.5cqw, 16px); }
+.achievements-view .cal-legend { font-size: clamp(11.5px, 1.44cqw, 16px); }
+.achievements-view .cal-badges-title { font-size: clamp(13px, 1.625cqw, 20px); }
+.achievements-view .cal-badges-title em { font-size: clamp(11.5px, 1.44cqw, 16px); }
+.achievements-view .cal-bgroup-title { font-size: clamp(12px, 1.5cqw, 16px); }
+.achievements-view .cal-bgroup-title em { font-size: clamp(11px, 1.375cqw, 14px); }
+.achievements-view .cal-blist {
+  grid-template-columns: repeat(auto-fill, minmax(clamp(72px, 9cqw, 110px), 1fr));
+}
+.achievements-view .cal-bname { font-size: clamp(10.5px, 1.31cqw, 15px); }
+.achievements-view .cal-bcount { font-size: clamp(9.5px, 1.19cqw, 14px); }
+
 @media (max-width: 720px) {
   :root[data-web="1"] .shell.shell-achievements {
     flex-direction: column;

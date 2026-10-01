@@ -2992,6 +2992,26 @@ checkTrue(
     /\.shell\.shell-achievements \.nav-switch,[\s\S]*?flex-direction:\s*row/.test(calCss) &&
     /\.achievements-view \.cal-cell\s*\{[^}]*min-width:\s*0[^}]*min-height:\s*0/.test(calCss)
 );
+// —— 桌面全屏不再铺满：限宽居中 + 勋章墙右移 + 字号封顶（2026-10-01 二次反馈） ——
+checkTrue(
+  "成就页内容限宽居中（宽屏不再把日历拉满屏）",
+  /\.achievements-view \{[^}]*max-width:\s*1460px[^}]*margin-inline:\s*auto/.test(calCss)
+);
+checkTrue(
+  "宽屏（≥1280px）成就页勋章墙整体移到日历右侧（两栏分区 + grid-area 落位）",
+  /@media \(min-width: 1280px\) \{\s*\.achievements-view \.cal-card \{[\s\S]*?grid-template-columns:[^;]*clamp\(300px,\s*32cqw,\s*420px\)[\s\S]*?"cal\s+badges"[\s\S]*?"legend\s+badges"/.test(
+    calCss
+  ) &&
+    /\.achievements-view \.cal-grid \{ grid-area: cal; \}/.test(calCss) &&
+    /\.achievements-view \.cal-badges-col \{[^}]*grid-area: badges;/.test(calCss) &&
+    /className="cal-badges-col"/.test(calSrc)
+);
+checkTrue(
+  "成就页字号封顶：日期 ≤30px / 统计数字 ≤32px / 日历格 ≤112px",
+  /\.achievements-view \.cal-day \{ font-size: clamp\(17px, 2\.125cqw, 30px\); \}/.test(calCss) &&
+    /\.achievements-view \.cal-stat-value \{ font-size: clamp\(20px, 2\.5cqw, 32px\); \}/.test(calCss) &&
+    /\.achievements-view \.cal-cell \{[^}]*min-height:\s*clamp\(52px,\s*6\.5cqw,\s*112px\)/.test(calCss)
+);
 
 // —— 滚轮翻月作用域 + 勋章墙展开动画（2026-09-30 二次反馈） ——
 checkTrue(

@@ -208,26 +208,28 @@ export function CalendarPanel({ accounts }: { accounts: Account[] }) {
           </span>
         </div>
 
-        {/* ---- 勋章墙 ---- */}
-        <div className="cal-badges-head">
-          <span className="cal-badges-title">
-            勋章墙
-            <em>
-              已获 {Object.values(badges).reduce((s, b) => s + (b.count || 0), 0)} 次 · 共 {BADGE_META.length} 枚
-            </em>
-          </span>
-          <button className="cal-nav-today" onClick={() => setShowBadges((v) => !v)}>
-            {showBadges ? "收起" : "展开"}
-          </button>
-        </div>
+        {/* ---- 勋章墙（宽屏时整体移到日历右侧）---- */}
+        <div className="cal-badges-col">
+          <div className="cal-badges-head">
+            <span className="cal-badges-title">
+              勋章墙
+              <em>
+                已获 {Object.values(badges).reduce((s, b) => s + (b.count || 0), 0)} 次 · 共 {BADGE_META.length} 枚
+              </em>
+            </span>
+            <button className="cal-nav-today" onClick={() => setShowBadges((v) => !v)}>
+              {showBadges ? "收起" : "展开"}
+            </button>
+          </div>
 
-        {/* 勋章墙：常驻挂载，展开/收起用 grid-rows 0fr→1fr 过渡（带淡入上移） */}
-        <div className={`cal-badges-wrap${showBadges ? " open" : ""}`}>
-          <div className="cal-badges-inner">
-            <div className="cal-badges">
-              <BadgeGroup title="连续签到" list={badgesOf("streak")} badges={badges} />
-              <BadgeGroup title="月度成就" list={badgesOf("perfect")} badges={badges} />
-              <BadgeGroup title="节日专属" list={badgesOf("festival")} badges={badges} />
+          {/* 勋章墙：常驻挂载，展开/收起用 grid-rows 0fr→1fr 过渡（带淡入上移） */}
+          <div className={`cal-badges-wrap${showBadges ? " open" : ""}`}>
+            <div className="cal-badges-inner">
+              <div className="cal-badges">
+                <BadgeGroup title="连续签到" list={badgesOf("streak")} badges={badges} />
+                <BadgeGroup title="月度成就" list={badgesOf("perfect")} badges={badges} />
+                <BadgeGroup title="节日专属" list={badgesOf("festival")} badges={badges} />
+              </div>
             </div>
           </div>
         </div>
