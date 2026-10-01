@@ -2832,7 +2832,13 @@ checkTrue(
   "日历 CSS：蓝数字 + 休/班角标样式",
   /\.cal-blue \.cal-day/.test(calCss) && /\.cal-tag-rest/.test(calCss) && /\.cal-tag-work/.test(calCss)
 );
-checkTrue("日历 CSS：日期字号放大到 17px", /\.cal-day\s*\{[^}]*font-size:\s*17px/.test(calCss));
+checkTrue(
+  "日历 CSS：字号随卡片流式缩放（cal-card 容器查询 + clamp/cqw，全屏不再字小）",
+  /\.cal-card\s*\{[^}]*container-type:\s*inline-size/.test(calCss) &&
+    /\.cal-day\s*\{[^}]*font-size:\s*clamp\([^)]*cqw/.test(calCss) &&
+    /\.cal-label\s*\{[^}]*font-size:\s*clamp\([^)]*cqw/.test(calCss) &&
+    /\.cal-pts\s*\{[^}]*font-size:\s*clamp\([^)]*cqw/.test(calCss)
+);
 checkTrue(
   "类型：CalendarDay 含 rest/workday/weekend/lunar/label",
   /rest\?: boolean/.test(idxSrc) && /workday\?: boolean/.test(idxSrc) &&

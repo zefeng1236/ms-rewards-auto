@@ -3523,6 +3523,10 @@ html[data-preset="opaque"] .compat-toast {
   display: flex;
   flex-direction: column;
   gap: 14px;
+  /* 流式字号（用户反馈「全屏后字显小」）：以本卡为容器查询基准，
+     内部文字用 cqw 随卡片宽度缩放。clamp 下限 = 旧固定 px（小窗不回退），
+     上限防超宽屏夸张。基准：小窗卡片内容宽约 800px → 1cqw ≈ 8px。 */
+  container-type: inline-size;
 }
 
 /* ---- 顶部：账号切换 + 翻月 ---- */
@@ -3539,7 +3543,7 @@ html[data-preset="opaque"] .compat-toast {
   gap: 8px;
 }
 .cal-pick-label {
-  font-size: 12px;
+  font-size: clamp(12px, 1.5cqw, 34px);
   color: var(--muted);
 }
 .cal-nav {
@@ -3548,20 +3552,20 @@ html[data-preset="opaque"] .compat-toast {
   gap: 6px;
 }
 .cal-nav-title {
-  min-width: 96px;
+  min-width: clamp(96px, 12cqw, 274px);
   text-align: center;
-  font-size: 13px;
+  font-size: clamp(13px, 1.625cqw, 37px);
   font-weight: 500;
   color: var(--text);
 }
 .cal-nav-btn {
-  width: 28px;
-  height: 28px;
+  width: clamp(28px, 3.5cqw, 80px);
+  height: clamp(28px, 3.5cqw, 80px);
   border-radius: 9px;
   border: 1px solid var(--border);
   background: rgb(255 255 255 / 0.06);
   color: var(--text-dim);
-  font-size: 16px;
+  font-size: clamp(16px, 2cqw, 46px);
   line-height: 1;
   cursor: pointer;
   transition: background 0.18s var(--ease), color 0.18s var(--ease);
@@ -3571,13 +3575,13 @@ html[data-preset="opaque"] .compat-toast {
   color: var(--text);
 }
 .cal-nav-today {
-  height: 28px;
+  height: clamp(28px, 3.5cqw, 80px);
   padding: 0 10px;
   border-radius: 9px;
   border: 1px solid var(--border);
   background: rgb(255 255 255 / 0.06);
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: clamp(12px, 1.5cqw, 34px);
   cursor: pointer;
   transition: background 0.18s var(--ease), color 0.18s var(--ease);
 }
@@ -3597,14 +3601,14 @@ html[data-preset="opaque"] .compat-toast {
   border: 1px solid rgb(255 255 255 / 0.08);
 }
 .cal-streak-num {
-  font-size: 26px;
+  font-size: clamp(26px, 3.25cqw, 74px);
   font-weight: 600;
   line-height: 1;
   color: #7edca0;
   text-shadow: 0 0 14px rgb(126 220 160 / 0.35);
 }
 .cal-streak-txt {
-  font-size: 13px;
+  font-size: clamp(13px, 1.625cqw, 37px);
   color: var(--text-dim);
 }
 .cal-streak-txt b {
@@ -3625,21 +3629,21 @@ html[data-preset="opaque"] .compat-toast {
   text-align: center;
 }
 .cal-stat-value {
-  font-size: 20px;
+  font-size: clamp(20px, 2.5cqw, 57px);
   font-weight: 600;
   line-height: 1.1;
   color: var(--text);
   font-variant-numeric: tabular-nums;
 }
 .cal-stat-value span {
-  font-size: 11px;
+  font-size: clamp(11px, 1.375cqw, 31px);
   font-weight: 500;
   margin-left: 2px;
   color: var(--text-dim);
 }
 .cal-stat-label {
   margin-top: 3px;
-  font-size: 11px;
+  font-size: clamp(11px, 1.375cqw, 31px);
   color: var(--faint);
 }
 
@@ -3656,21 +3660,21 @@ html[data-preset="opaque"] .compat-toast {
 }
 .cal-week {
   text-align: center;
-  font-size: 11px;
+  font-size: clamp(11px, 1.375cqw, 31px);
   color: var(--faint);
   padding-bottom: 2px;
 }
 .cal-cell {
   position: relative;
   aspect-ratio: 1 / 1;
-  min-height: 52px;
+  min-height: clamp(52px, 6.5cqw, 148px);
   border-radius: 10px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 2px;
-  font-size: 12px;
+  font-size: clamp(12px, 1.5cqw, 34px);
   border: 1px solid transparent;
   cursor: default;
   transition: transform 0.15s var(--ease), border-color 0.15s var(--ease);
@@ -3683,20 +3687,20 @@ html[data-preset="opaque"] .compat-toast {
   border-color: transparent;
 }
 .cal-day {
-  font-size: 17px;
+  font-size: clamp(17px, 2.125cqw, 48px);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   line-height: 1.05;
 }
 .cal-label {
-  font-size: 9.5px;
+  font-size: clamp(9.5px, 1.19cqw, 27px);
   line-height: 1;
   opacity: 0.85;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0;
 }
 .cal-pts {
-  font-size: 9px;
+  font-size: clamp(9px, 1.125cqw, 26px);
   opacity: 0.72;
   font-variant-numeric: tabular-nums;
 }
@@ -3712,14 +3716,16 @@ html[data-preset="opaque"] .compat-toast {
   position: absolute;
   top: 3px;
   right: 4px;
-  width: 14px;
-  height: 14px;
+  width: clamp(14px, 1.75cqw, 40px);
+  height: clamp(14px, 1.75cqw, 40px);
   border-radius: 50%;
   font-style: normal;
-  font-size: 9px;
+  font-size: clamp(9px, 1.125cqw, 26px);
   font-weight: 600;
-  line-height: 14px;
-  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
   color: #fff;
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.3);
 }
@@ -3764,7 +3770,7 @@ html[data-preset="opaque"] .compat-toast {
 .cal-loading {
   grid-column: 1 / -1;
   text-align: center;
-  font-size: 12px;
+  font-size: clamp(12px, 1.5cqw, 34px);
   color: var(--faint);
   padding: 4px 0;
 }
@@ -3775,7 +3781,7 @@ html[data-preset="opaque"] .compat-toast {
   align-items: center;
   gap: 14px;
   flex-wrap: wrap;
-  font-size: 11.5px;
+  font-size: clamp(11.5px, 1.44cqw, 33px);
   color: var(--muted);
 }
 .cal-legend-item {
@@ -3809,14 +3815,14 @@ html[data-preset="opaque"] .compat-toast {
   border-top: 1px solid rgb(255 255 255 / 0.08);
 }
 .cal-badges-title {
-  font-size: 13px;
+  font-size: clamp(13px, 1.625cqw, 37px);
   font-weight: 500;
   color: var(--text);
 }
 .cal-badges-title em {
   margin-left: 8px;
   font-style: normal;
-  font-size: 11.5px;
+  font-size: clamp(11.5px, 1.44cqw, 33px);
   color: var(--muted);
 }
 .cal-badges {
@@ -3849,20 +3855,20 @@ html[data-preset="opaque"] .compat-toast {
   transform: none;
 }
 .cal-bgroup-title {
-  font-size: 12px;
+  font-size: clamp(12px, 1.5cqw, 34px);
   color: var(--text-dim);
   margin-bottom: 7px;
 }
 .cal-bgroup-title em {
   margin-left: 6px;
   font-style: normal;
-  font-size: 11px;
+  font-size: clamp(11px, 1.375cqw, 31px);
   color: var(--faint);
   font-variant-numeric: tabular-nums;
 }
 .cal-blist {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(clamp(72px, 9cqw, 205px), 1fr));
   gap: 8px;
 }
 .cal-badge {
@@ -3886,7 +3892,7 @@ html[data-preset="opaque"] .compat-toast {
   background: rgb(255 255 255 / 0.11);
 }
 .cal-bname {
-  font-size: 10.5px;
+  font-size: clamp(10.5px, 1.31cqw, 30px);
   color: var(--text-dim);
   text-align: center;
   line-height: 1.25;
@@ -3899,7 +3905,7 @@ html[data-preset="opaque"] .compat-toast {
   position: absolute;
   top: 4px;
   right: 5px;
-  font-size: 9.5px;
+  font-size: clamp(9.5px, 1.19cqw, 27px);
   font-weight: 600;
   color: var(--text);
   background: rgb(0 0 0 / 0.42);
