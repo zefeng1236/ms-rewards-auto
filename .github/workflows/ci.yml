@@ -1,7 +1,9 @@
 name: CI
 
 # 触发时机：推 main / 提 PR / 手动。
-# 只跑校验，不打包、不发布 —— 发版仍由维护者手动执行（见 CONTRIBUTING.md）。
+# verify = 门禁（类型检查 + 自检 + 前端构建）；desktop = 产出 Windows 安装包；
+# docker = 校验镜像可构建。三者都只构建不发布 —— 发版仍由维护者手动执行
+# （见 CONTRIBUTING.md）。安装包从 Actions 的 artifacts 里下载。
 on:
   push:
     branches: [main]
@@ -55,6 +57,47 @@ jobs:
           path: src/web/dist/
           retention-days: 7
           if-no-files-found: warn
+
+  desktop:
+    name: Windows 桌面安装包（NSIS）
+    runs-on: windows-latest
+    timeout-minutes: 45
+    # PR 不打包：安装包要下载 Electron / NSIS / winCodeSign 资源，耗时较长，
+    # 门禁交给 verify 就够了；推 main 与手动触发才产出可下载的安装包。
+    if: github.event_name != 'pull_request'
+    needs: verify
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      # 桌面渲染产物输出到 gui-react/（vite.config.ts 的 outDir），electron-main
+      # 在打包后直接读 gui-react/index.html —— 不先构建就会退回到旧版原生界面。
+      - name: 前端构建（桌面产物）
+        run: npm run build:web
+
+      - name: 打包 Windows 安装包
+        # 用原生 windows-latest：此前在 Linux 上打 NSIS 目标需要 wine，问题较多。
+        # 产物名由 package.json 的 artifactName 决定（MS-Rewards-Auto-Setup-${buildVersion}.exe）。
+        run: npm run pack
+
+      - name: 上传安装包
+        uses: actions/upload-artifact@v4
+        with:
+          name: MS-Rewards-Auto-Setup
+          path: dist/*.exe
+          retention-days: 14
+          # 找不到 exe 直接判失败：静默跳过会让「打包其实早坏了」一直没人发现
+          if-no-files-found: error
 
   docker:
     name: Docker 镜像构建
