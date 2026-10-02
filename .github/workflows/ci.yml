@@ -94,7 +94,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: MS-Rewards-Auto-Setup
-          path: dist/*.exe
+          # blockmap 与 latest.yml 是 electron-builder 的增量更新元数据，
+          # 发 Release 时正文要写它们的 SHA256，所以一起带上。
+          path: |
+            dist/*.exe
+            dist/*.blockmap
+            dist/latest.yml
           retention-days: 14
           # 找不到 exe 直接判失败：静默跳过会让「打包其实早坏了」一直没人发现
           if-no-files-found: error
