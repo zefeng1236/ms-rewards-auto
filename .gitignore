@@ -56,6 +56,9 @@ scrape-profile/
 !/docs/screenshots/
 /src/web/dist/
 /build/*.txt
+# 例外：build/license.txt 是安装器 EULA（package.json 的 nsis.license 指向它），
+# 缺了它 clone 后打包出来的安装器不弹协议页，selfcheck 也会红。
+!/build/license.txt
 /build/*.log
 /icon-result*.txt
 /icon-verify.txt
