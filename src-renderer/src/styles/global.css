@@ -3644,13 +3644,6 @@ html[data-preset="opaque"] .compat-toast {
   background: rgb(255 255 255 / 0.05);
   border: 1px solid rgb(255 255 255 / 0.08);
 }
-.cal-streak-num {
-  font-size: clamp(26px, 3.25cqw, 74px);
-  font-weight: 600;
-  line-height: 1;
-  color: #7edca0;
-  text-shadow: 0 0 14px rgb(126 220 160 / 0.35);
-}
 .cal-streak-txt {
   font-size: clamp(13px, 1.625cqw, 37px);
   color: var(--text-dim);
@@ -3711,7 +3704,7 @@ html[data-preset="opaque"] .compat-toast {
 .cal-cell {
   position: relative;
   aspect-ratio: 1 / 1;
-  min-height: clamp(52px, 6.5cqw, 148px);
+  min-height: clamp(48px, 5.6cqw, 112px);
   border-radius: 10px;
   display: flex;
   flex-direction: column;
@@ -3731,13 +3724,13 @@ html[data-preset="opaque"] .compat-toast {
   border-color: transparent;
 }
 .cal-day {
-  font-size: clamp(17px, 2.125cqw, 48px);
+  font-size: clamp(15px, 1.8cqw, 26px);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   line-height: 1.05;
 }
 .cal-label {
-  font-size: clamp(9.5px, 1.19cqw, 27px);
+  font-size: clamp(9px, 1.05cqw, 14px);
   line-height: 1;
   opacity: 0.85;
   font-variant-numeric: tabular-nums;
@@ -3995,11 +3988,8 @@ html[data-preset="opaque"] .compat-toast {
   padding: 8px 12px;
   border-radius: 10px;
 }
-:root[data-web="1"] .achievements-view .cal-streak-num {
-  font-size: clamp(22px, 2cqw, 30px);
-}
 :root[data-web="1"] .achievements-view .cal-streak-txt {
-  font-size: clamp(12px, 1.1cqw, 14px);
+  font-size: clamp(11px, 1cqw, 13px);
 }
 :root[data-web="1"] .achievements-view .cal-stats {
   gap: 6px;
@@ -4171,35 +4161,45 @@ html[data-preset="opaque"] .compat-toast {
   height: clamp(28px, 3.5cqw, 38px);
   font-size: clamp(12px, 1.5cqw, 15px);
 }
-.achievements-view .cal-streak-num { font-size: clamp(26px, 3.25cqw, 40px); }
-.achievements-view .cal-streak-txt { font-size: clamp(13px, 1.625cqw, 20px); }
-.achievements-view .cal-stat-value { font-size: clamp(20px, 2.5cqw, 32px); }
+/* 连续签到的天数数字：沿用原来的绿色调，字号略大于正文但不再做成独立大号数字 */
+.achievements-view .cal-streak-txt { font-size: clamp(12px, 1.4cqw, 16px); }
+.achievements-view .cal-streak-txt b {
+  font-size: 1.35em;
+  font-weight: 700;
+  color: #7edca0;
+  text-shadow: 0 0 10px rgb(126 220 160 / 0.28);
+}
+
+
+.achievements-view .cal-stat-value { font-size: clamp(18px, 2.1cqw, 25px); }
 .achievements-view .cal-stat-value span,
-.achievements-view .cal-stat-label { font-size: clamp(11px, 1.375cqw, 16px); }
-.achievements-view .cal-week { font-size: clamp(11px, 1.375cqw, 16px); }
+.achievements-view .cal-stat-label { font-size: clamp(10.5px, 1.2cqw, 13.5px); }
+.achievements-view .cal-week { font-size: clamp(10.5px, 1.2cqw, 13.5px); }
 .achievements-view .cal-cell {
-  min-height: clamp(52px, 6.5cqw, 112px);
-  font-size: clamp(12px, 1.5cqw, 16px);
+  min-height: clamp(48px, 5.6cqw, 88px);
+  font-size: clamp(11px, 1.3cqw, 14px);
 }
-.achievements-view .cal-day { font-size: clamp(17px, 2.125cqw, 30px); }
-.achievements-view .cal-label { font-size: clamp(9.5px, 1.19cqw, 15px); }
-.achievements-view .cal-pts { font-size: clamp(9px, 1.125cqw, 14px); }
+.achievements-view .cal-day { font-size: clamp(15px, 1.8cqw, 23px); }
+.achievements-view .cal-label { font-size: clamp(9px, 1.05cqw, 12.5px); }
+.achievements-view .cal-pts { font-size: clamp(8.5px, 1cqw, 12px); }
 .achievements-view .cal-tag {
-  width: clamp(14px, 1.75cqw, 24px);
-  height: clamp(14px, 1.75cqw, 24px);
-  font-size: clamp(9px, 1.125cqw, 13px);
+  width: clamp(13px, 1.5cqw, 19px);
+  height: clamp(13px, 1.5cqw, 19px);
+  font-size: clamp(8.5px, 1cqw, 11.5px);
 }
-.achievements-view .cal-loading { font-size: clamp(12px, 1.5cqw, 16px); }
-.achievements-view .cal-legend { font-size: clamp(11.5px, 1.44cqw, 16px); }
-.achievements-view .cal-badges-title { font-size: clamp(13px, 1.625cqw, 20px); }
-.achievements-view .cal-badges-title em { font-size: clamp(11.5px, 1.44cqw, 16px); }
-.achievements-view .cal-bgroup-title { font-size: clamp(12px, 1.5cqw, 16px); }
-.achievements-view .cal-bgroup-title em { font-size: clamp(11px, 1.375cqw, 14px); }
+.achievements-view .cal-loading { font-size: clamp(11px, 1.3cqw, 14px); }
+.achievements-view .cal-legend { font-size: clamp(10.5px, 1.2cqw, 13.5px); }
+.achievements-view .cal-badges-title { font-size: clamp(12px, 1.45cqw, 16px); }
+.achievements-view .cal-badges-title em { font-size: clamp(10.5px, 1.2cqw, 13.5px); }
+.achievements-view .cal-bgroup-title { font-size: clamp(11px, 1.25cqw, 13.5px); }
+.achievements-view .cal-bgroup-title em { font-size: clamp(10px, 1.15cqw, 12.5px); }
+/* 勋章墙：每行固定 4 个 */
 .achievements-view .cal-blist {
-  grid-template-columns: repeat(auto-fill, minmax(clamp(72px, 9cqw, 110px), 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: clamp(6px, 0.7cqw, 10px);
 }
-.achievements-view .cal-bname { font-size: clamp(10.5px, 1.31cqw, 15px); }
-.achievements-view .cal-bcount { font-size: clamp(9.5px, 1.19cqw, 14px); }
+.achievements-view .cal-bname { font-size: clamp(9.5px, 1.1cqw, 12px); }
+.achievements-view .cal-bcount { font-size: clamp(8.5px, 1cqw, 11px); }
 
 @media (max-width: 720px) {
   :root[data-web="1"] .shell.shell-achievements {

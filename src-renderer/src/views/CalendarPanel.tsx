@@ -149,9 +149,8 @@ export function CalendarPanel({ accounts }: { accounts: Account[] }) {
           </div>
         </div>
 
-        {/* ---- 连续签到文案 ---- */}
+        {/* ---- 连续签到文案（天数用 <b> 着色，不再另起一个大号数字）---- */}
         <div className="cal-streak">
-          <span className="cal-streak-num">{streak}</span>
           <span className="cal-streak-txt">
             您已使用本软件连续签到 <b>{streak}</b> 天，继续努力
           </span>

@@ -1,0 +1,81 @@
+name: CI
+
+# 触发时机：推 main / 提 PR / 手动。
+# 只跑校验，不打包、不发布 —— 发版仍由维护者手动执行（见 CONTRIBUTING.md）。
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# 同一分支有新提交时取消上一轮，避免排队
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: 门禁（typecheck + selfcheck + 前端构建）
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: 安装依赖
+        # 用 npm ci 而非 npm install：lock 文件一致性只有 CI 能真正验出来
+        # （历史教训：bump 工具曾把 package-lock.json 的依赖版本改坏，
+        #   本地 tsc + selfcheck 全绿，只有 CI 的 npm ci 会报 EUSAGE）
+        run: npm ci
+
+      - name: TypeScript 类型检查
+        run: npm run typecheck
+
+      - name: 项目自检
+        run: npm test
+
+      - name: 前端构建（桌面产物）
+        run: npm run build:web
+
+      - name: 前端构建（Web/Docker 产物）
+        run: npm run build:web:docker
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: src/web/dist/
+          retention-days: 7
+          if-no-files-found: warn
+
+  docker:
+    name: Docker 镜像构建
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # 与 verify 串行：Docker 构建吃满 CPU，并发跑会拖慢彼此
+    needs: verify
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 构建 Docker 镜像
+        # 只构建不推送：推送需要 ghcr 凭据，且发版节奏由维护者控制
+        run: docker build -f docker/Dockerfile -t ms-rewards-auto:ci .

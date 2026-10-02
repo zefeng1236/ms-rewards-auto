@@ -293,7 +293,7 @@ checkTrue("刚创建的未登录账户：自动调度跳过", g1.run === false, 
 checkTrue("未登录账户没有下次运行时间", guardRunner.nextRunTime(gCtx) === null);
 gCtx.state.get().refreshToken = "selfcheck-fake-token";
 gCtx.state.save();
-const g2 = guardRunner.shouldRunNow(gCtx);
+const g2 = guardRunner.shouldRunNow(gCtx, new Date(2026, 9, 2, 10, 0));
 checkTrue("授权后（有 refreshToken）恢复自动调度", g2.run === true, `实际 ${JSON.stringify(g2)}`);
 
 /* ============ 12. 版本号一致性守卫 ============ */
@@ -403,9 +403,14 @@ checkTrue("穷举中确有随机生效的样本（断言非空转）", appliedCo
 check(
   "limits 归一化：随机只认 true，篇数取整、负数回 0",
   normalizeLimits({ random: "yes", read: 6.9, promos: -3 }),
-  { random: false, read: 6, promos: 0, search: 0 }
+  { random: false, read: 6, promos: 0, search: 0, allowExceed: false }
 );
-check("limits 归一化：空值 → 全部不限制", normalizeLimits(null), { random: false, read: 0, promos: 0, search: 0 });
+check("limits 归一化：空值 → 全部不限制", normalizeLimits(null), { random: false, read: 0, promos: 0, search: 0, allowExceed: false });
+check("超额开关只接受 true", normalizeLimits({ allowExceed: "true" }).allowExceed, false);
+check("开启超额且剩余 2 / 设定 6 → 计划 6", plan({ base: 6, total: 2, allowExceed: true }).count, 6);
+check("超额随机可在设定值上加 4", plan({ base: 6, total: 2, allowExceed: true, random: true, rng: plus(4) }).count, 10);
+check("超额模式下无剩余仍不空跑", plan({ base: 6, total: 0, allowExceed: true }).count, 0);
+check("超额模式下不限制仍只做剩余量", plan({ base: 0, total: 2, allowExceed: true }).count, 2);
 
 // —— 静态守卫：任务侧接入 ——
 const tasksSrc2 = fs.readFileSync(path.join(ROOT, "src", "tasks.js"), "utf8");
@@ -444,27 +449,56 @@ const dSwapped = runnerModule.pickStartDelay({ schedule: { randomDelay: true, ra
 checkTrue("区间写反时仍取到合法值", dSwapped.seconds >= 10 && dSwapped.seconds <= 500, `实际 ${dSwapped.seconds}`);
 const scOld = runnerModule.normalizeSchedule({});
 check("老配置归一化补上 20/300 且默认开启", [scOld.randomDelay, scOld.randomDelayMin, scOld.randomDelayMax], [true, 20, 300]);
+check("老配置默认从 09:00 开始", scOld.startTime, "09:00");
+check("非法开始时刻回退 09:00", runnerModule.normalizeSchedule({ schedule: { startTime: "25:90" } }).startTime, "09:00");
+const scheduleCtx = (schedule, extra = {}) => ({
+  config: { get: () => ({ schedule }) },
+  state: {
+    get: () => ({ refreshToken: "selfcheck-fake-token", lastAutoRunAt: 0 }),
+    resetIfNewDay: () => false,
+    getAutoRounds: () => extra.rounds || 0,
+    isDayComplete: () => !!extra.done,
+  },
+});
+check("09:00 前自动运行被阻止", runnerModule.shouldRunNow(scheduleCtx({ startTime: "09:00" }), new Date(2026, 9, 2, 8, 59)).run, false);
+check("09:00 起可以自动运行", runnerModule.shouldRunNow(scheduleCtx({ startTime: "09:00" }), new Date(2026, 9, 2, 9, 0)).run, true);
+check("daily 08:00 与开始 09:00 取较晚者", runnerModule.shouldRunNow(scheduleCtx({ mode: "daily", time: "08:00", startTime: "09:00" }), new Date(2026, 9, 2, 9, 0)).run, true);
+check("daily 到时刻后错过巡检仍可运行", runnerModule.shouldRunNow(scheduleCtx({ mode: "daily", time: "09:00" }), new Date(2026, 9, 2, 9, 3)).run, true);
+check("daily 当天只触发一次", runnerModule.shouldRunNow(scheduleCtx({ mode: "daily", time: "09:00" }, { rounds: 1 }), new Date(2026, 9, 2, 9, 3)).run, false);
+check("跨零点时间段凌晨受开始时间限制", runnerModule.shouldRunNow(scheduleCtx({ mode: "windows", startTime: "09:00", windows: [{ start: "22:00", end: "02:00" }] }), new Date(2026, 9, 2, 1, 0)).run, false);
+const at = (date) => [date.getDate(), date.getHours(), date.getMinutes()];
+check("首次间隔运行预计 09:00", at(runnerModule.nextRunTime(scheduleCtx({ startTime: "09:00" }), new Date(2026, 9, 2, 8, 0))), [2, 9, 0]);
+check("daily 08:00 晚于开始门禁时预计 09:00", at(runnerModule.nextRunTime(scheduleCtx({ mode: "daily", time: "08:00", startTime: "09:00" }), new Date(2026, 9, 2, 8, 0))), [2, 9, 0]);
+check("daily 今日已触发则预计次日", at(runnerModule.nextRunTime(scheduleCtx({ mode: "daily", time: "09:00" }, { rounds: 1 }), new Date(2026, 9, 2, 9, 1))), [3, 9, 0]);
+check("当天完成后预计次日 09:00", at(runnerModule.nextRunTime(scheduleCtx({ startTime: "09:00" }, { done: true }), new Date(2026, 9, 2, 16, 0))), [3, 9, 0]);
+check("达到每日轮数上限预计次日", at(runnerModule.nextRunTime(scheduleCtx({ startTime: "09:00", maxRounds: 1 }, { rounds: 1 }), new Date(2026, 9, 2, 16, 0))), [3, 9, 0]);
+const reversedWindows = scheduleCtx({ mode: "windows", windows: [{ start: "19:00", end: "20:00" }, { start: "10:00", end: "11:00" }] });
+check("多段乱序仍预计最早时间段", at(runnerModule.nextRunTime(reversedWindows, new Date(2026, 9, 2, 8, 0))), [2, 10, 0]);
+check("跨零点段晚间预计 22:00", at(runnerModule.nextRunTime(scheduleCtx({ mode: "windows", windows: [{ start: "22:00", end: "02:00" }] }), new Date(2026, 9, 2, 19, 0))), [2, 22, 0]);
 
 // —— 默认值三处同步（config / global-config / 渲染层 mock） ——
 const cfgDefaults = require(path.join(ROOT, "src", "config.js")).DEFAULTS;
 const globalDefaults = require(path.join(ROOT, "src", "global-config.js")).GLOBAL_DEFAULTS;
 const mockSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "api", "mock.ts"), "utf8");
-check("config.DEFAULTS 含 limits", cfgDefaults.limits, { random: false, read: 6, promos: 0, search: 6 });
-check("global-config 默认值同步含 limits", globalDefaults.limits, { random: false, read: 6, promos: 0, search: 6 });
-checkTrue("渲染层 mock 默认值同步含 limits（含 search）", /limits: \{ random: false, read: 6, promos: 0, search: 6 \}/.test(mockSrc));
+check("config.DEFAULTS 含 limits", cfgDefaults.limits, { random: false, read: 6, promos: 0, search: 6, allowExceed: false });
+check("global-config 默认值同步含 limits", globalDefaults.limits, { random: false, read: 6, promos: 0, search: 6, allowExceed: false });
+checkTrue("渲染层 mock 默认值同步含 limits（含超额开关）", /limits: \{ random: false, read: 6, promos: 0, search: 6, allowExceed: false \}/.test(mockSrc));
 // 0.9.4 白屏根因：global-config 的 GLOBAL_DEFAULTS 缺 goals，旧配置文件只有
 // { enable: true } 无 items，全局设置页 value.goals.items 抛 TypeError。必须与
 // config.DEFAULTS.goals 对齐，带 items: [] 兜底。
 check("global-config 默认值含 goals.items 兜底", globalDefaults.goals, { enable: true, items: [] });
 for (const [name, d] of [["config", cfgDefaults], ["global-config", globalDefaults]]) {
   check(`${name} 随机延迟默认 开启/20/300`, [d.schedule.randomDelay, d.schedule.randomDelayMin, d.schedule.randomDelayMax], [true, 20, 300]);
+  check(`${name} 每天默认开始时间`, d.schedule.startTime, "09:00");
 }
 checkTrue("渲染层 mock 随机延迟默认同步", /randomDelay: true,\s*\n\s*randomDelayMin: 20,\s*\n\s*randomDelayMax: 300,/.test(mockSrc));
+checkTrue("渲染层 mock 默认开始时间同步", /startTime: "09:00"/.test(mockSrc));
 
 // —— 静态守卫：设置页 ——
 const formSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "components", "SettingsForm.tsx"), "utf8");
 checkTrue("设置页有阅读/积分活动单次数量输入", /阅读文章每次篇数/.test(formSrc) && /积分活动每次个数/.test(formSrc));
 checkTrue("设置页有随机波动开关", /limits: \{ random: v \}/.test(formSrc));
+checkTrue("设置页有超额开关与开始时间", /limits: \{ allowExceed: v \}/.test(formSrc) && /patchSchedule\(\{ startTime: v \}\)/.test(formSrc));
 checkTrue("设置页有随机延迟开关与区间", /randomDelay: v/.test(formSrc) && /randomDelayMin/.test(formSrc) && /randomDelayMax/.test(formSrc));
 // 0.9.4 白屏根因（渲染层防御）：goals 只用 ?? 兜底，遇到 { enable: true } 缺 items 时
 // goals.items.length 抛错。必须逐字段兜底，用 Array.isArray 判 items。
@@ -556,6 +590,76 @@ checkTrue("runner 按开关调用 taskClaimRewards", /cfg\.tasks\.claim \? await
 checkTrue("runner 本地合计纳入 dailyPoint", /readPoint \+ dailyPoint \+ promosPoint/.test(runnerSource));
 checkTrue("rewards 区域检查接入 ip-lookup", /require\("\.\/ip-lookup"\)/.test(rewardsSrc) && /ipLookup\.lookupCountry\(ctx, provider\)/.test(rewardsSrc));
 checkTrue("rewards 第三方不可用时回落 Bing", /async function bingRegionCheck/.test(rewardsSrc));
+// —— 锁定国区判定：多源保守 union + 反例回归 ——
+checkTrue(
+  "bingRegionCheck 锁定国区时双站并发探测（cn + www）",
+  /\["cn\.bing\.com", "www\.bing\.com"\]/.test(rewardsSrc)
+);
+checkTrue(
+  "mainlandCheck 锁定国区时强制并查 ipsb 境外 GeoIP",
+  /queryProvider\("ipsb", ctx\)/.test(rewardsSrc)
+);
+checkTrue(
+  "mainlandCheck 通过 judgeMainland 汇聚多源判定",
+  /judgeMainland\(verdicts, \{\s*lock:\s*true\s*\}\)/.test(rewardsSrc)
+);
+checkTrue(
+  "已删除模块级 cachedHost 缓存（避免跨账户污染）",
+  !/let cachedHost\b/.test(rewardsSrc)
+);
+
+// 纯函数 judgeMainland：直接 require 即可离线断言
+const { judgeMainland: judgeMainlandPure } = require(path.join(ROOT, "src", "rewards.js"));
+const _v1 = [
+  { source: "bing", region: "CN", ipcc: "CN", mainland: true },
+  { source: "ipsb", ip: "49.81.112.122", countryCode: "CN", mainland: true },
+];
+check("lock=true + 全部 CN → 放行", judgeMainlandPure(_v1, { lock: true }).ok, true);
+
+const _v2 = [
+  { source: "bing", region: "CN", ipcc: "CN", mainland: true },  // cn.bing.com 直连 → CN
+  { source: "ipsb", ip: "203.10.99.34", countryCode: "JP", mainland: false, detail: "GSL" },  // 代理节点 → JP
+];
+const _v2r = judgeMainlandPure(_v2, { lock: true });
+check("lock=true + 任一非 CN → 拦截（昨夜那个 bug：CN+JP 必须变红）", _v2r.ok, false);
+checkTrue("拦截原因包含源标识 ipsb", /ipsb/.test(_v2r.reason || ""));
+
+const _v3 = [
+  { source: "bing", mainland: null },                              // 解析失败
+  { source: "ipsb", mainland: null },                              // 网络失败
+];
+check("lock=true + 全部 inconclusive → 放行（保留保守放行，不误停）",
+  judgeMainlandPure(_v3, { lock: true }).ok, true);
+
+const _v4 = [
+  { source: "bing", region: "JP", ipcc: "JP", mainland: false },
+  { source: "ipsb", countryCode: "JP", mainland: false },
+];
+check("lock=true + 全部非 CN → 拦截", judgeMainlandPure(_v4, { lock: true }).ok, false);
+
+check("lock=false + 非 CN → 仍放行（信息展示用途，不锁）",
+  judgeMainlandPure(_v4, { lock: false }).ok, true);
+
+const _v5 = [
+  { source: "bing", region: "CN", ipcc: "CN", mainland: true },
+  { source: "pconline", ip: "8.8.8.8", countryCode: "US", mainland: false },
+  { source: "ipsb", ip: "203.10.99.34", countryCode: "JP", mainland: false },
+];
+const _v5r = judgeMainlandPure(_v5, { lock: true });
+check("lock=true + 三源任一非 CN → 拦截", _v5r.ok, false);
+
+// —— 区域拦截推送：geoLabel 归属地展示串 + 判定结果携带 IP/归属地 ——
+check("geoLabel 完整字段 → Tokyo/JP(东京/日本)",
+  ipLookup.geoLabel([{ source: "ipsb", countryCode: "JP", cityEn: "Tokyo" }]), "Tokyo/JP(东京/日本)");
+check("geoLabel 城市未收录时回落英文城市名",
+  ipLookup.geoLabel([{ countryCode: "US", cityEn: "Fremont" }]), "Fremont/US(美国)");
+check("geoLabel 兼容 bing verdict 的 ipcc 字段名",
+  ipLookup.geoLabel([{ source: "bing", ipcc: "JP" }]), "JP(日本)");
+check("geoLabel 全空 → 未知", ipLookup.geoLabel([]), "未知");
+checkTrue("拦截结果携带 IP 与归属地（推送文案素材）",
+  typeof _v2r.ip === "string" && _v2r.ip === "203.10.99.34" && /JP/.test(_v2r.geo || ""));
+checkTrue("拦截 reason 文案含「检测到非…区域」（预留锁区功能）",
+  /检测到非.+区域/.test(_v2r.reason || ""));
 checkTrue("state 默认 tasksDone 含 daily", /tasksDone: \{ sign: 0, read: 0, daily: 0, promos: 0, search: 0 \}/.test(stateSrc));
 checkTrue("state 每日累计含 dailyPoint 且跨天清零", /dailyPoint: 0,/.test(stateSrc));
 
@@ -2169,7 +2273,7 @@ checkTrue(
   /fd\/auth\/signin/.test(bingSsoSrc) &&
     /\?action=interactive&provider=windows_live_id/.test(bingSsoSrc) &&
     /async function ensureBingSSO/.test(bingSsoSrc) &&
-    /微软账号在线但 Bing 侧缺少登录票据/.test(bingSsoSrc) &&
+    /MS账号在线但 Bing 侧缺少登录票据/.test(bingSsoSrc) &&
     /!hasBingAuthCookies\(cookies\) && hasAuthCookies\(cookies\)/.test(bingSsoSrc) &&
     /!ssoTried && !hasBingAuthCookies\(last\.cookies\) && hasAuthCookies\(last\.cookies\)/.test(bingSsoSrc),
   "静默 SSO 缺失或没接入两路同步 → Bing 缺 _U 的用户永远无法自动补登"
@@ -2181,7 +2285,7 @@ checkTrue(
 );
 
 // 0.13.6 点按钮兜底：静默 SSO 没补上票时，像真人一样点 Bing 首页「登录」按钮，
-// 并自动走完微软确认页（#idSIButton9）/ 账户瓦片选择，两路同步都接入。
+// 并自动走完MS确认页（#idSIButton9）/ 账户瓦片选择，两路同步都接入。
 checkTrue(
   "静默 SSO 失败后回退模拟点登录按钮：点 Bing 首页 #id_l、自动确认 #idSIButton9 / 账户瓦片",
   /async function ensureBingLoginByClick/.test(bingSsoSrc) &&
@@ -3007,10 +3111,16 @@ checkTrue(
     /className="cal-badges-col"/.test(calSrc)
 );
 checkTrue(
-  "成就页字号封顶：日期 ≤30px / 统计数字 ≤32px / 日历格 ≤112px",
-  /\.achievements-view \.cal-day \{ font-size: clamp\(17px, 2\.125cqw, 30px\); \}/.test(calCss) &&
-    /\.achievements-view \.cal-stat-value \{ font-size: clamp\(20px, 2\.5cqw, 32px\); \}/.test(calCss) &&
-    /\.achievements-view \.cal-cell \{[^}]*min-height:\s*clamp\(52px,\s*6\.5cqw,\s*112px\)/.test(calCss)
+  "成就页字号封顶：日期 ≤23px / 统计数字 ≤25px / 日历格 ≤88px",
+  /\.achievements-view \.cal-day \{ font-size: clamp\(15px, 1\.8cqw, 23px\); \}/.test(calCss) &&
+    /\.achievements-view \.cal-stat-value \{ font-size: clamp\(18px, 2\.1cqw, 25px\); \}/.test(calCss) &&
+    /\.achievements-view \.cal-cell \{[^}]*min-height:\s*clamp\(48px,\s*5\.6cqw,\s*88px\)/.test(calCss)
+);
+
+// —— 勋章墙 4 列（2026-10-02） ——
+checkTrue(
+  "勋章墙：每行固定 4 个（不再 auto-fill 自适应）",
+  /\.achievements-view \.cal-blist \{\s*grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\)/.test(calCss)
 );
 
 // —— 滚轮翻月作用域 + 勋章墙展开动画（2026-09-30 二次反馈） ——
