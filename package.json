@@ -19,6 +19,7 @@
     "pack": "electron-builder --win nsis",
     "pack:dir": "electron-builder --win nsis --dir",
     "test": "node scripts/selfcheck.js",
+    "verify:pack": "node scripts/verify-pack.js",
     "bump": "node scripts/bump-version.js",
     "clean:assets": "node scripts/clean-assets.js"
   },
@@ -51,8 +52,11 @@
     },
     "files": [
       "src/**/*",
+      "!src/web/dist/**",
       "gui/**/*",
       "gui-react/**/*",
+      "!gui-react/*.png",
+      "gui-react/icon.png",
       "config.json",
       "package.json",
       "package-lock.json",

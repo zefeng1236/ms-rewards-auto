@@ -3334,6 +3334,30 @@ checkTrue(
   `只收集到 ${refList.length} 条引用，扫描逻辑可能失效`
 );
 
+// 同一类隐雷的另一种形态：**本地垃圾被通配符扫进安装包**。
+// 0.13.15 实测：本地打包出 105MB，而干净 clone 的 CI 只出 82.9MB —— 差的 23MB 全是
+// electron-builder 按文件系统收集进来的本地产物：`src/web/dist/**`（只给 Docker 服务端
+// 用的 SPA 目录，桌面端根本不读）与 `gui-react/*.png`（30+ 张本地验证截图，
+// .gitignore 里排除了但 electron-builder 不看 gitignore）。
+// 这些文件被 .gitignore 排除 → 别人 clone 后打不出同样的包；截图还可能是未公开的界面稿。
+const filesQ = bcfg.files || [];
+checkTrue(
+  "打包白名单排除 src/web/dist（只给 Docker 服务端用，桌面端不读）",
+  filesQ.includes("!src/web/dist/**"),
+  JSON.stringify(filesQ)
+);
+checkTrue(
+  "打包白名单排除 gui-react 下的验证截图，只放行 icon.png",
+  filesQ.includes("!gui-react/*.png") && filesQ.includes("gui-react/icon.png"),
+  JSON.stringify(filesQ)
+);
+checkTrue(
+  "排除项顺序正确（先含后排除，icon.png 在排除之后再单独放行）",
+  filesQ.indexOf("!gui-react/*.png") > filesQ.indexOf("gui-react/**/*") &&
+    filesQ.indexOf("gui-react/icon.png") > filesQ.indexOf("!gui-react/*.png"),
+  "electron-builder 的 files 按顺序生效，顺序错了排除不生效"
+);
+
 /* ============ 汇总 ============ */
 console.log(`\n${"=".repeat(46)}`);
 console.log(`结果: ${pass} 通过 / ${fail} 失败`);
