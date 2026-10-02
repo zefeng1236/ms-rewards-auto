@@ -713,6 +713,14 @@ checkTrue(
   pkgRaw.build.nsis && pkgRaw.build.nsis.license === "license.txt",
   JSON.stringify(pkgRaw.build.nsis && pkgRaw.build.nsis.license)
 );
+// 第三方作者的油猴脚本已移出版本库（版权考虑），也不能再打进安装包。
+// electron-builder 按文件系统收集、不看 git，所以 .gitignore 拦不住它 —— 必须从白名单移除。
+// 判据：build.files 里不能出现该目录；storage/ 同理（打包白名单本就不含它）。
+checkTrue(
+  "安装包不含第三方作者脚本（build.files 不含 参考js脚本/）",
+  !Array.isArray(pkgRaw.build.files) || !pkgRaw.build.files.some((f) => String(f).includes("参考js脚本")),
+  JSON.stringify(pkgRaw.build.files)
+);
 
 /* ============ 16. 账户表控件同档 + 关于页 WorkBuddy 徽章 ============ */
 console.log("\n【16】账户表行内控件同档（32px）与 WorkBuddy 官方徽章");

@@ -58,8 +58,7 @@
       "package-lock.json",
       "start.bat",
       "LICENSE",
-      "THIRD_PARTY_NOTICES.md",
-      "参考js脚本/**/*"
+      "THIRD_PARTY_NOTICES.md"
     ],
     "extraResources": [
       {
