@@ -67,3 +67,6 @@ scrape-profile/
 # gui-react/ 是构建产物目录：只跟踪 index.html / assets/ / icon.png，
 # 验证用的截图（*-login.png / wiz-*.png / srv-*.png …）不进仓库。
 /gui-react/*.png
+
+# 第三方作者油猴脚本参考（仅本地留存，不入库）
+参考js脚本/
