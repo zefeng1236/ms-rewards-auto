@@ -270,3 +270,5 @@ node src/main.js browser        # 检查 Chromium
 ## 许可证
 
 MIT
+
+> 第三方开源组件、字体与素材的许可说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

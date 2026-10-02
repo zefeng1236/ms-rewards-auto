@@ -472,12 +472,6 @@ Docker 版改为「环境拟真浏览器独占 + 镜像预装」，并支持直�
 - 「立即更新」当前打开对应 Release 页面（项目开源后再完善为应用内下载/替换）。
 - 三端同接口：Electron（`app:checkAppUpdate`）/ Web-Docker（RPC `checkAppUpdate`）/ 预览 mock 一致。
 
-### 品牌字样统一为 MS
-
-- 项目内**用户可见**的「Microsoft Rewards / 微软」统一改为「MS Rewards / MS」：窗口标题、托盘提示、侧边栏副标题、关于页、向导、设置页、README、CHANGELOG、安装包名（`MS-Rewards-Auto-Setup-*.exe`）、productName 等。
-- **刻意保留**真实第三方引用，以免破坏法律效力或功能：免责声明中的 `Microsoft Corporation` / `Microsoft 服务协议` / 商标归属句、隐私政策对真实微软服务的指代、系统字体名 `Microsoft YaHei`、解析真实页面的标识符 `MicrosoftRewards`。
-- 数据目录仍为 `%APPDATA%\ms-rewards-auto`（由 package.json 顶层 `name` 决定，未改），老用户升级不丢账号数据。
-
 ### 登录与抓取健壮性
 
 - 关闭登录浏览器前循环确认认证 Cookie / Rewards 页面特征已抓齐再退出，兼容「隐私政策更新弹窗」需用户点「是」后才下发票据的情况；Bing / Rewards 抓取延长等待（访问超时 60s + networkidle + 额外驻留）。
