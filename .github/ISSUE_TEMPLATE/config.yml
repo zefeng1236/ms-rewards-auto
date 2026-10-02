@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 🔒 安全漏洞报告
+    url: https://github.com/zefeng1236/ms-rewards-auto/security/advisories/new
+    about: 请勿用公开 Issue 报告安全问题，详见 SECURITY.md
+  - name: ❓ 使用问题
+    url: https://github.com/zefeng1236/ms-rewards-auto/discussions
+    about: 部署、配置、用法类问题更适合在 Discussions 讨论

@@ -9,8 +9,8 @@
 ## 核心特性
 
 - **多账户隔离**：每个账户拥有独立的 `storage/accounts/<id>/` 目录（配置、登录态、Cookie、浏览器 profile），互不干扰
-- **初始干净浏览器**：默认用 Playwright 自带的 Chromium（与系统 Edge/Chrome 完全隔离），不继承系统浏览器的任何数据；
-  也可在「软件设置 → 浏览器」换成**环境拟真浏览器**（可选增强，patch 版 Chromium，UA / Client Hints 同源生成，按需单独下载）
+- **干净浏览器环境**：默认用**环境拟真浏览器**（patch 版 Chromium，UA / Client Hints / 平台同源生成，与系统 Edge/Chrome 完全隔离），不继承系统浏览器的任何数据；
+  也可在「软件设置 → 浏览器」切回 Playwright 自带的普通 Chromium
 - **液态玻璃 GUI**：基于 React + TypeScript 重写的全新界面，毛玻璃质感、壁纸背景、深浅主题自适应
 - **首次启动向导**：欢迎页（多语言）→ 协议阅读与勾选 → 风险告知 → 个性化初始设置，四步引导完成初始配置
 - **三层配置模型**：全局设置 → 账户覆盖（可选），账户可一键切换「遵循全局 / 独立设置」
@@ -38,10 +38,31 @@
 
 ## 界面预览
 
-- **仪表盘**：所有账户的运行概况与今日进度，统计卡 + 账户表格（支持搜索过滤、勾选批量运行）
+> 以下截图取自 V0.13.14，壁纸为 Bing 每日一图，数据为演示数据。
+
+### 仪表盘
+
+账户总览 + 今日进度 + 账户列表（支持搜索过滤、勾选批量运行）
+
+![仪表盘](docs/screenshots/dashboard.jpg)
+
+### 成就与统计
+
+签到日历、勋章墙与五项统计；节假日联网自动获取，格子按卡片宽度流式缩放
+
+![成就与统计](docs/screenshots/achievements.jpg)
+
+### 软件设置
+
+外观（主题 / 壁纸 / 液态玻璃）、启动与托盘、浏览器、账户安全
+
+![软件设置](docs/screenshots/settings.jpg)
+
+### 其他界面
+
 - **账户详情**：账号切换 + 登录/调度状态 + 积分卡 + 本账号设置（含「遵循全局设置」开关）与积分目标磁贴
-- **全局设置 / 个性化 / 启动与托盘**：任务与推送配置、壁纸与液态玻璃效果、开机自启与托盘行为
 - **首次启动向导**：欢迎（选语言）→ 协议 → 风险告知 → 个性化初始设置
+- **登录页**：Passkey 为主、加密密码 / 恢复密钥为备选
 
 ## 目录结构
 
@@ -255,7 +276,7 @@ node src/main.js browser        # 检查 Chromium
 
 - **主进程**：Node.js + Electron 31
 - **浏览器引擎**：Playwright-core（Chromium）
-- **渲染进程**：React 18 + TypeScript + Vite 5，UI 组件库 [@ttqtt/liquid-glass-react](https://www.npmjs.com/package/@ttqtt/liquid-glass-react)（液态玻璃质感）
+- **渲染进程**：React 19 + TypeScript + Vite 5，UI 组件库 [@ttqtt/liquid-glass-react](https://www.npmjs.com/package/@ttqtt/liquid-glass-react)（液态玻璃质感）
 - **旧版渲染层**：原生 HTML/CSS/JS（`gui/`，保留备用）
 - **样式**：CSS 设计 token（深浅双主题）+ `backdrop-filter` 毛玻璃 + 壁纸环境色自适应
 

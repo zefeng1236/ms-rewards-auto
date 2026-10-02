@@ -1,0 +1,67 @@
+name: Bug 反馈
+description: 报告一个可复现的问题
+title: "[Bug] "
+labels: bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈！为了让问题能被快速定位，麻烦先确认几件事：
+        1. 你用的是**最新正式版**吗？（预览版不单独维护）
+        2. 搜过 Issue 列表了吗？可能已经有人提过
+        3. 这个问题是**稳定复现**还是偶发？
+
+  - type: input
+    id: version
+    attributes:
+      label: 软件版本
+      description: 关于页右下角显示的版本号，或安装包文件名
+      placeholder: "0.13.14"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: 运行平台
+      options:
+        - Windows 安装版
+        - Windows 源码运行
+        - Docker / Web 版
+        - 其他
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 发生了什么
+      description: 描述你看到的现象，不要写推测原因
+      placeholder: "点「运行全部」后进度条卡在 0%，日志停在「正在初始化浏览器」
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 从打开软件开始，逐步操作
+      placeholder: |
+        1. 启动软件
+        2. 进入「账户详情」
+        3. 点击「运行本账户」
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 相关日志
+      description: 软件设置页「自运行日志」里与该问题相关的几行即可（请勿贴 Cookie / token 等敏感内容）
+      render: text
+
+  - type: input
+    id: account-count
+    attributes:
+      label: 账户数量
+      placeholder: "1"

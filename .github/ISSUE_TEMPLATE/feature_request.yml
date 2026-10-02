@@ -1,0 +1,48 @@
+name: 功能建议
+description: 提出一个新功能或改进想法
+title: "[Feature] "
+labels: enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提建议前请先搜一下 Issues —— 重复的建议会拖慢处理。
+        也欢迎你直接开 PR 实现它（见 [CONTRIBUTING.md](../CONTRIBUTING.md)）。
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 想解决什么问题
+      description: 描述场景与痛点，而不是「我想要 XX 功能」
+      placeholder: "每天手动点「运行全部」，希望到点自动跑完并推送结果"
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 你设想的方案
+      description: 大致交互即可，不需要实现细节
+    validations:
+      required: true
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: 影响范围
+      options:
+        - 只影响桌面版
+        - 只影响 Docker / Web 版
+        - 两端都影响
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: 请确认
+      options:
+        - label: 我已搜索过现有 Issues，这不是重复建议
+          required: true
+        - label: 我理解这是个人开源项目，不承诺更新频率
+          required: true

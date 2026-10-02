@@ -51,7 +51,9 @@ scrape-profile/
 #   只有 src/web/dist/（构建产物）继续排除。
 /Android/
 /OpenWrt/
-/docs/
+/docs/*
+# 例外：docs/screenshots/ 是 README 引用的正式界面图，必须跟踪。
+!/docs/screenshots/
 /src/web/dist/
 /build/*.txt
 /build/*.log
@@ -67,6 +69,10 @@ scrape-profile/
 # gui-react/ 是构建产物目录：只跟踪 index.html / assets/ / icon.png，
 # 验证用的截图（*-login.png / wiz-*.png / srv-*.png …）不进仓库。
 /gui-react/*.png
+
+# 内部交接文档（含测试服务器 IP / 账户名 / 构建路径 / 本机用户名），
+# 只在本地与桌面知识库维护，不进公开仓库。
+/项目上下文与总结.md
 
 # 第三方作者油猴脚本参考（仅本地留存，不入库）
 参考js脚本/
