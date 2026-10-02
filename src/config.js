@@ -90,15 +90,15 @@ const DEFAULTS = {
   },
   // 浏览器（登录授权 / 领取奖品要走真实页面）
   //
-  // fingerprint 一节只在设置里下载过指纹浏览器之后才有意义；
+  // fingerprint 一节只在设置里下载过环境拟真浏览器之后才有意义；
   // 没下载 / 没启用时自动回落到 Playwright 自带 Chromium，行为与以前完全一致。
   // ⚠️ 必须与 global-config.js 的 GLOBAL_DEFAULTS.browser 逐字段对齐。
   browser: {
     fingerprint: {
-      enable: true,    // 启用指纹浏览器（未安装则自动回落普通 Chromium；默认开启，首次运行自动下载）
-      seed: 0,         // 指纹种子（32 位整数）；0 = 按账户 ID 自动派生，保证同账号长期稳定
+      enable: true,    // 启用环境拟真浏览器（未安装则自动回落普通 Chromium；默认开启，首次运行自动下载）
+      seed: 0,         // 拟真种子（32 位整数）；0 = 按账户 ID 自动派生，保证同账号长期稳定
       brand: "Chrome", // UA / Client Hints 声明的品牌：Chrome | Edge | Opera | Vivaldi
-      hardwareConcurrency: 0, // CPU 核数；0 = 由指纹种子生成
+      hardwareConcurrency: 0, // CPU 核数；0 = 由拟真种子生成
       platform: "windows", // 声明给网站的操作系统：windows | macos | linux（Docker 里避免暴露 Linux）
       mirror: "cdn.gh-proxy.org", // 下载镜像源：默认 cdn.gh-proxy.org；也可指定单个节点、auto 自动测速或 direct 直连
     },

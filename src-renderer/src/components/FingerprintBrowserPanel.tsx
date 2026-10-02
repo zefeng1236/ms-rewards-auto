@@ -38,7 +38,7 @@ const PLATFORM_OPTIONS = [
 ];
 
 /**
- * 指纹浏览器面板（可选增强）
+ * 环境拟真浏览器面板（可选增强）
  *
  * 放设置页而不是塞进 SettingsForm，是因为它不只是配置项 —— 还带一次
  * 约 181MB 的运行时下载。独立成块才能给下载进度、卸载这些操作留位置。
@@ -98,7 +98,7 @@ export function FingerprintBrowserPanel() {
    */
   const onCancelInstall = async () => {
     const r = await api.cancelFingerprintInstall();
-    if (r.ok) toast.info("正在取消指纹浏览器下载…");
+    if (r.ok) toast.info("正在取消环境拟真浏览器下载…");
     else toast.error(r.error || "取消失败");
   };
 
@@ -109,14 +109,14 @@ export function FingerprintBrowserPanel() {
       const r = await api.installFingerprint({ force });
       if (r.ok) {
         if (r.skipped) {
-          toast.info("指纹浏览器已是该版本（如需修复损坏，请点「重新下载」）");
+          toast.info("环境拟真浏览器已是该版本（如需修复损坏，请点「重新下载」）");
         } else {
-          toast.success(force ? "指纹浏览器已重新下载并校验通过" : "指纹浏览器安装完成");
+          toast.success(force ? "环境拟真浏览器已重新下载并校验通过" : "环境拟真浏览器安装完成");
         }
       } else if (r.canceled) {
-        toast.info("已取消指纹浏览器下载");
+        toast.info("已取消环境拟真浏览器下载");
       } else {
-        toast.error(r.error || "指纹浏览器安装失败");
+        toast.error(r.error || "环境拟真浏览器安装失败");
       }
       await refresh();
     } finally {
@@ -158,7 +158,7 @@ export function FingerprintBrowserPanel() {
       // 镜像内置（Docker）时后端会拒绝删除，必须把真实原因透出来，
       // 否则界面会假装「已删除」，而实际什么都没发生。
       if (r && r.ok === false) toast.error(r.error || "删除失败");
-      else toast.success("已删除指纹浏览器，后续将使用普通 Chromium");
+      else toast.success("已删除环境拟真浏览器，后续将使用普通 Chromium");
       await refresh();
     } finally {
       setBusy(false);
@@ -174,11 +174,11 @@ export function FingerprintBrowserPanel() {
     <div className="block">
       <div className="block-head">
         <div>
-          <div className="block-title">指纹浏览器{st?.preinstalled ? "" : "（可选）"}</div>
+          <div className="block-title">环境拟真浏览器{st?.preinstalled ? "" : "（可选）"}</div>
           <div className="block-sub">
             {st?.preinstalled
               ? "已随镜像内置（/opt/fingerprint-chromium），容器启动即可用，运行时不再下载"
-              : "用 patch 过源码的 Chromium 统一生成 UA / Client Hints / 插件 / CPU 等指纹，需单独下载约 181MB"}
+              : "用 patch 过源码的 Chromium 统一生成 UA / Client Hints / 插件 / CPU 等环境特征，需单独下载约 181MB"}
           </div>
         </div>
         <Tag color={st?.ready ? "success" : "default"} size="sm">
@@ -188,14 +188,14 @@ export function FingerprintBrowserPanel() {
 
       <AppCard padding={16}>
         {!supported ? (
-          <div className="hint">当前平台暂不支持指纹浏览器，将继续使用普通 Chromium。</div>
+          <div className="hint">当前平台暂不支持环境拟真浏览器，将继续使用普通 Chromium。</div>
         ) : (
           <>
             <SwitchField
-              label="启用指纹浏览器"
+              label="启用环境拟真浏览器"
               hint={
                 st?.preinstalled
-                  ? "Docker 版镜像内置，且容器里只有指纹浏览器可用，因此始终启用（不可关闭）"
+                  ? "Docker 版镜像内置，且容器里只有环境拟真浏览器可用，因此始终启用（不可关闭）"
                   : "未安装或启动失败时自动回落普通 Chromium，不影响登录与任务"
               }
               checked={st?.preinstalled ? true : cfg.enable}
@@ -212,7 +212,7 @@ export function FingerprintBrowserPanel() {
                 onChange={(v) => void patch({ brand: v })}
               />
               <NumberField
-                label="指纹种子"
+                label="拟真种子"
                 hint="0 = 按账号 ID 自动派生（同一账号长期稳定，不同账号互不相同）"
                 value={cfg.seed}
                 min={0}
@@ -221,7 +221,7 @@ export function FingerprintBrowserPanel() {
               />
               <NumberField
                 label="CPU 核数"
-                hint="0 = 由指纹种子生成"
+                hint="0 = 由拟真种子生成"
                 value={cfg.hardwareConcurrency}
                 min={0}
                 max={256}
@@ -249,7 +249,7 @@ export function FingerprintBrowserPanel() {
 
             {st?.preinstalled ? (
               <div className="hint fp-note" style={{ marginTop: 4 }}>
-                指纹浏览器已随镜像内置，无需也无法在容器内下载 / 删除。
+                环境拟真浏览器已随镜像内置，无需也无法在容器内下载 / 删除。
                 如需更换版本，请修改镜像构建参数（FPCB_VERSION）后重建镜像。
               </div>
             ) : (
@@ -334,7 +334,7 @@ export function FingerprintBrowserPanel() {
                 </>
               )}
               <br />
-              注意两处上游限制：GPU 指纹仅 Linux 生效（Windows 上 WebGL 由本项目自己的补丁兜底）；
+              注意两处上游限制：GPU 环境特征仅 Linux 生效（Windows 上 WebGL 由本项目自己的补丁兜底）；
               headless 下它只把 UA 的 HeadlessChrome 改成 Chrome，其余 headless 特征不变。
             </div>
           </>

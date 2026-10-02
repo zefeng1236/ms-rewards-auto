@@ -48,9 +48,9 @@ function hasBingAuthCookies(cookies) {
 /**
  * 运维显式指定的 Chromium（最高优先级）。
  *
- * ⚠️ 一旦设了它，指纹浏览器就**永远不会被选中**。Docker 镜像早期版本正是这么配的
- * （直接把容器里的 apt Chromium 钉死），导致指纹浏览器下载完也用不上。
- * 容器场景请改用 MS_REWARDS_CHROMIUM_FALLBACK —— 那个只在指纹浏览器不可用时兜底。
+ * ⚠️ 一旦设了它，环境拟真浏览器就**永远不会被选中**。Docker 镜像早期版本正是这么配的
+ * （直接把容器里的 apt Chromium 钉死），导致环境拟真浏览器下载完也用不上。
+ * 容器场景请改用 MS_REWARDS_CHROMIUM_FALLBACK —— 那个只在环境拟真浏览器不可用时兜底。
  */
 function overrideChromiumPath() {
   const p = (process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || "").trim();
@@ -58,12 +58,12 @@ function overrideChromiumPath() {
 }
 
 /**
- * 兜底 Chromium（**指纹浏览器不可用时**才用）。
+ * 兜底 Chromium（**环境拟真浏览器不可用时**才用）。
  *
  * 为什么需要这个中间档：Docker 镜像用 apt 装了系统 Chromium，又用
  * `npm ci --ignore-scripts` 跳过了 playwright 的浏览器下载（镜像里根本没有
  * Playwright 自带 Chromium）。若直接去掉 PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH，
- * 未启用指纹浏览器时就会落到「一个可执行文件都找不到」。
+ * 未启用环境拟真浏览器时就会落到「一个可执行文件都找不到」。
  *
  * 桌面版不设这个变量，行为完全不变。
  */
@@ -87,7 +87,7 @@ function bundledChromiumPath() {
   }
 }
 
-/** 读取浏览器指纹配置：优先账户有效配置，取不到再退回全局设置 */
+/** 读取浏览器环境特征配置：优先账户有效配置，取不到再退回全局设置 */
 function fingerprintCfg(ctx) {
   let b = null;
   try {
@@ -108,7 +108,7 @@ function fingerprintCfg(ctx) {
     // Docker 容器里 process.platform 恒为 linux，若照实声明，UA/navigator.platform
     // 会报 Linux，而本项目 HTTP 层 UA（rewards.UA_PC）声明的是 Windows NT ——
     // 登录设备列表里就显示成「Linux」这台一眼假的设备。统一声明 windows，
-    // 让指纹源码层与 HTTP 层对齐，观感是「一台正常的 Windows 桌面浏览器」。
+    // 让环境特征源码层与 HTTP 层对齐，观感是「一台正常的 Windows 桌面浏览器」。
     platform:
       typeof fp.platform === "string" && fp.platform ? fp.platform.toLowerCase() : "windows",
   };
@@ -118,12 +118,12 @@ function fingerprintCfg(ctx) {
  * 决定本次用哪个浏览器。
  *
  * 优先级：
- *   1. PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH —— 运维强指定（调试用；设了就再不会用指纹浏览器）
- *   2. 指纹浏览器 —— 设置里启用且已安装（src/fingerprint-browser.js）
+ *   1. PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH —— 运维强指定（调试用；设了就再不会用环境拟真浏览器）
+ *   2. 环境拟真浏览器 —— 设置里启用且已安装（src/fingerprint-browser.js）
  *   3. MS_REWARDS_CHROMIUM_FALLBACK —— 系统兜底（Docker 的 apt Chromium；仅在上一步不可用时）
  *   4. Playwright 自带 Chromium —— 桌面版默认行为
  *
- * 指纹浏览器没装好时是**静默回落**而不是报错：它是可选增强，不该因为没下载
+ * 环境拟真浏览器没装好时是**静默回落**而不是报错：它是可选增强，不该因为没下载
  * 就把登录流程整个打断。
  *
  * @param {object} [ctx] 账户上下文（用于读配置与派生种子）
@@ -134,7 +134,7 @@ function resolveBrowserSource(ctx) {
   if (override) return { kind: "override", executable: override };
 
   const cfg = fingerprintCfg(ctx);
-  // 镜像内置（Docker）：指纹浏览器是容器里**唯一**的浏览器（apt Chromium 已移除、
+  // 镜像内置（Docker）：环境拟真浏览器是容器里**唯一**的浏览器（apt Chromium 已移除、
   // Playwright 自带 Chromium 也没下），所以预装存在时强制启用 —— 否则配置里
   // enable=false（默认值）会一路走到「未检测到可用的浏览器」直接把任务打断。
   const forced = !!fpBrowser.preinstalledDir();
@@ -143,12 +143,12 @@ function resolveBrowserSource(ctx) {
     if (exe) return { kind: "fingerprint", executable: exe, cfg: { ...cfg, enable: true } };
     logger.warn(
       forced
-        ? "镜像内置指纹浏览器不可用（预装目录损坏？），且容器内没有其他浏览器"
-        : "已启用指纹浏览器但不可用（未安装或主程序损坏），本轮回落到普通 Chromium（可在设置页重新下载）"
+        ? "镜像内置环境拟真浏览器不可用（预装目录损坏？），且容器内没有其他浏览器"
+        : "已启用环境拟真浏览器但不可用（未安装或主程序损坏），本轮回落到普通 Chromium（可在设置页重新下载）"
     );
   }
-  // 系统兜底（Docker 曾用 apt Chromium）：必须排在指纹浏览器之后，
-  // 否则容器里指纹浏览器下载完也永远轮不到它。
+  // 系统兜底（Docker 曾用 apt Chromium）：必须排在环境拟真浏览器之后，
+  // 否则容器里环境拟真浏览器下载完也永远轮不到它。
   const fb = fallbackChromiumPath();
   if (fb) return { kind: "chromium", executable: fb, cfg };
   return { kind: "chromium", executable: bundledChromiumPath(), cfg };
@@ -164,8 +164,8 @@ function extraChromiumArgs() {
 
 /** Chromium 是否已就绪 */
 function isChromiumReady() {
-  // Docker 式纯指纹浏览器场景：镜像里没有 apt chromium / Playwright 自带 Chromium，
-  // 只有预装的指纹浏览器。此时只有指纹浏览器可用，它也是唯一浏览器，返回 true。
+  // Docker 式纯环境拟真浏览器场景：镜像里没有 apt chromium / Playwright 自带 Chromium，
+  // 只有预装的环境拟真浏览器。此时只有环境拟真浏览器可用，它也是唯一浏览器，返回 true。
   if (fpBrowser.isReady()) return true;
   return !!chromiumExecutablePath();
 }
@@ -193,7 +193,7 @@ async function openContext(ctx, headless, opts) {
     );
   }
   const isFp = source.kind === "fingerprint";
-  // 指纹模式下算一次种子：配置里没指定就按账户 ID 派生，保证同账号长期稳定
+  // 拟真模式下算一次种子：配置里没指定就按账户 ID 派生，保证同账号长期稳定
   const fpSeed = isFp
     ? (source.cfg && source.cfg.seed) || fpBrowser.seedFor((ctx && ctx.id) || "")
     : 0;
@@ -202,7 +202,7 @@ async function openContext(ctx, headless, opts) {
   if (!fs.existsSync(tmpRoot)) fs.mkdirSync(tmpRoot, { recursive: true });
   const tempDir = fs.mkdtempSync(path.join(tmpRoot, "prof-"));
   logger.info(
-    `使用 ${isFp ? "指纹浏览器" : "Chromium"}: ${executable} (headless=${headless}${isFp ? `, seed=${fpSeed}` : ""})`
+    `使用 ${isFp ? "环境拟真浏览器" : "Chromium"}: ${executable} (headless=${headless}${isFp ? `, seed=${fpSeed}` : ""})`
   );
 
   // 视口策略分两档（踩过坑的地方）：
@@ -234,7 +234,7 @@ async function openContext(ctx, headless, opts) {
   if (isFp) {
     // GPU 进程在容器里起不来时 WebGL 会整个不可用（GL_VENDOR = Disabled /
     // BindToCurrentSequence failed），而"桌面浏览器没有 WebGL"是最顶级的机器人特征：
-    // bot.sannysoft.com 会直接把 WebGL Vendor / Renderer 两项判红，指纹浏览器也因此
+    // 环境一致性自检页 会直接把 WebGL Vendor / Renderer 两项判红，环境拟真浏览器也因此
     // 没机会伪造 GPU。实测补上 --disable-gpu-sandbox 后 GPU 进程正常启动，WebGL 恢复，
     // 并如实上报种子生成的 Windows GPU（ANGLE (Intel, Intel(R) Arc(TM) ... D3D11)）。
     if (process.platform === "linux" && !launchOpts.args.includes("--disable-gpu-sandbox")) {
@@ -243,9 +243,9 @@ async function openContext(ctx, headless, opts) {
     // --disable-gpu 与上面正好相反：它会让 WebGL 永久不可用。容器镜像历史上带过这个
     // 参数，用户自改 MS_REWARDS_CHROMIUM_ARGS 时也可能带上，所以显式提醒一句。
     if (launchOpts.args.includes("--disable-gpu")) {
-      logger.warn("启动参数含 --disable-gpu：WebGL 将被禁用（bot 检测会判失败），建议移除");
+      logger.warn("启动参数含 --disable-gpu：WebGL 将被禁用（环境一致性检测会判失败），建议移除");
     }
-    // 指纹浏览器：由种子统一生成 UA / userAgentData / Client Hints / 插件 / CPU / 内存
+    // 环境拟真浏览器：由种子统一生成 UA / userAgentData / Client Hints / 插件 / CPU / 内存
     launchOpts.args.push(
       ...fpBrowser.buildArgs({
         seed: fpSeed,
@@ -257,7 +257,7 @@ async function openContext(ctx, headless, opts) {
     // ⚠️ 刻意不设 userAgent。
     // 实测证明 sec-ch-ua 请求头改不动（setExtraHTTPHeaders / page.route 都无效），
     // 它是浏览器如实生成的。若这里再硬改 UA，就会回到「UA 自称 X、CH 说 Y」的
-    // 自相矛盾状态 —— 那正是引入指纹浏览器要解决的问题。
+    // 自相矛盾状态 —— 那正是引入环境拟真浏览器要解决的问题。
   } else {
     // headless Chromium 默认 UA 带 "HeadlessChrome" 字样，是最直白的自曝；
     // 统一改成与 HTTP 请求一致的桌面 Edge UA
@@ -271,20 +271,20 @@ async function openContext(ctx, headless, opts) {
 
   const context = await chromium.launchPersistentContext(tempDir, launchOpts);
 
-  // 去自动化补丁：**只在普通 Chromium 回落路径注入；指纹浏览器模式一次都不注入**。
+  // 去自动化补丁：**只在普通 Chromium 回落路径注入；环境拟真浏览器模式一次都不注入**。
   //
-  // 为什么指纹模式要"少即是多"（2026-09-26 在容器内实测，fingerprint-chromium 148）：
+  // 为什么拟真模式要"少即是多"（2026-09-26 在容器内实测，fingerprint-chromium 148）：
   //   · navigator.webdriver 原生就是 false，且 getter 是 `function get webdriver()
   //     { [native code] }` —— 我们原来的 getter 打成箭头函数，toString 后是
   //     `() => false`，等于主动告诉检测方"这里被改过"；
   //   · plugins / languages / platform / hardwareConcurrency / WebGL 全由 --fingerprint
-  //     种子统一生成且互相自洽，我们再盖一层只会造出互相矛盾的指纹；
+  //     种子统一生成且互相自洽，我们再盖一层只会造出互相矛盾的环境特征；
   //   · 最关键：Playwright 的 addInitScript 底层是 CDP 的
-  //     Page.addScriptToEvaluateOnNewDocument，**只要调用一次就会被 BrowserScan 的
+  //     Page.addScriptToEvaluateOnNewDocument，**只要调用一次就会被 环境一致性检测站 的
   //     Navigator 项识破** —— 对照实验里注入一句 `/* noop */` 注释，verdict 就从
   //     Normal 掉到 Robot（WebDriver / User-Agent / CDP 三项仍然全过）。
   //
-  // 结论：指纹浏览器已经做对了每一件事，补丁只在它缺席（回落普通 Chromium）时才有价值。
+  // 结论：环境拟真浏览器已经做对了每一件事，补丁只在它缺席（回落普通 Chromium）时才有价值。
   try {
     if (!isFp) {
       await context.addInitScript({ content: stealth.STEALTH_INIT });

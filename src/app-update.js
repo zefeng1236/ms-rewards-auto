@@ -4,7 +4,7 @@ const OWNER = "zefeng1236";
 const REPO = "ms-rewards-auto";
 const RELEASES_API = `https://api.github.com/repos/${OWNER}/${REPO}/releases`;
 
-/* 与指纹浏览器同源：项目内已验证 gh-proxy 节点按当前默认顺序做 GitHub 加速 */
+/* 与环境拟真浏览器同源：项目内已验证 gh-proxy 节点按当前默认顺序做 GitHub 加速 */
 const MIRROR_PREFIXES = [
   "https://cdn.gh-proxy.org/",
   "https://gh-proxy.com/",

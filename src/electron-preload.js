@@ -118,7 +118,7 @@ contextBridge.exposeInMainWorld("api", {
   onLog: (cb) => ipcRenderer.on("log", (_e, line) => cb(line)),
   // Chromium 就绪状态变化时推送（后台自动安装 / 手动安装完成后刷新徽标）
   onChromiumStatus: (cb) => ipcRenderer.on("chromium-status", (_e, v) => cb(v)),
-  // 指纹浏览器状态变化推送（安装 / 卸载后刷新面板）
+  // 环境拟真浏览器状态变化推送（安装 / 卸载后刷新面板）
   onFingerprintStatus: (cb) => ipcRenderer.on("fingerprint-status", (_e, v) => cb(v)),
   // Chromium 安装进度推送：{ stage, message?, pct?, speed?, eta?, loaded?, total? }
   // 返回退订函数，组件卸载时调用避免重复订阅

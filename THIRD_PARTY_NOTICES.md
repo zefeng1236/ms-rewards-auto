@@ -30,7 +30,7 @@
 ### fingerprint-chromium — 148.0.7778.215
 - **许可**：BSD 3-Clause（基于 Ungoogled Chromium；Copyright (c) The ungoogled-chromium Authors 及 patch 原作者 adryfish）
 - **仓库**：https://github.com/adryfish/fingerprint-chromium （上游：https://github.com/ungoogled-software/ungoogled-chromium ）
-- **用途**：可选的「指纹增强浏览器」，运行时按需下载（约 181MB，解压后 400MB+，不随安装包分发）。它对 UA / userAgentData / Client Hints 三者做源码层的同源生成，并支持 `--fingerprint=<seed>` 种子化指纹，用于规避页面自动化检测中应用层改不动的那一层。本软件未修改其二进制，仅下载、解压并以命令行为其传入启动参数。
+- **用途**：可选的「环境拟真增强浏览器」，运行时按需下载（约 181MB，解压后 400MB+，不随安装包分发）。它对 UA / userAgentData / Client Hints 三者做源码层的同源生成，并支持 `--fingerprint=<seed>` 种子化环境特征，用于把应用层改不动的那部分环境一致性在源码层补齐。本软件未修改其二进制，仅下载、解压并以命令行为其传入启动参数。
 - **许可文本（BSD 3-Clause）**：
   ```
   Redistribution and use in source and binary forms, with or without

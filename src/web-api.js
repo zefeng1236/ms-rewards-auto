@@ -491,7 +491,7 @@ function createApi({ emit }) {
       return fpBrowser.status();
     },
     async installFingerprint(opts) {
-      if (fingerprintInstallController) return { ok: false, error: "指纹浏览器正在下载，请稍候" };
+      if (fingerprintInstallController) return { ok: false, error: "环境拟真浏览器正在下载，请稍候" };
       fingerprintInstallController = new AbortController();
       try {
         const r = await fpBrowser.install({
@@ -510,7 +510,7 @@ function createApi({ emit }) {
       }
     },
     cancelFingerprintInstall() {
-      if (!fingerprintInstallController) return { ok: false, error: "当前没有正在下载的指纹浏览器" };
+      if (!fingerprintInstallController) return { ok: false, error: "当前没有正在下载的环境拟真浏览器" };
       fingerprintInstallController.abort();
       return { ok: true };
     },

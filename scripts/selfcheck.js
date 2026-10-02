@@ -1112,19 +1112,19 @@ checkTrue(
 // ⚠️ 必须用 ^\s*... 锚定行首：只写 `/addInitScript.../` 的话，
 // 把整行注释掉后注释文本里仍然含该串，守卫会假绿（反例验证抓到的）。
 checkTrue(
-  // 注意：UA 改成条件装配后不再是 launchOpts 的字段，而是非指纹分支里的一行赋值。
+  // 注意：UA 改成条件装配后不再是 launchOpts 的字段，而是非环境特征分支里的一行赋值。
   // 行首锚定仍然保留 —— 只认「单独一行干这件事」，避免注释里出现同名串导致假绿。
-  "browser 启动时覆盖 headless UA（不再出现 HeadlessChrome；指纹模式下刻意不设）",
+  "browser 启动时覆盖 headless UA（不再出现 HeadlessChrome；拟真模式下刻意不设）",
   /^\s*launchOpts\.userAgent = stealth\.STEALTH_USER_AGENT;/m.test(browserSrc) && /require\("\.\/stealth"\)/.test(browserSrc)
 );
 checkTrue(
-  // 契约在 0.13.9 变了：以前是「每个页面都注入，指纹模式下注入带 __MSR_FP 的版本」，
-  // 现在是「只在非指纹分支注入，指纹模式零注入」。
+  // 契约在 0.13.9 变了：以前是「每个页面都注入，拟真模式下注入带 __MSR_FP 的版本」，
+  // 现在是「只在非环境特征分支注入，拟真模式零注入」。
   // 为什么必须零注入：Playwright 的 addInitScript 底层是 CDP 的
-  // Page.addScriptToEvaluateOnNewDocument，调用一次就会被 BrowserScan 的 Navigator
+  // Page.addScriptToEvaluateOnNewDocument，调用一次就会被 环境一致性检测站 的 Navigator
   // 项识破 —— 实测注入一句 `/* noop */` 注释，verdict 即从 Normal 掉到 Robot。
   // 三条断言缺一不可：①注入点存在 ②它被 !isFp 包着 ③旧的 __MSR_FP 注入版本已消失。
-  "browser 只在非指纹分支注入 initScript（指纹模式零注入，避免 CDP 注入痕迹自曝）",
+  "browser 只在非环境特征分支注入 initScript（拟真模式零注入，避免 CDP 注入痕迹自曝）",
   /if \(!isFp\) \{\s*await context\.addInitScript\(\{ content: stealth\.STEALTH_INIT \}\);/.test(browserSrc) &&
     /await context\.setExtraHTTPHeaders\(stealth\.EXTRA_HTTP_HEADERS\)/.test(browserSrc) &&
     !/window\.__MSR_FP = true/.test(browserSrc)
@@ -1134,9 +1134,9 @@ checkTrue(
   /^\s*\.\.\.stealth\.EXTRA_ARGS,/m.test(browserSrc)
 );
 checkTrue(
-  // 指纹模式下不盖 accept-language（--accept-lang 由上游统一处理），否则两套控制打架。
-  // 0.13.9 起它与 addInitScript 一起被 !isFp 分支收拢（指纹模式零注入零额外请求头）。
-  "browser 补充 accept-language（EXTRA_HTTP_HEADERS；指纹模式让位）",
+  // 拟真模式下不盖 accept-language（--accept-lang 由上游统一处理），否则两套控制打架。
+  // 0.13.9 起它与 addInitScript 一起被 !isFp 分支收拢（拟真模式零注入零额外请求头）。
+  "browser 补充 accept-language（EXTRA_HTTP_HEADERS；拟真模式让位）",
   /await context\.setExtraHTTPHeaders\(stealth\.EXTRA_HTTP_HEADERS\);/.test(browserSrc) &&
     /if \(!isFp\) \{\s*await context\.addInitScript\(\{ content: stealth\.STEALTH_INIT \}\);\s*await context\.setExtraHTTPHeaders\(stealth\.EXTRA_HTTP_HEADERS\);/.test(browserSrc)
 );
@@ -1193,7 +1193,7 @@ checkTrue(
   !/从来没Shop名|占位|TODO:作者|author1/i.test(aboutSrcCredit)
 );
 
-/* ============ 指纹浏览器可选链路（0.9.4.17） ============ */
+/* ============ 环境拟真浏览器可选链路（0.9.4.17） ============ */
 const fpSrc = fs.readFileSync(path.join(ROOT, "src", "fingerprint-browser.js"), "utf8");
 const cfgSrcFp = fs.readFileSync(path.join(ROOT, "src", "config.js"), "utf8");
 const gcfgSrcFp = fs.readFileSync(path.join(ROOT, "src", "global-config.js"), "utf8");
@@ -1212,7 +1212,7 @@ const cssSrcFp = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "styles"
 
 // —— 下载链路 ——
 checkTrue(
-  "指纹浏览器走 gh-proxy 多节点镜像链（文档里的 6 个入口都要在），且保留直连兜底",
+  "环境拟真浏览器走 gh-proxy 多节点镜像链（文档里的 6 个入口都要在），且保留直连兜底",
   ["gh-proxy.com/", "v4.gh-proxy.org/", "v6.gh-proxy.org/", "cdn.gh-proxy.org/", "axisnow.gh-proxy.org/", "gh-proxy.org/"]
     .every((n) => fpSrc.includes(`"https://${n}"`)) &&
     /MIRROR_PREFIXES\s*=\s*\[[^\]]*""\s*,?\s*\]/.test(fpSrc)
@@ -1404,19 +1404,19 @@ checkTrue(
   /mirror: string;/.test(typesSrcFp) && /mirrors\?:/.test(typesSrcFp)
 );
 checkTrue(
-  "指纹浏览器面板有「下载镜像源」下拉，选项来自主进程下发的 mirrors",
+  "环境拟真浏览器面板有「下载镜像源」下拉，选项来自主进程下发的 mirrors",
   /下载镜像源/.test(panelSrcFp) && /options=\{st\?\.mirrors \|\| \[\]\}/.test(panelSrcFp)
 );
 
-// —— 向导末页：指纹浏览器下载（0.10.1 起；0.13.8 起 Docker 版删除本页）——
+// —— 向导末页：环境拟真浏览器下载（0.10.1 起；0.13.8 起 Docker 版删除本页）——
 checkTrue(
-  "向导末页是指纹浏览器下载页：桌面版保留（6 步），Web/Docker 版删除（5 步，镜像已预装）",
+  "向导末页是环境拟真浏览器下载页：桌面版保留（6 步），Web/Docker 版删除（5 步，镜像已预装）",
   /const STEPS = IS_WEB/.test(wizardSource) &&
-    /"个性化", "指纹"\]/.test(wizardSource) &&
+    /"个性化", "环境特征"\]/.test(wizardSource) &&
     /function PageFingerprint/.test(wizardSource) &&
     /!IS_WEB && page === 5 && <PageFingerprint/.test(wizardSource) &&
     !/\{page === 5 && <PageFingerprint/.test(wizardSource),
-  "Web 版仍渲染指纹下载页 → 让用户在容器里下载一个已经预装好的浏览器；或桌面版被误删 → 桌面用户失去可选增强入口"
+  "Web 版仍渲染环境特征下载页 → 让用户在容器里下载一个已经预装好的浏览器；或桌面版被误删 → 桌面用户失去可选增强入口"
 );
 checkTrue(
   "跳过可直接放行、未跳过必须等下载完成，放行条件由页内上报给页脚",
@@ -1436,7 +1436,7 @@ checkTrue(
     /api\.onInstallProgress/.test(wizardSource)
 );
 checkTrue(
-  "向导指纹页有左按钮右进度的布局样式（进度文案单行截断不挤按钮）",
+  "向导拟真页有左按钮右进度的布局样式（进度文案单行截断不挤按钮）",
   /\.wz-fp-act/.test(cssSrcFp) &&
     /\.wz-fp-prog/.test(cssSrcFp) &&
     /text-overflow: ellipsis/.test(cssSrcFp)
@@ -1509,26 +1509,26 @@ checkTrue(
     /latencyMs\?: number \| null/.test(typesSrcFp)
 );
 
-// —— 侧边栏指纹状态（0.10.1）——
+// —— 侧边栏拟真状态（0.10.1）——
 // 自己读一份 Sidebar 源码：下方同名变量声明在更后面，用它会踩 const 的 TDZ
 const sidebarSrcFp = fs.readFileSync(
   path.join(ROOT, "src-renderer", "src", "components", "Sidebar.tsx"),
   "utf8"
 );
 checkTrue(
-  "侧边栏显示指纹浏览器状态，下载中显示百分比 + 进度条",
+  "侧边栏显示环境拟真浏览器状态，下载中显示百分比 + 进度条",
   /onFingerprintStatus/.test(sidebarSrcFp) &&
-    /指纹浏览器 \$\{/.test(sidebarSrcFp) &&
+    /环境拟真浏览器 \$\{/.test(sidebarSrcFp) &&
     /nav-install-fill/.test(sidebarSrcFp)
 );
 checkTrue(
-  "反例守卫 ⑳：指纹进度必须按 stage 分流，不得混入 Chromium 进度",
+  "反例守卫 ⑳：拟真进度必须按 stage 分流，不得混入 Chromium 进度",
   /if \(p\.stage === "fingerprint" \|\| p\.stage === "fingerprint\/download"\) setFpProg\(p\);/.test(
     sidebarSrcFp
   )
 );
 checkTrue(
-  "预览端指纹进度同样带 stage=fingerprint（否则侧边栏徽章串台）",
+  "预览端拟真进度同样带 stage=fingerprint（否则侧边栏徽章串台）",
   /emitFpProgress\(\{ stage: "fingerprint"/.test(mockSrcFp)
 );
 
@@ -1564,7 +1564,7 @@ checkTrue("global.css 结构合法（无顶层游离分号 / 括号配平）", c
 
 // —— 种子与启动参数 ——
 checkTrue(
-  "指纹按账户派生种子（FNV-1a，32 位无符号）",
+  "环境特征按账户派生种子（FNV-1a，32 位无符号）",
   /0x811c9dc5/.test(fpSrc) && />>> 0/.test(fpSrc) && /function seedFor/.test(fpSrc)
 );
 checkTrue(
@@ -1584,7 +1584,7 @@ checkTrue(
 
 // —— 与 stealth 的互斥 ——
 checkTrue(
-  "stealth 有 __MSR_FP 守卫，指纹模式下让出语言/插件与硬件信息",
+  "stealth 有 __MSR_FP 守卫，拟真模式下让出语言/插件与硬件信息",
   /const FP = !!window\.__MSR_FP/.test(stealthSrcFp) &&
     (stealthSrcFp.match(/if \(FP\) return;/g) || []).length >= 2
 );
@@ -1598,11 +1598,11 @@ checkTrue(
   "browser.js 有来源优先级解析并导出",
   /function resolveBrowserSource/.test(browserSrcFp) && /^\s*resolveBrowserSource,$/m.test(browserSrcFp)
 );
-// 优先级顺序是本块最容易改错的地方：把「系统兜底」挪到指纹浏览器之前，
-// Docker 里指纹浏览器就永远轮不到（下载了也不用），而桌面端完全看不出来。
+// 优先级顺序是本块最容易改错的地方：把「系统兜底」挪到环境拟真浏览器之前，
+// Docker 里环境拟真浏览器就永远轮不到（下载了也不用），而桌面端完全看不出来。
 const rbBody = browserSrcFp.slice(browserSrcFp.indexOf("function resolveBrowserSource"));
 checkTrue(
-  "优先级顺序：运维强指定 > 指纹浏览器 > 系统兜底 > Playwright 自带",
+  "优先级顺序：运维强指定 > 环境拟真浏览器 > 系统兜底 > Playwright 自带",
   /kind: "override"/.test(browserSrcFp) &&
     /kind: "fingerprint"/.test(browserSrcFp) &&
     /kind: "chromium"/.test(browserSrcFp) &&
@@ -1611,33 +1611,33 @@ checkTrue(
     rbBody.indexOf("fallbackChromiumPath") < rbBody.indexOf("bundledChromiumPath")
 );
 checkTrue(
-  "指纹浏览器不可用时静默回落（不打断登录流程）",
-  /已启用指纹浏览器但不可用/.test(browserSrcFp) && /本轮回落到普通 Chromium/.test(browserSrcFp)
+  "环境拟真浏览器不可用时静默回落（不打断登录流程）",
+  /已启用环境拟真浏览器但不可用/.test(browserSrcFp) && /本轮回落到普通 Chromium/.test(browserSrcFp)
 );
 checkTrue(
-  "指纹模式下不覆盖 UA（否则回到 UA 与 CH 自相矛盾的死路）",
-  /指纹浏览器/.test(browserSrcFp) && /launchOpts\.userAgent = stealth\.STEALTH_USER_AGENT/.test(browserSrcFp) &&
+  "拟真模式下不覆盖 UA（否则回到 UA 与 CH 自相矛盾的死路）",
+  /环境拟真浏览器/.test(browserSrcFp) && /launchOpts\.userAgent = stealth\.STEALTH_USER_AGENT/.test(browserSrcFp) &&
     /if \(isFp\) \{/.test(browserSrcFp)
 );
 checkTrue(
-  // 与上面那条配套：指纹模式不但不注入，连「补丁是否生效」都不该再由我们负责 ——
+  // 与上面那条配套：拟真模式不但不注入，连「补丁是否生效」都不该再由我们负责 ——
   // webdriver / plugins / platform / WebGL 全由 --fingerprint 种子原生生成。
-  "指纹模式零 JS 补丁注入（webdriver 等原生即正确，注入反而自曝）",
+  "拟真模式零 JS 补丁注入（webdriver 等原生即正确，注入反而自曝）",
   /if \(!isFp\) \{/.test(browserSrcFp) &&
     !browserSrcFp.includes('"window.__MSR_FP = true;\\n" + stealth.STEALTH_INIT') &&
     !/\binitSrc\b/.test(browserSrcFp)
 );
 checkTrue(
   // 实测（容器内 fingerprint-chromium 148）：GPU 进程默认起不来 → WebGL 整个不可用
-  // （GL_VENDOR = Disabled / BindToCurrentSequence failed），指纹浏览器连伪造 GPU 的
-  // 机会都没有，sannysoft 的 WebGL Vendor / Renderer 两项直接判红。
+  // （GL_VENDOR = Disabled / BindToCurrentSequence failed），环境拟真浏览器连伪造 GPU 的
+  // 机会都没有，环境一致性自检 的 WebGL Vendor / Renderer 两项直接判红。
   // 补 --disable-gpu-sandbox 后 GPU 进程正常启动，WebGL 恢复并上报种子生成的 Windows GPU。
-  "Linux 指纹模式自动补 --disable-gpu-sandbox（否则 GPU 进程起不来 → WebGL 全废）",
+  "Linux 拟真模式自动补 --disable-gpu-sandbox（否则 GPU 进程起不来 → WebGL 全废）",
   /process\.platform === "linux" && !launchOpts\.args\.includes\("--disable-gpu-sandbox"\)/.test(browserSrcFp) &&
     /launchOpts\.args\.push\("--disable-gpu-sandbox"\)/.test(browserSrcFp)
 );
 checkTrue(
-  "对 --disable-gpu 显式告警（它会让 WebGL 永久不可用，是反检测上的自伤）",
+  "对 --disable-gpu 显式告警（它会让 WebGL 永久不可用，是环境拟真上的自伤）",
   /启动参数含 --disable-gpu/.test(browserSrcFp)
 );
 
@@ -1694,7 +1694,7 @@ for (const [label, src, keys] of [
   checkTrue(`${label} 接线完整（${keys.length} 处）`, missing.length === 0, missing.join(", "));
 }
 checkTrue(
-  "软件设置页挂载指纹浏览器面板",
+  "软件设置页挂载环境拟真浏览器面板",
   /FingerprintBrowserPanel/.test(softwareViewSrcFp) && /<FingerprintBrowserPanel/.test(softwareViewSrcFp)
 );
 // 0.9.4.19 增补：软件设置左侧分类选项卡（点击定位 + scroll-spy + 返回）
@@ -1716,28 +1716,28 @@ checkTrue(
   /interface FingerprintStatus/.test(typesSrcFp) && /interface InstallFingerprintResult/.test(typesSrcFp)
 );
 
-/* ---------------- Docker 版接线（0.10.1 后增补；0.13.8 起改为指纹浏览器独占） ----------------
+/* ---------------- Docker 版接线（0.10.1 后增补；0.13.8 起改为环境拟真浏览器独占） ----------------
  * 历史坑（各锁一条守卫）：
  *   ① 早期 compose 用 PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH 把容器 Chromium 钉死（优先级最高）
  *   ② 镜像没装 xz-utils，GNU tar 解 .tar.xz 直接 exit 127
  *   ③ 中期改用 MS_REWARDS_CHROMIUM_FALLBACK 兜底 —— 但那是「可选增强」时代的做法，
- *      0.13.8 起 Docker 改为「指纹浏览器独占 + 镜像预装」，兜底变量本身也已废弃。
+ *      0.13.8 起 Docker 改为「环境拟真浏览器独占 + 镜像预装」，兜底变量本身也已废弃。
  */
 const dockerfileSrc = fs.readFileSync(path.join(ROOT, "docker", "Dockerfile"), "utf8");
 const composeSrc = fs.readFileSync(path.join(ROOT, "docker", "docker-compose.yml"), "utf8");
 checkTrue(
-  "Dockerfile 装 xz-utils（Linux 版指纹浏览器是 .tar.xz，GNU tar 需外部 xz）",
+  "Dockerfile 装 xz-utils（Linux 版环境拟真浏览器是 .tar.xz，GNU tar 需外部 xz）",
   // 断言必须是「独立成一行的 apt 列表项」：注释里也会出现 xz-utils 三个字，
   // 用 /xz-utils/ 或 [^;]* 跨行匹配都会被注释蒙混，漏掉「从 apt 列表里删掉」这种真故障。
   /^\s*xz-utils\b/m.test(dockerfileSrc) && /xz --version/.test(dockerfileSrc)
 );
 checkTrue(
-  "Docker 侧不再用兜底 Chromium：指纹浏览器独占，compose 不传已废弃的兜底变量",
+  "Docker 侧不再用兜底 Chromium：环境拟真浏览器独占，compose 不传已废弃的兜底变量",
   !/MS_REWARDS_CHROMIUM_FALLBACK/.test(dockerfileSrc) &&
     !/MS_REWARDS_CHROMIUM_FALLBACK/.test(composeSrc) &&
     !/^\s*PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH[=:]/m.test(dockerfileSrc) &&
     !/^\s*PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH[=:]/m.test(composeSrc),
-  "仍留兜底 Chromium → 它优先级高于指纹浏览器，Docker「默认用指纹浏览器」的目标直接落空"
+  "仍留兜底 Chromium → 它优先级高于环境拟真浏览器，Docker「默认用环境拟真浏览器」的目标直接落空"
 );
 // 只从环境变量的**取值**里判定，不扫整份文件 —— 注释里写「不要用 --disable-gpu」
 // 也会被裸正则命中（这条守卫自己踩过），所以先取出值再判。
@@ -1752,7 +1752,7 @@ checkTrue(
     /--disable-gpu-sandbox/.test(cpArgs) &&
     !/--disable-gpu(?!-sandbox)/.test(dfArgs) &&
     !/--disable-gpu(?!-sandbox)/.test(cpArgs),
-  `带 --disable-gpu → WebGL 整个不可用，bot.sannysoft.com 直接判 WebGL Vendor/Renderer 两项失败；缺 --disable-gpu-sandbox → 容器里 GPU 进程起不来，WebGL 同样不可用（Dockerfile="${dfArgs}" / compose="${cpArgs}"）`
+  `带 --disable-gpu → WebGL 整个不可用，环境一致性自检页 直接判 WebGL Vendor/Renderer 两项失败；缺 --disable-gpu-sandbox → 容器里 GPU 进程起不来，WebGL 同样不可用（Dockerfile="${dfArgs}" / compose="${cpArgs}"）`
 );
 checkTrue(
   "Web 端 installFingerprint 把下载进度转发到 SSE（否则侧边栏徽章在 Web 版永远 0%）",
@@ -2220,14 +2220,14 @@ checkTrue(
   "IP 访问不提示 → 用户在内网 IP 下反复注册却保存不到，问题依旧"
 );
 
-// 0.13.8 Docker 版「指纹浏览器独占 + 镜像预装 + 可拉取」改造。
+// 0.13.8 Docker 版「环境拟真浏览器独占 + 镜像预装 + 可拉取」改造。
 //   核心不变量：
 //     ① 预装目录（镜像内置）优先于运行时下载目录，且状态里如实暴露 preinstalled；
 //     ② 预装存在时禁止运行时下载 / 删除（否则白拉 134MB 且删不掉镜像层）；
-//     ③ 预装存在时 resolveBrowserSource 强制走指纹浏览器（容器里没有别的浏览器）；
+//     ③ 预装存在时 resolveBrowserSource 强制走环境拟真浏览器（容器里没有别的浏览器）；
 //     ④ Dockerfile 不再装 apt chromium，但必须把 Chromium 运行时依赖显式补齐，
 //        并在构建期用 ldd 自检，缺库直接让构建失败；
-//     ⑤ 向导 Web 版删掉指纹浏览器下载页（5 步），桌面版保留（6 步）。
+//     ⑤ 向导 Web 版删掉环境拟真浏览器下载页（5 步），桌面版保留（6 步）。
 const fpbSrc = fs.readFileSync(path.join(ROOT, "src", "fingerprint-browser.js"), "utf8");
 // dockerfileSrc / composeSrc / wizardSrc 已在本文件上方声明，这里直接复用
 const fpPanelSrc = fs.readFileSync(
@@ -2236,7 +2236,7 @@ const fpPanelSrc = fs.readFileSync(
 );
 
 checkTrue(
-  "指纹浏览器支持镜像预装目录（MS_REWARDS_FINGERPRINT_PREINSTALLED），且优先于运行时下载目录",
+  "环境拟真浏览器支持镜像预装目录（MS_REWARDS_FINGERPRINT_PREINSTALLED），且优先于运行时下载目录",
   /function preinstalledDir\(\)/.test(fpbSrc) &&
     /MS_REWARDS_FINGERPRINT_PREINSTALLED/.test(fpbSrc) &&
     /const pre = preinstalledDir\(\);\s*\n\s*if \(pre\) \{[\s\S]{0,200}?return exe;[\s\S]{0,80}?\n\s*return findExecutable\(installDir\(\)\);/.test(
@@ -2251,22 +2251,22 @@ checkTrue(
 );
 checkTrue(
   "预装存在时拒绝运行时安装与卸载（避免白下一份、也避免删除镜像层）",
-  /指纹浏览器已由镜像内置预装，无需下载/.test(fpbSrc) &&
-    /指纹浏览器由镜像内置预装，无法在容器内删除/.test(fpbSrc) &&
+  /环境拟真浏览器已由镜像内置预装，无需下载/.test(fpbSrc) &&
+    /环境拟真浏览器由镜像内置预装，无法在容器内删除/.test(fpbSrc) &&
     /if \(preinstalledDir\(\)\) \{[\s\S]{0,120}?return \{ ok: false/.test(fpbSrc),
   "预装仍允许下载/删除 → 用户点一下就在 /data 卷里堆 400MB 副本，且卸载给假成功"
 );
 checkTrue(
-  "预装存在时强制启用指纹浏览器（容器内它是唯一浏览器，配置 enable=false 也要用）",
+  "预装存在时强制启用环境拟真浏览器（容器内它是唯一浏览器，配置 enable=false 也要用）",
   /const forced = !!fpBrowser\.preinstalledDir\(\)/.test(fs.readFileSync(path.join(ROOT, "src", "browser.js"), "utf8")) &&
     /if \(forced \|\| cfg\.enable\)/.test(fs.readFileSync(path.join(ROOT, "src", "browser.js"), "utf8")) &&
     /cfg: \{ \.\.\.cfg, enable: true \}/.test(fs.readFileSync(path.join(ROOT, "src", "browser.js"), "utf8")),
   "不强制启用 → Docker 默认配置（enable=false）会一路走到「未检测到可用的浏览器」，任务全挂"
 );
 checkTrue(
-  "Dockerfile 不再安装 apt chromium（普通 Chromium 的 Client Hints 改不动，会留指纹矛盾）",
+  "Dockerfile 不再安装 apt chromium（普通 Chromium 的 Client Hints 改不动，会留环境特征矛盾）",
   !/\n\s{8}chromium \\\n/.test(dockerfileSrc),
-  "apt chromium 回归 → 镜像里同时存在两种浏览器，且普通 Chromium 会产出 UA/CH 自相矛盾的指纹"
+  "apt chromium 回归 → 镜像里同时存在两种浏览器，且普通 Chromium 会产出 UA/CH 自相矛盾的环境特征"
 );
 checkTrue(
   "Dockerfile 显式补齐 Chromium 运行时依赖（移除 apt chromium 后这些库不再被顺带装上）",
@@ -2274,10 +2274,10 @@ checkTrue(
     /libgtk-3-0 \\/.test(dockerfileSrc) &&
     /libatk-bridge2.0-0 \\/.test(dockerfileSrc) &&
     /libasound2 \\/.test(dockerfileSrc),
-  "缺运行库 → 指纹浏览器一启动就报 libnss3.so 找不到，容器里什么都跑不了"
+  "缺运行库 → 环境拟真浏览器一启动就报 libnss3.so 找不到，容器里什么都跑不了"
 );
 checkTrue(
-  "Dockerfile 预装指纹浏览器并用 ldd 自检（缺库直接构建失败）+ 写 version.txt",
+  "Dockerfile 预装环境拟真浏览器并用 ldd 自检（缺库直接构建失败）+ 写 version.txt",
   /MS_REWARDS_FINGERPRINT_PREINSTALLED=\/opt\/fingerprint-chromium/.test(dockerfileSrc) &&
     /tar -xf \/tmp\/fpcb\.tar\.xz -C \/opt\/fingerprint-chromium/.test(dockerfileSrc) &&
     /ldd "\$CHROME_BIN" \| grep -q "not found"/.test(dockerfileSrc) &&
@@ -2300,18 +2300,18 @@ checkTrue(
   new RegExp(`image: ghcr\\.io/[^:\\s]+:${String(pkgRaw.version).replace(/\./g, "\\.")}`).test(composeSrc) &&
     !/MS_REWARDS_CHROMIUM_FALLBACK/.test(composeSrc) &&
     !/PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH/.test(composeSrc),
-  "compose 仍留兜底变量 → 容器会优先用兜底 Chromium，指纹浏览器永远轮不到"
+  "compose 仍留兜底变量 → 容器会优先用兜底 Chromium，环境拟真浏览器永远轮不到"
 );
 checkTrue(
-  "向导 Web 版删掉指纹浏览器页（5 步），桌面版保留（6 步）",
+  "向导 Web 版删掉环境拟真浏览器页（5 步），桌面版保留（6 步）",
   /const STEPS = IS_WEB/.test(wizardSrc) &&
     /!IS_WEB && page === 5 && <PageFingerprint/.test(wizardSrc) &&
     !/\{page === 5 && <PageFingerprint/.test(wizardSrc) &&
     /IS_WEB \? "开始使用 ✓" : "下一步 →"/.test(wizardSrc),
-  "Web 版仍渲染指纹页 → 用户在 Docker 里被要求下载一个已经预装好的浏览器"
+  "Web 版仍渲染拟真页 → 用户在 Docker 里被要求下载一个已经预装好的浏览器"
 );
 checkTrue(
-  "指纹浏览器面板：预装时隐藏下载/更新/删除按钮，并显式禁用「启用」开关",
+  "环境拟真浏览器面板：预装时隐藏下载/更新/删除按钮，并显式禁用「启用」开关",
   /!st\?\.preinstalled && \(/.test(fpPanelSrc) &&
     /st\?\.preinstalled \? \(/.test(fpPanelSrc) &&
     /checked=\{st\?\.preinstalled \? true : cfg\.enable\}/.test(fpPanelSrc) &&

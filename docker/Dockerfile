@@ -72,14 +72,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
     # （GL_VENDOR = Disabled / BindToCurrentSequence failed）。⚠️ 不要用 --disable-gpu。
     MS_REWARDS_CHROMIUM_ARGS=--no-sandbox,--disable-dev-shm-usage,--disable-gpu-sandbox
 
-# 浏览器选型（2026-09 起 Docker 版改为「指纹浏览器独占」）：
+# 浏览器选型（2026-09 起 Docker 版改为「环境拟真浏览器独占」）：
 #   - 镜像内预装 fingerprint-chromium（下一段下载解压到 MS_REWARDS_FINGERPRINT_PREINSTALLED），
 #     运行时直接可用、不再发起运行时下载；
 #   - 不再安装 apt Chromium：普通 Chromium 的 sec-ch-ua / Client Hints 改不动，
-#     会留下「UA 自称 Edge / CH 说 Chromium」的自相矛盾指纹。指纹浏览器从根上同源生成，
-#     因此 Docker 版默认、且只用指纹浏览器。
-#   - --no-sandbox 仍必须传给指纹浏览器：容器内以 node(非 root) 运行。
-#     extraChromiumArgs 对指纹浏览器同样生效（见 src/browser.js）。
+#     会留下「UA 自称 Edge / CH 说 Chromium」的自相矛盾环境特征。环境拟真浏览器从根上同源生成，
+#     因此 Docker 版默认、且只用环境拟真浏览器。
+#   - --no-sandbox 仍必须传给环境拟真浏览器：容器内以 node(非 root) 运行。
+#     extraChromiumArgs 对环境拟真浏览器同样生效（见 src/browser.js）。
 
 # ① 先装 CA 证书（用镜像自带的 http 官方源）
 #    坑：node:*-slim 不带 ca-certificates，直接换 https 国内源会报
@@ -91,19 +91,19 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates
 
-# ② 换成国内源后装图形栈依赖 + 时区 + 中文字体（不再装 apt chromium，指纹浏览器在下一段预装）
+# ② 换成国内源后装图形栈依赖 + 时区 + 中文字体（不再装 apt chromium，环境拟真浏览器在下一段预装）
 #    deb822（bookworm 默认）与传统 sources.list 都试一遍。
 #    sed 在 http://deb.debian.org/debian 上做前缀替换，因此 `debian-security` 会一并
 #    变成 `<镜像>/debian-security`——这是安全更新包的来源，只换主仓不换 security 是
 #    常见的半吊子换源，务必一起换。
 #
-#    xz-utils 是给**指纹浏览器预装**用的：Linux 版资产是 .tar.xz，而 GNU tar 解 xz
+#    xz-utils 是给**环境拟真浏览器预装**用的：Linux 版资产是 .tar.xz，而 GNU tar 解 xz
 #    必须调用外部 `xz` 程序（不链接 liblzma）。实测不装它时 `tar -xf` 直接
 #    exit 127「xz: not found」。体积只有几百 KB。
 #
 #    后半段的 libnss3 / libgtk-3-0 等是 **Chromium 运行时依赖**：这些库原本是
 #    `apt install chromium` 顺带拉进来的。既然 Docker 版已改为「不装 apt chromium」，
-#    就必须显式列出，否则指纹浏览器一启动就报 libnss3.so / libatk-1.0.so 找不到。
+#    就必须显式列出，否则环境拟真浏览器一启动就报 libnss3.so / libatk-1.0.so 找不到。
 #    改动这段后务必在容器里跑一次 `ldd <chrome>` 确认 no "not found"（见 README）。
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
@@ -195,7 +195,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     echo $TZ > /etc/timezone; \
     xz --version | head -1
 
-# Ⓟ 预装指纹浏览器（fingerprint-chromium，Docker 版默认且唯一浏览器）
+# Ⓟ 预装环境拟真浏览器（fingerprint-chromium，Docker 版默认且唯一浏览器）
 #   - 下载 Linux tar.xz（约 134.7MB）解压到 MS_REWARDS_FINGERPRINT_PREINSTALLED。
 #   - 镜像内固定路径、不进 /data 挂载点，容器起来即就绪，运行时不再下载。
 #   - 下载源用 gh-proxy 镜像链；上游固定版本与 src/fingerprint-browser.js 的
@@ -221,11 +221,11 @@ RUN set -eux; \
     chmod +x "$CHROME_BIN"; \
     printf '%s\n' "$FPCB_VERSION" > /opt/fingerprint-chromium/version.txt; \
     if ldd "$CHROME_BIN" | grep -q "not found"; then \
-      echo "❌ 指纹浏览器缺少运行库，上面 not found 的即为缺失项，请补进本文件的 apt 清单"; \
+      echo "❌ 环境拟真浏览器缺少运行库，上面 not found 的即为缺失项，请补进本文件的 apt 清单"; \
       ldd "$CHROME_BIN" | grep "not found"; \
       exit 1; \
     fi; \
-    echo "✅ 指纹浏览器已预装且无缺失运行库: $CHROME_BIN"; \
+    echo "✅ 环境拟真浏览器已预装且无缺失运行库: $CHROME_BIN"; \
     "$CHROME_BIN" --no-sandbox --version || echo "（构建期跳过版本号输出，运行时会自检）"
 
 # ⑥ KasmVNC（核心图形栈）

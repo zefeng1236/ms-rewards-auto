@@ -12,7 +12,7 @@
 #   首次访问进入安装向导 → 设置保险库密码 → 保存恢复密钥到浏览器
 #   之后每次打开浏览器点「使用本机保存的数字密钥登录」即可
 #
-# 浏览器说明：镜像内已预装指纹浏览器（/opt/fingerprint-chromium），
+# 浏览器说明：镜像内已预装环境拟真浏览器（/opt/fingerprint-chromium），
 #   Docker 版默认且只用它，运行时不会再去下载 134MB。
 #
 # 国内加速（可选）：
@@ -62,9 +62,9 @@ services:
       #   MS_REWARDS_VAULT_KEY: ""
 
       # ---------- 浏览器 ----------
-      # Docker 版默认且只用「指纹浏览器」：已在镜像内预装（/opt/fingerprint-chromium），
+      # Docker 版默认且只用「环境拟真浏览器」：已在镜像内预装（/opt/fingerprint-chromium），
       # 运行时不再下载。容器内非 root 运行，必须带 --no-sandbox。
-      # （普通 Chromium 已从镜像移除——sec-ch-ua / Client Hints 改不动，留指纹矛盾，见 Dockerfile）
+      # （普通 Chromium 已从镜像移除——sec-ch-ua / Client Hints 改不动，留环境特征矛盾，见 Dockerfile）
       # --disable-gpu-sandbox 是必需的：容器里 GPU 进程默认起不来，WebGL 会整个不可用
       # （GL_VENDOR = Disabled / BindToCurrentSequence failed），而"桌面浏览器没有 WebGL"
       # 是最顶级的机器人特征。⚠️ 千万不要换成 --disable-gpu，那会让 WebGL 永久不可用。

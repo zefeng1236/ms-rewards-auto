@@ -1,5 +1,5 @@
 /**
- * 指纹浏览器（可选增强）
+ * 环境拟真浏览器（可选增强）
  *
  * 用的是 fingerprint-chromium（adryfish，基于 Ungoogled Chromium 的 patch 版，BSD-3）：
  *   https://github.com/adryfish/fingerprint-chromium
@@ -8,19 +8,19 @@
  *   用 Playwright 驱动普通 Chromium 时，`sec-ch-ua`（Client Hints）请求头**改不动**。
  *   setExtraHTTPHeaders 和 page.route().continue({headers}) 两种方式都试过，服务端
  *   收到的始终是浏览器如实生成的品牌值。而 JS 层的 UA 我们能改 —— 于是就会出现
- *   「UA 自称 Edge / CH 说 Chromium」这种永久自相矛盾的指纹，比不伪装更可疑。
+ *   「UA 自称 Edge / CH 说 Chromium」这种永久自相矛盾的环境特征，比不做拟真更可疑。
  *
  *   这个浏览器是 patch 源码的，UA / userAgentData / Client Hints 三者同源生成，
  *   从根上解决了应用层够不到的那一层。
  *
- * 另外它用 `--fingerprint=<32 位整数>` 做**种子化**指纹：同一颗种子恒定产出同一套指纹，
+ * 另外它用 `--fingerprint=<32 位整数>` 做**种子化**环境特征：同一颗种子恒定产出同一套环境特征，
  *   不同种子互不相关。这正好避开了「Canvas 随机噪声」的坑 —— 随机噪声多次采样比对就露，
  *   而种子化等价于「一个真人长期用同一台机器」。本项目按账户 ID 派生种子。
  *
  * ⚠️ 三个必须知道的约束：
  *   1. 体积：Windows ZIP 约 181MB（解压 400MB+），**不能打进安装包**，只能运行时按需下载。
- *   2. 与 src/stealth.js 的补丁会打架 —— 两边都改 UA/插件/CPU 核数，叠加出的就是矛盾指纹。
- *      因此指纹模式下 stealth.js 会跳过自己那部分（见 browser.js 的 __MSR_FP 守卫）。
+ *   2. 与 src/stealth.js 的补丁会打架 —— 两边都改 UA/插件/CPU 核数，叠加出的就是矛盾环境特征。
+ *      因此拟真模式下 stealth.js 会跳过自己那部分（见 browser.js 的 __MSR_FP 守卫）。
  *   3. headless 下它只把 UA 的 HeadlessChrome 改成 Chrome，其余 headless 特征不变
  *      （README 原话 "use with caution"）。它能修的是 UA/CH/插件/CPU/内存/字体/Canvas，
  *      修不掉窗口内外框差、语音列表这类 headless 固有属性。
@@ -40,7 +40,7 @@ const logger = require("./logger");
 const sp = require("./storage-path");
 
 const REPO = "adryfish/fingerprint-chromium";
-/** 固定版本：指纹浏览器的发布节奏与本项目不同步，钉死避免用户环境出现不可预期变化 */
+/** 固定版本：环境拟真浏览器的发布节奏与本项目不同步，钉死避免用户环境出现不可预期变化 */
 const PINNED_VERSION = "148.0.7778.215";
 
 /**
@@ -292,7 +292,7 @@ function installDir() {
  * 桌面版是「运行时按需下载」到 storage/；Docker 版已经改成**镜像内预装**——
  * Dockerfile 在构建时把 fingerprint-chromium 的 tar.xz 解压进镜像固定路径
  * （如 /opt/fingerprint-chromium），运行时用 MS_REWARDS_FINGERPRINT_PREINSTALLED
- * 指向它。这样容器起来时指纹浏览器就是就绪的，不再发起 134MB 的运行时下载。
+ * 指向它。这样容器起来时环境拟真浏览器就是就绪的，不再发起 134MB 的运行时下载。
  *
  * 预装目录必须放在镜像内（不放 /data 挂载点，那个会被 volume 覆盖）。
  */
@@ -485,9 +485,9 @@ async function status() {
 /* ---------------- 种子 ---------------- */
 
 /**
- * 由账户标识派生 32 位指纹种子（FNV-1a）。
+ * 由账户标识派生 32 位拟真种子（FNV-1a）。
  *
- * 为什么要跟账户绑定而不是全局随机：同一个账户每次跑都必须是同一套指纹，
+ * 为什么要跟账户绑定而不是全局随机：同一个账户每次跑都必须是同一套环境特征，
  * 否则相当于「同一个人每天换一台电脑」；不同账户之间又要尽量不同，避免
  * 多账户共用一台机器时被聚成一类。种子化正好同时满足这两点。
  * @returns {number} 0 ~ 2^32-1
@@ -549,7 +549,7 @@ async function probeTotal(rawUrl, version, mirror) {
         });
         if (!res.ok) continue;
         const n = parseInt(res.headers.get("content-length") || "0", 10);
-        // 必须 >= MIN_ASSET_BYTES 才信：指纹浏览器包至少 181MB，镜像对 HEAD 返回
+        // 必须 >= MIN_ASSET_BYTES 才信：环境拟真浏览器包至少 181MB，镜像对 HEAD 返回
         // 0 / 几 KB 的异常值不能当权威总长（否则 knownTotal 失真，校验基准就错了）
         if (n >= MIN_ASSET_BYTES) return n;
       } catch {}
@@ -813,7 +813,7 @@ async function downloadAsset(version, onProgress, mirror, signal) {
   throwIfAborted(signal);
   const asset = assetName(version);
   const raw = releaseUrl(version);
-  if (!asset || !raw) throw new Error(`当前平台（${process.platform}）不提供指纹浏览器`);
+  if (!asset || !raw) throw new Error(`当前平台（${process.platform}）不提供环境拟真浏览器`);
   const mirrors = await resolveMirrors(mirror);
 
   const dir = downloadDir();
@@ -824,10 +824,10 @@ async function downloadAsset(version, onProgress, mirror, signal) {
   const meta = await probeTotal(raw, version, mirror);
   const total = meta.total;
   if (total > 0) {
-    logger.info(`指纹浏览器包大小 ${fmtSize(total)}（HEAD / Releases API 探测）`);
+    logger.info(`环境拟真浏览器包大小 ${fmtSize(total)}（HEAD / Releases API 探测）`);
   }
   if (meta.sha256) {
-    logger.info(`指纹浏览器官方 sha256 = ${meta.sha256}（Releases API digest）`);
+    logger.info(`环境拟真浏览器官方 sha256 = ${meta.sha256}（Releases API digest）`);
   }
 
   let lastErr = null;
@@ -867,7 +867,7 @@ async function downloadAsset(version, onProgress, mirror, signal) {
     } catch (e) {
       if (e && e.canceled) throw e;
       lastErr = e;
-      logger.warn(`指纹浏览器下载失败（${label}）: ${e.message}`);
+      logger.warn(`环境拟真浏览器下载失败（${label}）: ${e.message}`);
       // 两种情况本地分片都不可信，必须清掉从头再来：
       //   ① 完整性校验失败（镜像提前断流，分片是残缺的）
       //   ② 体积异常的小文件（镜像返回了 HTML 错误页），留着会让续传一路错下去
@@ -966,15 +966,15 @@ async function install(opts) {
 
   throwIfAborted(signal);
   if (!isSupported()) {
-    return { ok: false, error: `当前平台（${process.platform}）暂不支持指纹浏览器` };
+    return { ok: false, error: `当前平台（${process.platform}）暂不支持环境拟真浏览器` };
   }
   // 镜像内置（Docker）：浏览器由镜像提供，运行时再下一份既无必要，又会在 /data 卷里
   // 堆一份 400MB+ 的副本（而且预装优先级更高，下完也用不上）。直接拒绝并说明原因。
   if (preinstalledDir()) {
-    return { ok: false, error: "指纹浏览器已由镜像内置预装，无需下载；如需更换版本请重建镜像" };
+    return { ok: false, error: "环境拟真浏览器已由镜像内置预装，无需下载；如需更换版本请重建镜像" };
   }
   if (!o.force && installedVersion() === version && isReady()) {
-    report({ message: `指纹浏览器已是 ${version}，跳过下载`, pct: 100 });
+    report({ message: `环境拟真浏览器已是 ${version}，跳过下载`, pct: 100 });
     return { ok: true, skipped: true, version };
   }
   if (o.force) {
@@ -993,7 +993,7 @@ async function install(opts) {
   // 那才是「配置写错了也不该卡住下载」的安全兜底。
   const mirrorKey = String(o.mirror == null ? "" : o.mirror).trim() || DEFAULT_MIRROR;
   const mirrorLabel = mirrorKey === "auto" ? "自动测速（选最快节点）" : `指定镜像 ${mirrorKey}`;
-  report({ message: `准备下载指纹浏览器 ${version}（约 181MB，${mirrorLabel}）`, pct: 0 });
+  report({ message: `准备下载环境拟真浏览器 ${version}（约 181MB，${mirrorLabel}）`, pct: 0 });
   let file;
   try {
     const dl = await downloadAsset(version, (p) => report(p), mirrorKey, signal);
@@ -1035,9 +1035,9 @@ async function install(opts) {
 /** 卸载（删除解压目录与下载缓存） */
 function uninstall() {
   // 镜像内置（Docker）：预装目录在镜像层里，删不掉也不该删 —— 删了容器重建又回来，
-  // 而且会让「默认使用指纹浏览器」直接落空。明确拒绝，别给假成功。
+  // 而且会让「默认使用环境拟真浏览器」直接落空。明确拒绝，别给假成功。
   if (preinstalledDir()) {
-    return { ok: false, error: "指纹浏览器由镜像内置预装，无法在容器内删除；如需更替请重建镜像" };
+    return { ok: false, error: "环境拟真浏览器由镜像内置预装，无法在容器内删除；如需更替请重建镜像" };
   }
   for (const d of [installDir(), downloadDir()]) {
     try {
@@ -1099,11 +1099,11 @@ async function checkUpdate() {
 /* ---------------- 启动参数 ---------------- */
 
 /**
- * 指纹浏览器的启动参数。
+ * 环境拟真浏览器的启动参数。
  *
  * 注意**不要**在这里设 UA：UA 必须由 --fingerprint 的种子统一生成，
  * 再叠加一层我们自己的 UA 就会退化成「应用层硬改」那条死路（CH 对不上）。
- * GPU 指纹上游只支持 Linux，Windows 上仍由 stealth.js 的 WebGL 补丁兜底。
+ * GPU 环境特征上游只支持 Linux，Windows 上仍由 stealth.js 的 WebGL 补丁兜底。
  */
 function buildArgs(o) {
   const opts = o || {};

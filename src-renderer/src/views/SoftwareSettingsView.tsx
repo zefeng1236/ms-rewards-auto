@@ -107,13 +107,13 @@ export function SoftwareSettingsView({
         </div>
       )}
 
-      {/* 分类 ③：浏览器（指纹浏览器来源 / 下载 / 更新 / 删除） */}
+      {/* 分类 ③：浏览器（环境拟真浏览器来源 / 下载 / 更新 / 删除） */}
       <div className="sec sw-sec" id="swsec-browser">
         <div className="sec-title">浏览器</div>
         <div className="hint" style={{ marginBottom: 8 }}>
           {IS_WEB
-            ? "用于登录授权与页面自动化的浏览器来源：Docker 版镜像内已预装指纹浏览器，且容器里只有它可用"
-            : "用于登录授权与页面自动化的浏览器来源，默认启用指纹浏览器（未安装时自动回落普通 Chromium）"}
+            ? "用于登录授权与页面自动化的浏览器来源：Docker 版镜像内已预装环境拟真浏览器，且容器里只有它可用"
+            : "用于登录授权与页面自动化的浏览器来源，默认启用环境拟真浏览器（未安装时自动回落普通 Chromium）"}
         </div>
         <FingerprintBrowserPanel />
       </div>

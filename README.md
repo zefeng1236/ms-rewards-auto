@@ -10,7 +10,7 @@
 
 - **多账户隔离**：每个账户拥有独立的 `storage/accounts/<id>/` 目录（配置、登录态、Cookie、浏览器 profile），互不干扰
 - **初始干净浏览器**：默认用 Playwright 自带的 Chromium（与系统 Edge/Chrome 完全隔离），不继承系统浏览器的任何数据；
-  也可在「软件设置 → 浏览器」换成**指纹浏览器**（可选增强，patch 版 Chromium，UA / Client Hints 同源生成，按需单独下载）
+  也可在「软件设置 → 浏览器」换成**环境拟真浏览器**（可选增强，patch 版 Chromium，UA / Client Hints 同源生成，按需单独下载）
 - **液态玻璃 GUI**：基于 React + TypeScript 重写的全新界面，毛玻璃质感、壁纸背景、深浅主题自适应
 - **首次启动向导**：欢迎页（多语言）→ 协议阅读与勾选 → 风险告知 → 个性化初始设置，四步引导完成初始配置
 - **三层配置模型**：全局设置 → 账户覆盖（可选），账户可一键切换「遵循全局 / 独立设置」
@@ -92,9 +92,11 @@ storage/
 ├── state.json                  # 全局状态
 └── accounts/<账户id>/
     ├── config.json             # 该账户的覆盖值（useGlobal=true 时仅含此字段）
-    ├── state.json             # 该账户的 Cookie / token / 任务进度
-    └── profile/               # 该账户独立的浏览器会话数据
+    └── state.json             # 该账户的 Cookie / token / 任务进度
 ```
+
+> 浏览器会话使用临时 profile：每次任务在 `storage/tmp/` 下创建、结束即删，
+> 登录态只以密文保存在账户的 `state.json`（加密保险库启用后）。
 
 ## 安装使用（推荐：下载安装包）
 

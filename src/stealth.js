@@ -2,7 +2,7 @@
  * 浏览器「去自动化」补丁
  *
  * 背景：本项目的登录授权 / 每周领取要用 Playwright 的 Chromium（headless）打开真实页面。
- * headless Chromium 的默认指纹跟正常浏览器差得很远 —— UA 里带 `HeadlessChrome`、
+ * headless Chromium 的默认环境特征跟正常浏览器差得很远 —— UA 里带 `HeadlessChrome`、
  * `navigator.webdriver === true`、`window.chrome` 不存在、plugins 列表为空，
  * 这些都是站点用来判定「这是自动化程序」的一线指标。
  *
@@ -11,10 +11,10 @@
  *   https://scriptcat.org/zh-CN/users/211564
  *   https://scriptcat.org/zh-CN/users/187483
  *   https://scriptcat.org/zh-CN/users/207134
- * 它们是浏览器里的用户脚本，天然跑在真实用户的真实浏览器上，所以本身不需要做这些伪装；
+ * 它们是浏览器里的用户脚本，天然跑在真实用户的真实浏览器上，所以本身不需要做这些拟真；
  * 而我们是在独立 headless Chromium 里跑同一套流程，才需要自己把「看起来像人」补回去。
  *
- * 这里只做伪装层面的事：不涉及任何登录凭据的绕过，只让自动化环境与普通浏览器难区分。
+ * 这里只做拟真层面的事：不涉及任何登录凭据的绕过，只让自动化环境与普通浏览器难区分。
  */
 
 const rewards = require("./rewards");
@@ -42,9 +42,9 @@ const EXTRA_HTTP_HEADERS = {
  */
 const STEALTH_INIT = `(() => {
   const safe = (fn) => { try { fn(); } catch (e) {} };
-  // 指纹浏览器（src/fingerprint-browser.js）模式下为 true。
+  // 环境拟真浏览器（src/fingerprint-browser.js）模式下为 true。
   // 它自己在源码层生成 languages / plugins / CPU 核数 / platform，
-  // 我们再盖一层就是两套矛盾的指纹，所以这些维度直接让位。
+  // 我们再盖一层就是两套矛盾的环境特征，所以这些维度直接让位。
   const FP = !!window.__MSR_FP;
 
   // ① navigator.webdriver：自动化环境下恒为 true，最经典的一线特征
@@ -67,7 +67,7 @@ const STEALTH_INIT = `(() => {
 
   // ③ 语言 / 插件 / MIME：headless 环境这些几乎都是空的
   safe(() => {
-    if (FP) return; // 指纹浏览器自有固定插件表，且 --accept-lang 已生效
+    if (FP) return; // 环境拟真浏览器自有固定插件表，且 --accept-lang 已生效
     const langs = ["zh-CN", "zh", "en-US", "en"];
     Object.defineProperty(navigator, "languages", { get: () => langs, configurable: true });
     Object.defineProperty(navigator, "language", { get: () => "zh-CN", configurable: true });

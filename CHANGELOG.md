@@ -270,23 +270,23 @@
 
 发布日期：2026-09-26 · Docker 版镜像 `ghcr.io/zefeng1236/ms-rewards-auto:0.13.9`
 
-修复 Docker 版四个实际问题（证书报错 / 登录无法终止 / 登录设备显示 Linux / 过不了 bot 检测），
-并把「反检测过不过」从口头结论变成可复现的验收项。
+修复 Docker 版四个实际问题（证书报错 / 登录无法终止 / 登录设备显示 Linux / 过不了 环境一致性检测），
+并把「环境拟真过不过」从口头结论变成可复现的验收项。
 
 ### 修复
 
-- **Docker 版 WebGL 全废（反检测上的致命伤）**：容器里 GPU 进程默认起不来，
+- **Docker 版 WebGL 全废（环境拟真上的致命伤）**：容器里 GPU 进程默认起不来，
   `GL_VENDOR = Disabled` / `BindToCurrentSequence failed`，页面拿不到任何 WebGL 上下文 ——
   「桌面浏览器没有 WebGL」是最顶级的机器人特征。补上 `--disable-gpu-sandbox` 后 GPU 进程
-  正常启动，WebGL 恢复，且指纹浏览器**如实上报种子生成的 Windows GPU**
+  正常启动，WebGL 恢复，且环境拟真浏览器**如实上报种子生成的 Windows GPU**
   （`ANGLE (Intel, Intel(R) Arc(TM) Graphics ... D3D11)`）。同时从镜像里移除有害的
   `--disable-gpu`（它会让 WebGL 永久不可用）。
-- **指纹模式下不再注入任何 JS 补丁**：实测指纹浏览器原生的 `navigator.webdriver` 就是 `false`，
+- **拟真模式下不再注入任何 JS 补丁**：实测环境拟真浏览器原生的 `navigator.webdriver` 就是 `false`，
   且 getter 是 `[native code]`；旧补丁把 getter 写成箭头函数，`toString()` 出来是 `() => false`，
   等于主动自曝。更关键的是：Playwright 的 `addInitScript` 底层是 CDP 的
-  `Page.addScriptToEvaluateOnNewDocument`，**只要调用一次就会被 BrowserScan 的 Navigator 项
+  `Page.addScriptToEvaluateOnNewDocument`，**只要调用一次就会被 环境一致性检测站 的 Navigator 项
   识破** —— 对照实验里注入一句 `/* noop */` 注释，verdict 即从 Normal 掉到 Robot
-  （WebDriver / User-Agent / CDP 三项仍然全过）。所以指纹模式改为**零注入**，
+  （WebDriver / User-Agent / CDP 三项仍然全过）。所以拟真模式改为**零注入**，
   补丁只在回落普通 Chromium 时生效。
 - **对 `--disable-gpu` 显式告警**：用户自改 `MS_REWARDS_CHROMIUM_ARGS` 带上它时给出警告，
   避免一次误配把 WebGL 关死后无人察觉。
@@ -308,8 +308,8 @@
 
 | 检测项 | 修复前 | 修复后 |
 |---|---|---|
-| bot.sannysoft.com | 2 项失败（WebGL Vendor / Renderer = `Canvas has no webgl context`） | **0 项失败**（通过 31 项） |
-| BrowserScan bot-detection | **Robot**（Navigator 项判红） | **Normal**（四项全过） |
+| 环境一致性自检页 | 2 项失败（WebGL Vendor / Renderer = `Canvas has no webgl context`） | **0 项失败**（通过 31 项） |
+| 环境一致性检测 | **Robot**（Navigator 项判红） | **Normal**（四项全过） |
 | `navigator.webdriver` | `false`，但 getter 泄漏为 `() => false` | `false`，getter 为原生 `[native code]` |
 | WebGL 渲染器 | 上下文为 `null` | `ANGLE (Intel, Intel(R) Arc(TM) Graphics ... D3D11)` |
 
@@ -319,25 +319,25 @@
 
 发布日期：2026-09-25 · Docker 版镜像 `ghcr.io/zefeng1236/ms-rewards-auto:0.13.8`
 
-Docker 版改为「指纹浏览器独占 + 镜像预装」，并支持直接拉取预构建镜像。
+Docker 版改为「环境拟真浏览器独占 + 镜像预装」，并支持直接拉取预构建镜像。
 
 ### 变更
 
-- **Docker 版默认且只用指纹浏览器**：镜像里不再安装 apt Chromium。普通 Chromium 的
+- **Docker 版默认且只用环境拟真浏览器**：镜像里不再安装 apt Chromium。普通 Chromium 的
   `sec-ch-ua` / Client Hints 在应用层改不动，会留下「UA 自称 Edge、CH 说 Chromium」的
-  自相矛盾指纹；指纹浏览器由源码 patch 生成，三处同源。
-- **指纹浏览器改为镜像预装**：构建时把 `fingerprint-chromium` 的 Linux 资产（约 134.7MB）
+  自相矛盾环境特征；环境拟真浏览器由源码 patch 生成，三处同源。
+- **环境拟真浏览器改为镜像预装**：构建时把 `fingerprint-chromium` 的 Linux 资产（约 134.7MB）
   解压进 `/opt/fingerprint-chromium` 并用 `MS_REWARDS_FINGERPRINT_PREINSTALLED` 指向它。
   容器启动即就绪，运行时不再发起任何浏览器下载。
 - **补齐 Chromium 运行时依赖**：这些库原本是 `apt install chromium` 顺带装上的，
   移除 Chromium 后必须显式列出（`libnss3` / `libgtk-3-0` / `libatk-bridge2.0-0` 等），
-  否则指纹浏览器一启动就报 `libnss3.so: cannot open shared object file`。
+  否则环境拟真浏览器一启动就报 `libnss3.so: cannot open shared object file`。
   构建期用 `ldd` 自检，缺库直接让构建失败，不把问题留到用户现场。
-- **预装时强制启用指纹浏览器**：容器里没有第二个浏览器，配置里 `enable=false`
-  （默认值）也必须走指纹浏览器，否则会一路走到「未检测到可用的浏览器」把任务打断。
-- **向导 Web 版删除指纹浏览器下载页**：`IS_WEB` 时向导为 5 步（末页「个性化」即完成），
+- **预装时强制启用环境拟真浏览器**：容器里没有第二个浏览器，配置里 `enable=false`
+  （默认值）也必须走环境拟真浏览器，否则会一路走到「未检测到可用的浏览器」把任务打断。
+- **向导 Web 版删除环境拟真浏览器下载页**：`IS_WEB` 时向导为 5 步（末页「个性化」即完成），
   桌面版仍为 6 步，保留可选增强入口。
-- **设置页指纹面板适配预装形态**：标签显示「● 镜像内置」，隐藏「下载/重新下载/删除」
+- **设置页环境特征面板适配预装形态**：标签显示「● 镜像内置」，隐藏「下载/重新下载/删除」
   与下载镜像源下拉，并把「启用」开关置为强制开启。预装状态下后端会拒绝安装与卸载
   （避免白下 134MB，也避免删除镜像层给假成功）。
 - **支持 `docker pull` 直接拉取**：compose 的 `image` 指向
@@ -349,7 +349,7 @@ Docker 版改为「指纹浏览器独占 + 镜像预装」，并支持直接拉�
 
 - tsc 0 错；selfcheck 392+ 全绿（新增 11 条守卫，含反例验证）；
   打桩验证 18/18（预装探测、状态、拒绝安装/卸载、浏览器来源强制分支）
-- Docker 镜像在服务器重建，容器内 `ldd` 无缺失库、指纹浏览器可执行，
+- Docker 镜像在服务器重建，容器内 `ldd` 无缺失库、环境拟真浏览器可执行，
   health 返回 `version:0.13.8`
 
 ## 0.13.7
@@ -368,7 +368,7 @@ Docker 版改为「指纹浏览器独占 + 镜像预装」，并支持直接拉�
 
 ### Bing 未自动登录时模拟点登录按钮兜底
 
-- 在 0.13.5 的静默 SSO 之上再加一层「真人式」兜底：静默授权在部分账号会卡在「选择账户 / 隐私政策确认 / 需点『是』继续」等中间态。本版检测到静默 SSO 没补上 `_U` 票据后，自动去 Bing 首页点击右上角「登录」按钮，进入微软登录流程后自动点确认主按钮 / 选择已登录账户，直到真正补齐 Bing 登录态。
+- 在 0.13.5 的静默 SSO 之上再加一层「真人式」兜底：静默授权在部分账号会卡在「选择账户 / 隐私政策确认 / 需点『是』继续」等中间态。本版检测到静默 SSO 没补上 `_U` 票据后，自动去 Bing 首页点击右上角「登录」按钮，进入MS登录流程后自动点确认主按钮 / 选择已登录账户，直到真正补齐 Bing 登录态。
 - 两条同步路径（定时同步 Cookie 与授权登录后的会话抓取）都接入了这层兜底，无需用户操作。
 
 ## 0.13.5
@@ -377,8 +377,8 @@ Docker 版改为「指纹浏览器独占 + 镜像预装」，并支持直接拉�
 
 ### 修复部分用户 Bing 不自动登录
 
-- **根因**：登录/同步后只把「微软账号在线」（login.live.com 的 MSA 票据）当成已登录，但 Bing 侧的 `_U` 票据**只有走过 Bing 自己的登录入口才会下发**——仅访问 bing 首页不触发 SSO。部分用户的会话因此一直缺 `_U`：Bing 首页显示「登录」，积分页被重定向到登录页，搜索不计分。
-- **登录态分层判定**：`_U` / `.MSA.Auth` 等 Bing 侧票据才算已登录；ESTSAUTH / WLSSC 等 MSA 票据只说明微软账号在线，不再误判。
+- **根因**：登录/同步后只把「MS账号在线」（login.live.com 的 MSA 票据）当成已登录，但 Bing 侧的 `_U` 票据**只有走过 Bing 自己的登录入口才会下发**——仅访问 bing 首页不触发 SSO。部分用户的会话因此一直缺 `_U`：Bing 首页显示「登录」，积分页被重定向到登录页，搜索不计分。
+- **登录态分层判定**：`_U` / `.MSA.Auth` 等 Bing 侧票据才算已登录；ESTSAUTH / WLSSC 等 MSA 票据只说明MS账号在线，不再误判。
 - **静默 SSO 自动补票**：同步 Cookie 与交互登录两条路径上，检测到「MSA 在线但 Bing 缺 `_U`」时，自动走一次 `bing.com/fd/auth/signin` 静默授权补齐 Bing 登录态，无需重新授权登录。
 - **同步目标补全**：Cookie 同步与登录后的会话抓取现在会依次访问 cn.bing.com / www.bing.com / rewards.bing.com，避免 `_U` 只落在其中一个域上。
 
@@ -388,7 +388,7 @@ Docker 版改为「指纹浏览器独占 + 镜像预装」，并支持直接拉�
 
 ### 初始化向导统一为登录页同款玻璃卡片
 
-- **整条向导换装**：欢迎 → 协议 → 声明 → 加密 → 个性化 → 指纹 六个步骤全部改为与登录页一致的「深色玻璃卡片 + 流场背景」观感——半透明深底、背景模糊、顶部高光描边，流场粒子从磨砂后透出。
+- **整条向导换装**：欢迎 → 协议 → 声明 → 加密 → 个性化 → 环境特征 六个步骤全部改为与登录页一致的「深色玻璃卡片 + 流场背景」观感——半透明深底、背景模糊、顶部高光描边，流场粒子从磨砂后透出。
 - **卡片放大并统一尺寸**：由 760×620 放大到 960×700，各步骤严格同一尺寸；单页内容放不下时在卡片内部滚动，不再撑破卡片。
 - **Web 端观感归一**：移除 Web（Docker 版）向导铺满整个视口的旧覆盖，浏览器里与桌面端同为居中浮动玻璃卡片，与登录页一致。
 
@@ -483,11 +483,11 @@ Docker 版改为「指纹浏览器独占 + 镜像预装」，并支持直接拉�
 - 关闭登录浏览器前循环确认认证 Cookie / Rewards 页面特征已抓齐再退出，兼容「隐私政策更新弹窗」需用户点「是」后才下发票据的情况；Bing / Rewards 抓取延长等待（访问超时 60s + networkidle + 额外驻留）。
 - 首次添加账号后自动刷新数据时，账号级状态正确置为「正在运行」（此前只置全局 running，界面不显示）。
 
-### 指纹浏览器下载
+### 环境拟真浏览器下载
 
 - 默认镜像源改为 `cdn.gh-proxy.org`（实测多数国内机器更快、延迟更低），六处默认值同步一致。
 - 下载支持**取消**：设置页与向导的下载按钮在下载中变为「取消下载」，取消经 IPC/RPC → AbortController 全链路中断；首次运行的后台自动下载同样可被取消。
-- Chromium 与指纹浏览器进度按 `stage` 严格分流，二者并发下载时进度条不再互相串台；Chromium 进度只统计本次安装开始后新建的 ZIP。
+- Chromium 与环境拟真浏览器进度按 `stage` 严格分流，二者并发下载时进度条不再互相串台；Chromium 进度只统计本次安装开始后新建的 ZIP。
 
 ### 向导与启动
 
@@ -505,7 +505,7 @@ Docker 版改为「指纹浏览器独占 + 镜像预装」，并支持直接拉�
 
 0.10.0 的修复与增强版。
 
-### 修复指纹浏览器 chrome.dll 损坏导致的登录失败
+### 修复环境拟真浏览器 chrome.dll 损坏导致的登录失败
 
 用户侧报错 `browserType.launchPersistentContext: Target page, context or browser has been closed`，底层是 `Failed to load Chrome DLL ...: %1 不是有效的 Win32 应用程序 (0xC1)` —— chrome.dll 文件损坏（下载/解压不全，或被杀软隔离），chrome.exe 启动后加载自身 DLL 失败即退出。
 
@@ -519,11 +519,11 @@ Docker 版改为「指纹浏览器独占 + 镜像预装」，并支持直接拉�
 - 新增配置项 `browser.fingerprint.mirror`：`auto`（按顺序试全部）/ 6 个 gh-proxy 节点 / `direct`（直连 GitHub）。
 - 指定节点时只用该节点（不再掺入自动链）；`auto`、空值、未知值一律退回完整链，脏配置不会把下载卡死。
 - 镜像清单与**各节点实测延迟**由主进程下发（HEAD 测 RTT，2 分钟缓存），界面不再另写一份。
-- 设置页「指纹浏览器」面板与向导末页均可选择镜像源，改动即时写入全局配置。
+- 设置页「环境拟真浏览器」面板与向导末页均可选择镜像源，改动即时写入全局配置。
 
-### 向导新增第 6 页（指纹浏览器下载）
+### 向导新增第 6 页（环境拟真浏览器下载）
 
-- 页面顺序：欢迎 / 协议 / 声明 / 加密 / 个性化 / **指纹浏览器**。
+- 页面顺序：欢迎 / 协议 / 声明 / 加密 / 个性化 / **环境拟真浏览器**。
 - 顶部「跳过」复选框：勾选后下方内容整体置灰禁用，不下载直接放行。
 - 未跳过时提供**加速源下拉（带延迟标注）**与**「立即下载」**按钮，下载在后台执行、进度实时回推，完成前「开始使用」保持禁用。
 - 放行条件同源（页内算后上报页脚），平台不支持时强制放行。
@@ -538,9 +538,9 @@ Docker 版改为「指纹浏览器独占 + 镜像预装」，并支持直接拉�
 
 - 设置页按钮改为**强制重装**（就绪态传 `force`），并清空解压目录与下载缓存，不再误判「已是最新版本」而跳过、也不再续传可能已坏的分片。
 
-### 侧边栏指纹浏览器状态
+### 侧边栏环境拟真浏览器状态
 
-- Chromium 徽章下方新增指纹浏览器徽章：`● 指纹浏览器就绪` / `○ 未安装` / 下载中显示百分比与进度条。
+- Chromium 徽章下方新增环境拟真浏览器徽章：`● 环境拟真浏览器就绪` / `○ 未安装` / 下载中显示百分比与进度条。
 - 两种安装进度共用一条事件通道，按 `stage` 严格分流，不会相互串台。
 
 ### 验证
@@ -557,7 +557,7 @@ Docker 版改为「指纹浏览器独占 + 镜像预装」，并支持直接拉�
 正式版包含的主要变更：
 
 - **设置页拆分**：原「全局设置」改名「任务全局设置」（图标换任务书），只留与积分任务有关的配置；新增「软件设置」标签页，按**个性化 / 启动与托盘 / 浏览器 / 安全**四类分区。
-- **指纹浏览器默认启用**（adryfish，BSD-3）：未安装时首次运行后台自动下载（gh-proxy 镜像链 + 空闲超时换源），未装则静默回落普通 Chromium；设置页有独立面板（开关 / 品牌 / 种子 / 下载 / 更新 / 删除）。
+- **环境拟真浏览器默认启用**（adryfish，BSD-3）：未安装时首次运行后台自动下载（gh-proxy 镜像链 + 空闲超时换源），未装则静默回落普通 Chromium；设置页有独立面板（开关 / 品牌 / 种子 / 下载 / 更新 / 删除）。
 - **软件设置分类选项卡**：进入后侧栏变为分类选项卡，点击平滑定位、右侧滚动自动高亮（scroll-spy）、底部「返回」；进出场有滑入/离场动画，切页内容区上浮淡入。
 - **首次登录后自动同步**：授权成功即自动跑一次刷新链路（Cookie → 积分 → 搜索/阅读进度）。
 - **仪表盘卡片修复**：签入 `-1` 哨兵不再当真值显示；每日/积分活动未运行时显示「未运行」；受限次数恒显数字。数字统一千分位。
@@ -653,9 +653,9 @@ Docker 版改为「指纹浏览器独占 + 镜像预装」，并支持直接拉�
 - **「全局设置」→「任务全局设置」**：图标由齿轮改为「任务书」，页面只保留与积分任务执行有关的配置（任务开关 / 数量 / 区域 / 搜索 / 日志 / 推送 / 积分目标等）。
 - **新增「软件设置」标签页**：把「个性化」「启动与托盘」「浏览器」「安全」四类移入，按大类分区展示（桌面端专属的启动与托盘在 Web/Docker 版自动隐藏）。
 
-### 默认启用指纹浏览器
+### 默认启用环境拟真浏览器
 
-`browser.fingerprint.enable` 默认值由 `false` 改为 `true`：首次运行检测到未安装且已启用时，后台自动下载指纹浏览器（约 181MB，走 gh-proxy 镜像链，不阻塞 UI、不打断登录流程）。未安装或下载失败时仍静默回落普通 Chromium。
+`browser.fingerprint.enable` 默认值由 `false` 改为 `true`：首次运行检测到未安装且已启用时，后台自动下载环境拟真浏览器（约 181MB，走 gh-proxy 镜像链，不阻塞 UI、不打断登录流程）。未安装或下载失败时仍静默回落普通 Chromium。
 
 ### 补充 fingerprint-chromium 许可声明
 
@@ -663,7 +663,7 @@ Docker 版改为「指纹浏览器独占 + 镜像预装」，并支持直接拉�
 
 ### 验证
 
-- 门禁：tsc 0 错；selfcheck **291 项全绿**（「软件设置页挂载指纹浏览器面板」断言由原「设置页」改写指向新页面）。
+- 门禁：tsc 0 错；selfcheck **291 项全绿**（「软件设置页挂载环境拟真浏览器面板」断言由原「设置页」改写指向新页面）。
 - 构建：渲染层 vite build 通过。
 
 ---
@@ -672,7 +672,7 @@ Docker 版改为「指纹浏览器独占 + 镜像预装」，并支持直接拉�
 
 发布日期：2026-09-21
 
-### 下载卡死自动换源（指纹浏览器 181MB 下载）
+### 下载卡死自动换源（环境拟真浏览器 181MB 下载）
 
 用户实测反馈下载会卡在某个进度不动弹。此前只有 30 秒「空闲超时」（一个字节都不来才触发），抓不到「还在来但慢到不可用」的涓流卡死（实测 10.9KB/s，181MB 要下 4 个多小时）。本版补了两道防线：
 
@@ -693,14 +693,14 @@ Docker 版改为「指纹浏览器独占 + 镜像预装」，并支持直接拉�
 
 发布日期：2026-09-21
 
-### 指纹浏览器可选链路（fingerprint-chromium）
+### 环境拟真浏览器可选链路（fingerprint-chromium）
 
 - 新增 `src/fingerprint-browser.js`：接入 **fingerprint-chromium**（adryfish 基于 Ungoogled Chromium 的 patch 版，BSD-3，钉死 148.0.7778.215）作为可选的浏览器档位。它 patch 源码层统一改 `navigator.userAgent` / `navigator.userAgentData` / **Client Hints**——正好补上我们实测证明「应用层够不到」的那一层（`sec-ch-ua` 请求头 setExtraHTTPHeaders / page.route 均改不动）。
-- **来源优先级**：显式 env > 指纹浏览器（设置页启用 + 已安装）> 系统 Chrome > 自带 Chromium，未装静默回落。
-- **种子化指纹**：种子 = FNV-1a(账户 ID)，`--fingerprint=<seed> --fingerprint-platform --fingerprint-brand --timezone=Asia/Shanghai --accept-lang`。同一账号长期稳定、不同账号各不相同；刻意**不设 UA / 不盖 accept-language**，让种子统一生成，避免回到「UA 说 X、CH 说 Y」的自相矛盾。
-- **与 stealth.js 互斥**：指纹模式下 initScript 前置 `window.__MSR_FP=1`，stealth 据此让出 languages / plugins / CPU（GPU 指纹上游仅 Linux 生成，Windows 仍靠 stealth WebGL 兜底）。
+- **来源优先级**：显式 env > 环境拟真浏览器（设置页启用 + 已安装）> 系统 Chrome > 自带 Chromium，未装静默回落。
+- **种子化环境特征**：种子 = FNV-1a(账户 ID)，`--fingerprint=<seed> --fingerprint-platform --fingerprint-brand --timezone=Asia/Shanghai --accept-lang`。同一账号长期稳定、不同账号各不相同；刻意**不设 UA / 不盖 accept-language**，让种子统一生成，避免回到「UA 说 X、CH 说 Y」的自相矛盾。
+- **与 stealth.js 互斥**：拟真模式下 initScript 前置 `window.__MSR_FP=1`，stealth 据此让出 languages / plugins / CPU（GPU 环境特征上游仅 Linux 生成，Windows 仍靠 stealth WebGL 兜底）。
 - **WebGL 成对替换**：修掉 0.9.4.16 发现的负优化——原 patch 只替换命中 SwiftShader 的 vendor，拼出一对现实中不存在的 vendor/renderer 组合（比不打补丁更可疑），现改为先探测软渲染、命中则 vendor/renderer 成对替换。
-- **端到端实测**：Playwright 成功驱动 Ungoogled Chromium；headless 下 HTTP UA == JS UA == Chrome/148、CH 头 == JS brands、webdriver=false、plugins=5 → 指纹自洽，当初引入它的全部理由落地。
+- **端到端实测**：Playwright 成功驱动 Ungoogled Chromium；headless 下 HTTP UA == JS UA == Chrome/148、CH 头 == JS brands、webdriver=false、plugins=5 → 环境特征自洽，当初引入它的全部理由落地。
 
 ### 下载（gh-proxy 多节点 + 完整性验收）
 
@@ -738,7 +738,7 @@ Docker 版改为「指纹浏览器独占 + 镜像预装」，并支持直接拉�
 
 ### 验证
 
-- tsc 0 错；selfcheck **254 项**（+23 条）；反例 9 场景全红；打桩 11/11；指纹实测 12/12；verify-pack 新增 5 项。
+- tsc 0 错；selfcheck **254 项**（+23 条）；反例 9 场景全红；打桩 11/11；环境特征实测 12/12；verify-pack 新增 5 项。
 
 ---
 
@@ -759,7 +759,7 @@ Docker 版改为「指纹浏览器独占 + 镜像预装」，并支持直接拉�
 
 发布日期：2026-09-18
 
-### 反检测与执行节奏
+### 环境拟真与执行节奏
 
 - **单次执行数量可分别配置（阅读 / 活动）**：此前每轮会把当天剩余的阅读篇数、活动个数一次做完，一轮清空的节奏很容易被识别。现在「任务开关」下方新增「单次执行数量」区块：
   - 「阅读文章每次篇数」「网页浏览每次个数」各自独立设置，`0` 表示不限制（保持旧行为，一次做完）；

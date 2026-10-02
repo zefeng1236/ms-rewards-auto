@@ -34,12 +34,12 @@ function buildRecoveryText(key: string): string {
  *   3. 非官方授权声明与使用风险告知（3 秒倒计时后才能确认）
  *   4. 加密保险库（设置密码；启用后登录态只以密文落盘，并下发恢复密钥）
  *   5. 个性化初始设置（液态玻璃、开机自启）
- *   6. 指纹浏览器（仅桌面版：可选增强约 181MB；Docker 版镜像内已预装，删掉本页）
+ *   6. 环境拟真浏览器（仅桌面版：可选增强约 181MB；Docker 版镜像内已预装，删掉本页）
  */
 
 const STEPS = IS_WEB
   ? ["欢迎", "协议", "声明", "加密", "个性化"]
-  : ["欢迎", "协议", "声明", "加密", "个性化", "指纹"];
+  : ["欢迎", "协议", "声明", "加密", "个性化", "环境特征"];
 
 /** 语言选项。ready=false 的只做占位展示，标注用该语言自己写的「暂未开发」 */
 const LANGS: { key: string; name: string; sub: string; ready: boolean; tip: string }[] = [
@@ -121,7 +121,7 @@ const RISKS: string[] = [
 export function SetupWizard({ onDone }: { onDone: () => void }) {
   const [state, setState] = useState<SetupState | null>(null);
   const [page, setPage] = useState(0);
-  // 第 6 页（指纹浏览器，仅桌面版）能否放行。状态由页内上报 —— 页脚按钮据此禁用，
+  // 第 6 页（环境拟真浏览器，仅桌面版）能否放行。状态由页内上报 —— 页脚按钮据此禁用，
   // 避免页脚与页内流程各判各的（下载进度归页内，放行条件归页脚，必须同源）。
   // 初值 false：启用且尚未下载完成时不允许点「开始使用」。Web 版无此页，恒 true。
   const [fpCanProceed, setFpCanProceed] = useState(IS_WEB ? true : false);
@@ -208,7 +208,7 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
           {/* 加密页自带操作按钮（要先把恢复密钥展示完才能进下一步），
               这里只放提示，避免页脚按钮与页内流程状态不同步 */}
           {page === 3 && <span className="wizard-note">请在上方完成加密设置</span>}
-          {/* 第 5 页「个性化」：桌面版继续进指纹页；Web(Docker) 版即末页，直接完成 */}
+          {/* 第 5 页「个性化」：桌面版继续进拟真页；Web(Docker) 版即末页，直接完成 */}
           {page === 4 && (
             <GlassButton
               variant="glassProminent"
@@ -218,7 +218,7 @@ export function SetupWizard({ onDone }: { onDone: () => void }) {
               {IS_WEB ? "开始使用 ✓" : "下一步 →"}
             </GlassButton>
           )}
-          {/* 末页（仅桌面版）：启用指纹浏览器时必须等下载完成（fpCanProceed 由页内上报） */}
+          {/* 末页（仅桌面版）：启用环境拟真浏览器时必须等下载完成（fpCanProceed 由页内上报） */}
           {!IS_WEB && page === 5 && (
             <GlassButton
               variant="glassProminent"
@@ -823,10 +823,10 @@ function PagePersonalize({
   );
 }
 
-/* ---------------- 第 6 页：指纹浏览器（可选，需下载约 181MB） ---------------- */
+/* ---------------- 第 6 页：环境拟真浏览器（可选，需下载约 181MB） ---------------- */
 
 /**
- * 向导末页：指纹浏览器（可选增强）。
+ * 向导末页：环境拟真浏览器（可选增强）。
  *
  * 交互按用户要求重做：
  *   1. 最上面是「跳过」复选框 —— 想省事的人一眼就能勾掉，不必在两张大卡片里做选择；
@@ -913,7 +913,7 @@ function PageFingerprint({ onCanProceed }: { onCanProceed: (v: boolean) => void 
 
   const onCancelInstall = async () => {
     const r = await api.cancelFingerprintInstall();
-    if (r.ok) toast.info("正在取消指纹浏览器下载…");
+    if (r.ok) toast.info("正在取消环境拟真浏览器下载…");
     else setErr(r.error || "取消失败");
   };
 
@@ -924,9 +924,9 @@ function PageFingerprint({ onCanProceed }: { onCanProceed: (v: boolean) => void 
     try {
       const r = await api.installFingerprint({ force: false });
       if (r.ok) {
-        toast.success(r.skipped ? "指纹浏览器已是该版本" : "指纹浏览器安装完成（已校验完整性）");
+        toast.success(r.skipped ? "环境拟真浏览器已是该版本" : "环境拟真浏览器安装完成（已校验完整性）");
       } else if (r.canceled) {
-        toast.info("已取消指纹浏览器下载");
+        toast.info("已取消环境拟真浏览器下载");
       } else {
         setErr(r.error || "下载失败，可换个加速源重试");
       }
@@ -943,11 +943,11 @@ function PageFingerprint({ onCanProceed }: { onCanProceed: (v: boolean) => void 
 
   return (
     <div className="wz-page wz-fp">
-      <h2>指纹浏览器（可选增强）</h2>
+      <h2>环境拟真浏览器（可选增强）</h2>
       <p className="wz-lead">
-        用 patch 过源码的 Chromium 统一生成 UA / Client Hints / 插件 / CPU 等指纹，
+        用 patch 过源码的 Chromium 统一生成 UA / Client Hints / 插件 / CPU 等环境特征，
         能显著降低被识别为自动化的概率。需要单独下载约 181MB，
-        <strong>不想装就在下面勾选跳过</strong>，之后随时能在「软件设置 → 指纹浏览器」里下载开启。
+        <strong>不想装就在下面勾选跳过</strong>，之后随时能在「软件设置 → 环境拟真浏览器」里下载开启。
       </p>
 
       {!supported ? (
@@ -965,7 +965,7 @@ function PageFingerprint({ onCanProceed }: { onCanProceed: (v: boolean) => void 
             onClick={() => void choose(skip)}
           >
             <span className="wz-check-box">{skip ? "✓" : ""}</span>
-            <span>跳过，不下载指纹浏览器（先用普通 Chromium）</span>
+            <span>跳过，不下载环境拟真浏览器（先用普通 Chromium）</span>
           </button>
 
           {/* 置灰区：跳过时保留布局但不可交互，让用户知道「这里本来可以装」 */}

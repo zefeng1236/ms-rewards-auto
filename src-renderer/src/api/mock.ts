@@ -302,7 +302,7 @@ const noop = () => undefined;
 let mockRunStatus: AccountRunStatusMap = {};
 const statusCbs = new Set<(v: { id: string; status: AccountRunStatusValue; reason?: string }) => void>();
 const logCbs = new Set<(e: AccountLogEntry) => void>();
-// 指纹浏览器「下载进度」订阅者：预览模式没有真实下载，这里伪造一条进度流，
+// 环境拟真浏览器「下载进度」订阅者：预览模式没有真实下载，这里伪造一条进度流，
 // 好在浏览器里直接调进度条样式与文案（向导第 6 页 / 设置页面板都用它）。
 const fpProgressCbs = new Set<(p: InstallProgress) => void>();
 
@@ -312,7 +312,7 @@ function emitFpProgress(p: InstallProgress) {
   });
 }
 
-/** 预览模式下的「指纹浏览器是否已安装」，由 installFingerprint 置真 */
+/** 预览模式下的「环境拟真浏览器是否已安装」，由 installFingerprint 置真 */
 let mockFpReady = false;
 let mockFpCancel = false;
 
@@ -655,7 +655,7 @@ export function createMockApi(): ElectronApi {
       mockFpCancel = false;
       // 预览模式：伪造一条下载进度流（约 5 秒走完），好在浏览器里直接调进度条样式与文案
       const steps: Array<[number, string]> = [
-        [0, "准备下载指纹浏览器 148.0.7778.215（约 181MB，走 gh-proxy 镜像链）"],
+        [0, "准备下载环境拟真浏览器 148.0.7778.215（约 181MB，走 gh-proxy 镜像链）"],
         [9, "gh-proxy.com · 6.26 MB/s · 剩余约 28s"],
         [31, "gh-proxy.com · 5.80 MB/s · 剩余约 21s"],
         [58, "gh-proxy.com · 6.02 MB/s · 剩余约 13s"],
@@ -666,7 +666,7 @@ export function createMockApi(): ElectronApi {
           emitFpProgress({ stage: "fingerprint", pct, message: "下载已取消" });
           return { ok: false, canceled: true, error: "下载已取消" };
         }
-        // stage 必须带：侧边栏靠它把指纹进度与 Chromium 进度分开显示
+        // stage 必须带：侧边栏靠它把拟真进度与 Chromium 进度分开显示
         emitFpProgress({ stage: "fingerprint", pct, message });
         await sleep(950);
       }

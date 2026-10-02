@@ -165,16 +165,16 @@ export interface AppConfig {
   /** 浏览器（登录授权 / 领取奖品要走真实页面） */
   browser: {
     /**
-     * 指纹浏览器（可选增强，需在设置页单独下载约 181MB）。
+     * 环境拟真浏览器（可选增强，需在设置页单独下载约 181MB）。
      * 未启用或未安装时自动回落普通 Chromium。
      */
     fingerprint: {
       enable: boolean;
-      /** 指纹种子（32 位整数）；0 = 按账户 ID 自动派生，保证同账号长期稳定 */
+      /** 拟真种子（32 位整数）；0 = 按账户 ID 自动派生，保证同账号长期稳定 */
       seed: number;
       /** UA / Client Hints 声明的品牌 */
       brand: string;
-      /** CPU 核数；0 = 由指纹种子生成 */
+      /** CPU 核数；0 = 由拟真种子生成 */
       hardwareConcurrency: number;
       /** 声明给网站的操作系统：windows | macos | linux（默认 windows）。
        *  为什么不跟 process.platform：Docker 容器里真实平台恒为 Linux，
@@ -370,9 +370,9 @@ export interface ChromiumStatus {
   executable: string | null;
 }
 
-/** 指纹浏览器状态（可选增强，见 src/fingerprint-browser.js） */
+/** 环境拟真浏览器状态（可选增强，见 src/fingerprint-browser.js） */
 export interface FingerprintStatus {
-  /** 当前平台是否提供指纹浏览器（macOS 暂不支持） */
+  /** 当前平台是否提供环境拟真浏览器（macOS 暂不支持） */
   supported: boolean;
   platform: string;
   /** 是否已安装且可执行文件可定位 */

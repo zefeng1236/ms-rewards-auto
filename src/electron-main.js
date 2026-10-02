@@ -455,7 +455,7 @@ function pushChromiumStatus() {
   }
 }
 
-/** 推送指纹浏览器状态（可选组件，未安装时 ready=false） */
+/** 推送环境拟真浏览器状态（可选组件，未安装时 ready=false） */
 function pushFingerprintStatus() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   // status() 现在是 async（镜像下拉要带实测延迟）；状态推送本来就是通知性质，失败忽略
@@ -465,7 +465,7 @@ function pushFingerprintStatus() {
         mainWindow.webContents.send("fingerprint-status", s);
       }
     })
-    .catch((e) => logger.warn(`推送指纹浏览器状态失败: ${e.message}`));
+    .catch((e) => logger.warn(`推送环境拟真浏览器状态失败: ${e.message}`));
 }
 
 /** 启动周期性推送：任务运行中 3 秒一次，空闲时 10 秒一次 */
@@ -770,9 +770,9 @@ function startBackgroundWork() {
       .catch((e) => logger.error(`后台 Chromium 安装失败: ${e.message}`));
   }
 
-  // 首次运行自动下载指纹浏览器（默认已启用；未安装时后台下载约 181MB，不阻塞 UI）
+  // 首次运行自动下载环境拟真浏览器（默认已启用；未安装时后台下载约 181MB，不阻塞 UI）
   if (!IS_SMOKE && globalConfig.get()?.browser?.fingerprint?.enable && !fpBrowser.isReady() && !fingerprintInstallController) {
-    logger.info("检测到指纹浏览器未安装且已默认启用，后台开始自动下载…");
+    logger.info("检测到环境拟真浏览器未安装且已默认启用，后台开始自动下载…");
     fingerprintInstallController = new AbortController();
     fpBrowser.install({
       mirror: globalConfig.get()?.browser?.fingerprint?.mirror,
@@ -782,10 +782,10 @@ function startBackgroundWork() {
       },
     })
       .then((r) => {
-        logger.info(`后台指纹浏览器安装结果: ok=${r.ok}, skipped=${r.skipped || false}, canceled=${r.canceled || false}`);
+        logger.info(`后台环境拟真浏览器安装结果: ok=${r.ok}, skipped=${r.skipped || false}, canceled=${r.canceled || false}`);
         pushFingerprintStatus();
       })
-      .catch((e) => logger.error(`后台指纹浏览器安装失败: ${e && e.message ? e.message : e}`))
+      .catch((e) => logger.error(`后台环境拟真浏览器安装失败: ${e && e.message ? e.message : e}`))
       .finally(() => {
         fingerprintInstallController = null;
       });
@@ -1208,11 +1208,11 @@ function registerIpc() {
     executable: browser.chromiumExecutablePath(),
   }));
 
-  // ---- 指纹浏览器（可选增强，见 src/fingerprint-browser.js）----
+  // ---- 环境拟真浏览器（可选增强，见 src/fingerprint-browser.js）----
   ipcMain.handle("app:fingerprintStatus", () => fpBrowser.status());
   ipcMain.handle("app:installFingerprint", async (_e, opts) => {
     if (running) return { ok: false, error: "已有任务正在运行，请稍候" };
-    if (fingerprintInstallController) return { ok: false, error: "指纹浏览器正在下载，请稍候" };
+    if (fingerprintInstallController) return { ok: false, error: "环境拟真浏览器正在下载，请稍候" };
     fingerprintInstallController = new AbortController();
     setRunning(true);
     try {
@@ -1231,7 +1231,7 @@ function registerIpc() {
       return result;
     } catch (e) {
       const canceled = !!(e && e.canceled);
-      if (!canceled) logger.error(`指纹浏览器安装失败: ${e.message}`);
+      if (!canceled) logger.error(`环境拟真浏览器安装失败: ${e.message}`);
       pushFingerprintStatus();
       return { ok: false, canceled, error: canceled ? "下载已取消" : e.message };
     } finally {
@@ -1241,7 +1241,7 @@ function registerIpc() {
   });
 
   ipcMain.handle("app:cancelFingerprintInstall", () => {
-    if (!fingerprintInstallController) return { ok: false, error: "当前没有正在下载的指纹浏览器" };
+    if (!fingerprintInstallController) return { ok: false, error: "当前没有正在下载的环境拟真浏览器" };
     fingerprintInstallController.abort();
     return { ok: true };
   });

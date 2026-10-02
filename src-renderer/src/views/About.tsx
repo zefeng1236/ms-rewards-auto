@@ -79,7 +79,7 @@ const DIRECT_DEPS: { name: string; version: string; license: string; desc: strin
     name: "fingerprint-chromium",
     version: "148.0.7778.215",
     license: "BSD-3-Clause",
-    desc: "可选指纹增强浏览器（adryfish，基于 Ungoogled Chromium），运行时按需下载",
+    desc: "可选环境拟真增强浏览器（adryfish，基于 Ungoogled Chromium），运行时按需下载",
     url: "https://github.com/adryfish/fingerprint-chromium",
   },
 ];
@@ -421,7 +421,7 @@ export function About() {
         <div className="block-head">
           <div>
             <div className="block-title">友情链接</div>
-            <div className="block-sub">实用工具站 + 作者邀请链接；通过邀请链接注册可支持本项目的持续开发</div>
+            <div className="block-sub">实用工具站 + 本项目正在使用的工具与服务；感谢这些工具对本项目的支持</div>
           </div>
         </div>
 
@@ -560,13 +560,13 @@ export function About() {
                 </div>
 
                 <div className="friend-actions">
-                  {/* 「前往注册」只给作者邀请链接；工具站/公益站统一用「打开」 */}
+                  {/* 工具站 / 服务站统一用「打开」 */}
                   <GlassButton
-                    variant={l.key === "akile" || l.key === "workbuddy" ? "glassProminent" : "glass"}
+                    variant="glass"
                     controlSize="small"
                     onClick={() => window.open(l.href, "_blank", "noopener")}
                   >
-                    {l.key === "akile" || l.key === "workbuddy" ? "↗ 前往注册" : "↗ 打开"}
+                    {"↗ 打开"}
                   </GlassButton>
                   <GlassButton variant="plain" controlSize="small" onClick={() => void onCopy(l.href, l.name)}>
                     ⧉ 复制链接
@@ -577,8 +577,8 @@ export function About() {
           </div>
 
           <div className="hint" style={{ marginTop: 14 }}>
-            「前往注册」为作者邀请链接，你注册后作者可获得少量额度回馈，价格与常规注册一致，
-            不会增加你的任何成本；工具站与公益站（如 GitHub 加速代理、一言）与作者无利益关系。
+            以上是本项目正在使用的工具与服务，感谢它们对本项目的支持；其中部分服务带有作者推荐位，
+            但作者未从中获得任何收益。工具站与公益站（如 GitHub 加速代理、一言）与作者无利益关系。
           </div>
         </AppCard>
       </div>
