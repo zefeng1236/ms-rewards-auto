@@ -32,8 +32,10 @@ const PROVIDERS = [
  *  ip.sb 优先：境内可达 + 标准国家码；其后用国内太平洋兜底，再到国际服务。 */
 const AUTO_ORDER = ["ipsb", "pconline", "ipinfo", "ipapi"];
 
-function norm(id, ip, countryCode, mainland, detail) {
-  return { ip: ip || "", countryCode: countryCode || "", mainland: mainland === undefined ? null : mainland, source: id, detail: detail || "" };
+function norm(id, ip, countryCode, mainland, detail, extra) {
+  const v = { ip: ip || "", countryCode: countryCode || "", mainland: mainland === undefined ? null : mainland, source: id, detail: detail || "" };
+  // extra：地理名称字段（cityEn/cityCn/countryEn/countryCn），供拦截推送展示归属地
+  return extra ? Object.assign(v, extra) : v;
 }
 
 /** 各家服务的「请求 + 解析」实现。失败时抛出，由上层捕获降级。 */
@@ -47,32 +49,36 @@ function parsePconline(text) {
   const j = JSON.parse(text.trim());
   const code = String(j.proCode || "");
   const isMainland = /^\d{6}$/.test(code) && code !== "999999";
-  return norm("pconline", j.ip, isMainland ? "CN" : "", isMainland, j.addr || "");
+  return norm("pconline", j.ip, isMainland ? "CN" : "", isMainland, j.addr || "", { cityCn: String(j.city || "") });
 }
 
-// ip.sb：全球 CDN，返回标准 ISO 国家码（country_code）
+// ip.sb：全球 CDN，返回标准 ISO 国家码（country_code），city/country 为英文名
 function parseIpsb(text) {
   if (!text) throw new Error("ip.sb 空响应");
   const j = JSON.parse(text);
   const cc = String(j.country_code || "").toUpperCase();
-  return norm("ipsb", j.ip, cc, cc ? cc === "CN" : null, j.organization || j.isp || "");
+  return norm("ipsb", j.ip, cc, cc ? cc === "CN" : null, j.organization || j.isp || "",
+    { cityEn: String(j.city || ""), countryEn: String(j.country || "") });
 }
 
-// ipinfo.io：返回 country 为 ISO 码
+// ipinfo.io：返回 country 为 ISO 码，city 为英文名
 function parseIpinfo(text) {
   if (!text) throw new Error("ipinfo 空响应");
   const j = JSON.parse(text);
   const cc = String(j.country || "").toUpperCase();
-  return norm("ipinfo", j.ip, cc, cc ? cc === "CN" : null, j.org || j.region || "");
+  return norm("ipinfo", j.ip, cc, cc ? cc === "CN" : null, j.org || j.region || "",
+    { cityEn: String(j.city || "") });
 }
 
-// ip-api.com：免费版仅 http，国内连通性一般，作为可选项/降级项
+// ip-api.com：免费版仅 http，国内连通性一般，作为可选项/降级项。
+// 请求带 lang=zh-CN，country/city 直接是中文名（如 日本/东京）。
 function parseIpapi(text) {
   if (!text) throw new Error("ip-api 空响应");
   const j = JSON.parse(text);
   if (j.status !== "success") throw new Error(`ip-api ${j.message || "失败"}`);
   const cc = String(j.countryCode || "").toUpperCase();
-  return norm("ipapi", j.query, cc, cc ? cc === "CN" : null, "");
+  return norm("ipapi", j.query, cc, cc ? cc === "CN" : null, "",
+    { cityCn: String(j.city || ""), countryCn: String(j.country || "") });
 }
 
 const QUERY = {
@@ -156,6 +162,48 @@ async function lookupCountry(ctx, preferred) {
   return null;
 }
 
+/** 常见国家/地区代码 → 中文名（拦截推送展示用；未收录时回落英文名/代码） */
+const COUNTRY_CN = {
+  CN: "中国大陆", HK: "中国香港", MO: "中国澳门", TW: "中国台湾",
+  JP: "日本", KR: "韩国", SG: "新加坡", MY: "马来西亚", TH: "泰国", VN: "越南",
+  PH: "菲律宾", ID: "印度尼西亚", IN: "印度", US: "美国", CA: "加拿大",
+  GB: "英国", DE: "德国", FR: "法国", NL: "荷兰", RU: "俄罗斯", AU: "澳大利亚",
+  NZ: "新西兰", BR: "巴西", AE: "阿联酋", TR: "土耳其", UA: "乌克兰", PL: "波兰",
+};
+
+/** 常见代理节点城市 英文 → 中文（未收录时回落英文名） */
+const CITY_EN2CN = {
+  Tokyo: "东京", Osaka: "大阪", Seoul: "首尔", Singapore: "新加坡",
+  "Hong Kong": "香港", Taipei: "台北", "Los Angeles": "洛杉矶", "San Jose": "圣何塞",
+  Seattle: "西雅图", "New York": "纽约", London: "伦敦", Frankfurt: "法兰克福",
+  Amsterdam: "阿姆斯特丹", Paris: "巴黎", Bangkok: "曼谷", "Kuala Lumpur": "吉隆坡",
+  Jakarta: "雅加达", Mumbai: "孟买", Dubai: "迪拜", Moscow: "莫斯科", Sydney: "悉尼",
+  Warsaw: "华沙", Stockholm: "斯德哥尔摩",
+};
+
+/**
+ * 汇聚多源判定里的地理字段，拼出「城市/国家码(中文城市/中文国名)」展示串。
+ * 例：Tokyo/JP(东京/日本)。字段可缺，缺哪段省哪段，全缺返回 "未知"。
+ *
+ * @param {Array<object>} verdicts 判定数组（兼容 countryCode/ipcc 两种字段名）
+ * @returns {string}
+ */
+function geoLabel(verdicts) {
+  const list = (verdicts || []).filter(Boolean);
+  const pick = (k) => {
+    for (const v of list) if (v[k]) return String(v[k]);
+    return "";
+  };
+  const cc = (pick("countryCode") || pick("ipcc")).toUpperCase();
+  const cityEn = pick("cityEn");
+  const cityCn = pick("cityCn") || (cityEn ? CITY_EN2CN[cityEn] || "" : "");
+  const countryCn = pick("countryCn") || (cc ? COUNTRY_CN[cc] || "" : "");
+  const left = cityEn ? `${cityEn}/${cc}` : cc;
+  const right = [cityCn, countryCn].filter(Boolean).join("/");
+  if (left && right) return `${left}(${right})`;
+  return left || right || "未知";
+}
+
 module.exports = {
   PROVIDERS,
   AUTO_ORDER,
@@ -165,4 +213,7 @@ module.exports = {
   parseIpsb,
   parseIpinfo,
   parseIpapi,
+  geoLabel,
+  COUNTRY_CN,
+  CITY_EN2CN,
 };

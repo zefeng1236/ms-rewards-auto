@@ -102,7 +102,7 @@ const STEALTH_INIT = `(() => {
   //
   // ⚠️ 之前这里是个负优化：只对「命中 SwiftShader 正则的值」做替换，而 vendor 的真实值
   //    "Google Inc. (Google)" 不含这些字样 → vendor 被放过、renderer 被换掉，
-  //    拼出一对现实中不存在的组合（Google 的 vendor + Microsoft 的驱动），比不补丁更可疑。
+  //    拼出一对现实中不存在的组合（Google 的 vendor + MS 的驱动），比不补丁更可疑。
   //    改成先探测一次渲染器是否为软渲染，是则 vendor / renderer **成对**替换为同一厂商。
   safe(() => {
     const GL_SWIFT = /SwiftShader|Mesa|llvmpipe|ANGLE \\(Google, Vulkan/i;

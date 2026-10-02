@@ -10,9 +10,8 @@
  *        · 不得 < 1               —— 否则会变成「一个都不做」；
  *        · 做减法时 base 必须大于随机数 —— 否则减不动，放弃随机。
  *      满足即生效，**随机结果允许超过当日剩余任务数 total**（见保护③）。
- *   3. 保护：
- *      · 未随机      → 结果严格不超过 total（设定值就是用户给的上限）；
- *      · 已随机      → 上限放宽到 total + MAX_DELTA。
+ *   3. 默认未随机时不超过 total；开启 allowExceed 后保留自定义数量。
+ *      随机波动仍可能超过 total；没有可执行任务时始终返回 0。
  *
  * 为什么允许「随机多于当日任务数」（0.13.11 起）：
  *   每次都把剩余任务做得刚好接满，本身就是很强的规律性特征；
@@ -36,7 +35,7 @@ function toCount(v) {
 /**
  * 归一化配置里的 limits 段，兼容老配置（缺字段 / 类型飘）
  * @param {object} [raw]
- * @returns {{random: boolean, read: number, promos: number, search: number}}
+ * @returns {{random: boolean, read: number, promos: number, search: number, allowExceed: boolean}}
  */
 function normalizeLimits(raw) {
   const o = raw && typeof raw === "object" ? raw : {};
@@ -45,6 +44,7 @@ function normalizeLimits(raw) {
     read: toCount(o.read),
     promos: toCount(o.promos),
     search: toCount(o.search),
+    allowExceed: o.allowExceed === true,
   };
 }
 
@@ -55,11 +55,12 @@ function normalizeLimits(raw) {
  * @param {number} opts.base   用户设定的每次执行数量，0 = 不限制
  * @param {number} opts.total  当前还可执行的任务总数（剩余量）
  * @param {boolean} [opts.random] 是否启用随机波动
+ * @param {boolean} [opts.allowExceed] 允许执行数量超过剩余任务总数（默认 false = 截断到剩余量）
  * @param {() => number} [opts.rng] 随机源，默认 Math.random（自检注入固定序列）
  * @returns {{
- *   count:number,    // 本轮实际执行数量（已保证 0 <= count <= total）
+ *   count:number,    // 本轮实际执行数量（allowExceed 时可能 > total）
  *   total:number,    // 可执行任务总数
- *   base:number,     // 基准数量（已按 total 截断）
+ *   base:number,     // 基准数量（未 exceed 时按 total 截断）
  *   unlimited:boolean, // 是否「未设上限」
  *   applied:boolean,   // 随机是否生效
  *   cancelled:boolean, // 随机被放弃（命中保护条件）
@@ -71,6 +72,7 @@ function normalizeLimits(raw) {
 function resolveTaskCount(opts = {}) {
   const total = toCount(opts.total);
   const rng = typeof opts.rng === "function" ? opts.rng : Math.random;
+  const allowExceed = opts.allowExceed === true;
 
   const empty = { total: 0, base: 0, unlimited: false, applied: false, cancelled: false, delta: 0, mag: 0 };
 
@@ -82,10 +84,13 @@ function resolveTaskCount(opts = {}) {
   const rawBase = Number(opts.base);
   const unlimited = !Number.isFinite(rawBase) || rawBase <= 0;
 
-  // 保护②：设定值不能大于任务总数（也兜住历史脏数据）——
-  // 注意这只管「未启用随机」的基准；随机开关会把结果在 base 上再 ±(2–4)，
-  // 允许最终数量超过 total（见下方 cand 判定与保护③）。
-  const base = unlimited ? total : Math.min(Math.floor(rawBase), total);
+  // 默认按剩余量截断；超额模式保留用户设定值。
+  const desired = unlimited ? total : Math.floor(rawBase);
+  const base = unlimited
+    ? total
+    : allowExceed
+    ? desired
+    : Math.min(desired, total);
 
   if (unlimited) {
     return { ...empty, count: base, base, total, unlimited: true, note: "未设置上限，本轮全部执行" };
@@ -108,7 +113,10 @@ function resolveTaskCount(opts = {}) {
   // 拿不到额外分，但从行为上看不出「每次刚好接满」的规律（见顶部注释）。
   // 上限放宽到 total + MAX_DELTA —— 理性上 base 已 <= total，delta 最多 +4，
   // 这里再 clamp 一次只为防御脏数据，正常路径不会被触发。
-  if (cand >= 1 && cand <= total + MAX_DELTA) {
+  // 开启 allowExceed 时：设定值本身就可能 > total，随机在此基础上照常 ±(2–4)，
+  // 最终不再受 total 截断（用户明确要「超量执行」）。
+  const maxCand = allowExceed ? base + MAX_DELTA : total + MAX_DELTA;
+  if (cand >= 1 && cand <= maxCand) {
     applied = true;
     note = `随机 ${delta > 0 ? "+" : ""}${delta}`;
   } else if (base <= mag) {
@@ -121,8 +129,11 @@ function resolveTaskCount(opts = {}) {
     note = `随机 ${delta} 会变成 0 个，已取消随机`;
   }
 
-  // 保护③：未随机时夹在 [0, total]；随机生效时可上探到 total + MAX_DELTA
-  const ceil = applied ? total + MAX_DELTA : total;
+  // 保护③：未随机时夹在 [0, total]（allowExceed 时保留 base）；
+  //         随机生效时可上探到 total + MAX_DELTA（allowExceed 时 base + MAX_DELTA）
+  const ceil = allowExceed
+    ? (applied ? base + MAX_DELTA : base)
+    : (applied ? total + MAX_DELTA : total);
   const count = Math.max(0, Math.min(applied ? cand : base, ceil));
 
   return {

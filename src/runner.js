@@ -13,6 +13,30 @@ function pad2(n) {
   return String(n).padStart(2, "0");
 }
 
+/**
+ * 区域拦截推送：告知当前 IP + 国家/地区（Tokyo/JP(东京/日本) 格式）、
+ * 取消说明（含「检测到非xx区域」，预留后期按国家/地区锁区）与下次执行时间。
+ * 推送失败只 warn —— 绝不能反过来影响拦截本身。
+ */
+async function pushRegionBlocked(ctx, env) {
+  try {
+    const next = nextRunTime(ctx);
+    const nextText = next
+      ? `${pad2(next.getMonth() + 1)}-${pad2(next.getDate())} ${pad2(next.getHours())}:${pad2(next.getMinutes())}`
+      : "未启用自动调度（或未登录），请处理后手动运行";
+    const ip = env.ip || "未知";
+    const geo = env.geo || env.ipcc || "未知";
+    const lines = [
+      env.reason || `检测到非中国大陆区域，本次任务已取消执行`,
+      `当前 IP：${ip}（${geo}）`,
+      `下次执行时间：${nextText}`,
+    ];
+    await notify.sendText(ctx, "MS积分任务-区域拦截", lines.join("\n"));
+  } catch (e) {
+    logger.warn(`区域拦截推送失败: ${e.message}`);
+  }
+}
+
 /** [min,max] 之间的随机整数（含端点） */
 function randomBetween(min, max) {
   const lo = Math.ceil(Math.min(min, max));
@@ -127,10 +151,12 @@ async function runOnce(ctxRaw, opts = {}) {
   const env = await rewards.mainlandCheck(ctx);
   if (!env.ok) {
     result.ok = false;
-    result.reason = "IP 非中国大陆，任务已停止";
+    result.reason = env.reason || "IP 非中国大陆，任务已停止";
     state.get().lastResult = result.reason;
     state.save();
     logger.error(result.reason);
+    // 拦截也推送：IP / 归属地 / 取消说明 / 下次执行时间（推送失败只 warn，不影响拦截）
+    await pushRegionBlocked(ctx, env);
     return result;
   }
 
@@ -505,6 +531,10 @@ function normalizeSchedule(cfg) {
   if (!Number.isFinite(delayMin) || delayMin < 0) delayMin = 20;
   let delayMax = Number(raw.randomDelayMax);
   if (!Number.isFinite(delayMax) || delayMax < delayMin) delayMax = 300;
+  // 每天最早开始时刻（HH:mm）：「不早于该时刻才自动运行」，三种模式统一生效。
+  // 老配置缺字段回落 09:00（上午 9 点）；非法值同样回 09:00。
+  const rawStart = hhmmToMinutes(raw.startTime);
+  const startTime = rawStart !== null ? raw.startTime : "09:00";
   return {
     enable: raw.enable !== false,
     mode,
@@ -516,6 +546,7 @@ function normalizeSchedule(cfg) {
     randomDelay: raw.randomDelay !== false,
     randomDelayMin: delayMin,
     randomDelayMax: delayMax,
+    startTime,
   };
 }
 
@@ -577,11 +608,18 @@ function shouldRunNow(ctx, now = new Date()) {
 
   const nowMin = now.getHours() * 60 + now.getMinutes();
 
-  // daily 模式：保持旧语义，每天只在指定时刻跑一次
+  // 每天开始时刻门禁：不早于 schedule.startTime（默认 09:00）不启动。
+  // 三种模式统一生效；daily 模式另受 time 精确触发时刻约束，二者取更晚者自然成立。
+  const startAt = hhmmToMinutes(sc.startTime);
+  if (startAt !== null && nowMin < startAt) {
+    return { run: false, reason: `未到每天开始时刻 ${sc.startTime}` };
+  }
+
+  // daily 模式：到达固定时刻与开始时刻两者中较晚的一刻后，每天只跑一次
   if (sc.mode === "daily") {
     const target = hhmmToMinutes(sc.time);
     if (target === null) return { run: false, reason: "定时时间格式非法" };
-    if (nowMin !== target) return { run: false, reason: "未到定时时刻" };
+    if (nowMin < Math.max(target, startAt)) return { run: false, reason: "未到定时时刻" };
     if (state.getAutoRounds() > 0) return { run: false, reason: "今日已触发过" };
     return { run: true, reason: `每日定时 ${sc.time}` };
   }
@@ -611,45 +649,59 @@ function shouldRunNow(ctx, now = new Date()) {
  * 计算指定账户下次自动运行的预计时间
  * @returns {Date|null}
  */
-function nextRunTime(ctx) {
+function nextRunTime(ctx, now = new Date()) {
   const sc = normalizeSchedule(ctx.config.get());
   if (!sc.enable) return null;
   // 未登录的账户没有可预期的运行时间（自动调度会跳过它）
   const st0 = ctx.state.get();
   if (!browser.hasAuthCookies(st0.cookies || []) && !st0.refreshToken) return null;
-  const now = new Date();
 
   if (sc.mode === "daily") {
-    const target = hhmmToMinutes(sc.time);
-    if (target === null) return null;
+    const target = Math.max(hhmmToMinutes(sc.time), hhmmToMinutes(sc.startTime));
     const next = new Date(now);
     next.setHours(Math.floor(target / 60), target % 60, 0, 0);
-    if (next <= now) next.setDate(next.getDate() + 1);
+    if (next <= now || ctx.state.getAutoRounds() > 0) next.setDate(next.getDate() + 1);
     return next;
   }
 
-  // 今日已收工 -> 次日首个可运行时刻
-  if (sc.stopWhenDone && ctx.state.isDayComplete()) {
-    const next = new Date(now);
-    next.setDate(next.getDate() + 1);
-    const firstStart = sc.mode === "windows" ? Math.min(...sc.windows.map((w) => w.start)) : 0;
-    next.setHours(Math.floor(firstStart / 60), firstStart % 60, 0, 0);
-    return next;
-  }
-
+  const dayFinished = (sc.stopWhenDone && ctx.state.isDayComplete()) ||
+    (sc.maxRounds > 0 && ctx.state.getAutoRounds() >= sc.maxRounds);
   const last = Number(ctx.state.get().lastAutoRunAt) || 0;
   let candidate = last > 0 ? new Date(last + sc.intervalMinutes * 60000) : new Date(now);
   if (candidate < now) candidate = new Date(now);
+  if (dayFinished) {
+    candidate = new Date(now);
+    candidate.setDate(candidate.getDate() + 1);
+    candidate.setHours(0, 0, 0, 0);
+  }
+
+  const startAt = hhmmToMinutes(sc.startTime);
+  const todayStart = new Date(candidate);
+  todayStart.setHours(Math.floor(startAt / 60), startAt % 60, 0, 0);
+  if (candidate < todayStart) candidate = todayStart;
   if (sc.mode !== "windows") return candidate;
 
-  // windows 模式：把候选时间推进到最近的段内时刻（最多往后找 2 天）
-  for (let i = 0; i < 2 * 24 * 60; i++) {
-    const probe = new Date(candidate.getTime() + i * 60000);
-    const probeMin = probe.getHours() * 60 + probe.getMinutes();
-    if (inAnyWindow(sc.windows, probeMin)) {
-      probe.setSeconds(0, 0);
-      return probe;
+  // 按本地日历日逐段寻找交集；跨零点段的凌晨部分受 startTime 门禁限制。
+  for (let day = 0; day < 3; day++) {
+    const probeDay = new Date(candidate);
+    probeDay.setDate(probeDay.getDate() + day);
+    probeDay.setHours(0, 0, 0, 0);
+    let earliest = null;
+    for (const w of sc.windows) {
+      const starts = w.start <= w.end ? [w.start] : [0, w.start];
+      for (const windowStart of starts) {
+        const end = w.start <= w.end ? w.end : windowStart === 0 ? w.end : 1439;
+        const minute = Math.max(startAt, windowStart);
+        if (minute > end) continue;
+        const first = new Date(probeDay);
+        first.setMinutes(minute);
+        const lastMinute = new Date(probeDay);
+        lastMinute.setMinutes(end);
+        const due = candidate > first ? candidate : first;
+        if (due <= lastMinute && (!earliest || due < earliest)) earliest = due;
+      }
     }
+    if (earliest) return earliest;
   }
   return null;
 }

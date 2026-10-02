@@ -293,8 +293,16 @@ checkTrue("刚创建的未登录账户：自动调度跳过", g1.run === false, 
 checkTrue("未登录账户没有下次运行时间", guardRunner.nextRunTime(gCtx) === null);
 gCtx.state.get().refreshToken = "selfcheck-fake-token";
 gCtx.state.save();
-const g2 = guardRunner.shouldRunNow(gCtx);
-checkTrue("授权后（有 refreshToken）恢复自动调度", g2.run === true, `实际 ${JSON.stringify(g2)}`);
+// ⚠️ 必须传固定时刻：0.13.15 起有「每天开始时间」（默认 09:00）门禁，
+// 凌晨 00:00–09:00 跑自检时 shouldRunNow 会正确地返回「未到每天开始时刻」，
+// 用真实 now 断言会让这条守卫在夜里假红。取 12:00 落在默认窗口内，任何时刻跑都成立。
+const gNoon = (() => {
+  const d = new Date();
+  d.setHours(12, 0, 0, 0);
+  return d;
+})();
+const g2 = guardRunner.shouldRunNow(gCtx, gNoon);
+checkTrue("授权后（有 refreshToken）恢复自动调度（固定 12:00 断言，不受运行时刻影响）", g2.run === true, `实际 ${JSON.stringify(g2)}`);
 
 /* ============ 12. 版本号一致性守卫 ============ */
 console.log("\n【12】版本号一致性（package.json / 关于页 / README / CHANGELOG）");
@@ -403,9 +411,15 @@ checkTrue("穷举中确有随机生效的样本（断言非空转）", appliedCo
 check(
   "limits 归一化：随机只认 true，篇数取整、负数回 0",
   normalizeLimits({ random: "yes", read: 6.9, promos: -3 }),
-  { random: false, read: 6, promos: 0, search: 0 }
+  { random: false, read: 6, promos: 0, search: 0, allowExceed: false }
 );
-check("limits 归一化：空值 → 全部不限制", normalizeLimits(null), { random: false, read: 0, promos: 0, search: 0 });
+check("limits 归一化：空值 → 全部不限制", normalizeLimits(null), { random: false, read: 0, promos: 0, search: 0, allowExceed: false });
+// allowExceed 只认严格 true：老配置里飘成 "true" / 1 也不许放行（否则等于默认开启超量执行）
+check("limits 归一化：allowExceed 只认 true", [
+  normalizeLimits({ allowExceed: true }).allowExceed,
+  normalizeLimits({ allowExceed: "true" }).allowExceed,
+  normalizeLimits({ allowExceed: 1 }).allowExceed,
+], [true, false, false]);
 
 // —— 静态守卫：任务侧接入 ——
 const tasksSrc2 = fs.readFileSync(path.join(ROOT, "src", "tasks.js"), "utf8");
@@ -449,9 +463,15 @@ check("老配置归一化补上 20/300 且默认开启", [scOld.randomDelay, scO
 const cfgDefaults = require(path.join(ROOT, "src", "config.js")).DEFAULTS;
 const globalDefaults = require(path.join(ROOT, "src", "global-config.js")).GLOBAL_DEFAULTS;
 const mockSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "api", "mock.ts"), "utf8");
-check("config.DEFAULTS 含 limits", cfgDefaults.limits, { random: false, read: 6, promos: 0, search: 6 });
-check("global-config 默认值同步含 limits", globalDefaults.limits, { random: false, read: 6, promos: 0, search: 6 });
-checkTrue("渲染层 mock 默认值同步含 limits（含 search）", /limits: \{ random: false, read: 6, promos: 0, search: 6 \}/.test(mockSrc));
+check("config.DEFAULTS 含 limits", cfgDefaults.limits, { random: false, read: 6, promos: 0, search: 6, allowExceed: false });
+check("global-config 默认值同步含 limits", globalDefaults.limits, { random: false, read: 6, promos: 0, search: 6, allowExceed: false });
+checkTrue("渲染层 mock 默认值同步含 limits（含 search / allowExceed）", /limits: \{ random: false, read: 6, promos: 0, search: 6, allowExceed: false \}/.test(mockSrc));
+// 类型层也要跟上：老配置反序列化后缺字段，渲染层会按 undefined 渲染成「关闭」，
+// 主进程却按 false 截断 —— 类型定义漏写会让两边理解不一致。
+checkTrue(
+  "类型定义 limits 含 allowExceed（渲染层与主进程对同一字段的理解必须一致）",
+  /allowExceed: boolean;/.test(fs.readFileSync(path.join(ROOT, "src-renderer", "src", "types", "index.ts"), "utf8"))
+);
 // 0.9.4 白屏根因：global-config 的 GLOBAL_DEFAULTS 缺 goals，旧配置文件只有
 // { enable: true } 无 items，全局设置页 value.goals.items 抛 TypeError。必须与
 // config.DEFAULTS.goals 对齐，带 items: [] 兜底。
@@ -2177,7 +2197,8 @@ checkTrue(
   /fd\/auth\/signin/.test(bingSsoSrc) &&
     /\?action=interactive&provider=windows_live_id/.test(bingSsoSrc) &&
     /async function ensureBingSSO/.test(bingSsoSrc) &&
-    /微软账号在线但 Bing 侧缺少登录票据/.test(bingSsoSrc) &&
+    // 措辞会随品牌脱敏（微软→MS）改写，只锚定「账号在线但 Bing 侧缺少登录票据」这段语义
+    /账号在线但 Bing 侧缺少登录票据/.test(bingSsoSrc) &&
     /!hasBingAuthCookies\(cookies\) && hasAuthCookies\(cookies\)/.test(bingSsoSrc) &&
     /!ssoTried && !hasBingAuthCookies\(last\.cookies\) && hasAuthCookies\(last\.cookies\)/.test(bingSsoSrc),
   "静默 SSO 缺失或没接入两路同步 → Bing 缺 _U 的用户永远无法自动补登"
@@ -3045,6 +3066,272 @@ checkTrue(
     /\.cal-badges-wrap\s*\{[^}]*grid-template-rows:\s*0fr/.test(calCss) &&
     /\.cal-badges-wrap\.open\s*\{[^}]*grid-template-rows:\s*1fr/.test(calCss) &&
     /transition:\s*opacity[^;]*transform/.test(calCss)
+);
+
+/* ============ Q. 区域锁定加固 / 拦截推送 / 每天开始时间 / 超额执行 ============ */
+console.log("\n【Q】区域锁定加固、拦截推送、每天开始时间、超额执行");
+const rmodQ = require(path.join(ROOT, "src", "rewards.js"));
+const tlQ = require(path.join(ROOT, "src", "task-limit.js"));
+const runnerSrcQ = fs.readFileSync(path.join(ROOT, "src", "runner.js"), "utf8");
+const rewardsSrcQ = fs.readFileSync(path.join(ROOT, "src", "rewards.js"), "utf8");
+const formSrcQ = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "components", "SettingsForm.tsx"), "utf8");
+const typesSrcQ = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "types", "index.ts"), "utf8");
+
+// —— 多源区域判定（judgeMainland 是纯函数，可离线断言）——
+checkTrue("导出 judgeMainland 纯函数（多源判定不依赖网络也可验）", typeof rmodQ.judgeMainland === "function");
+const jBlocked = rmodQ.judgeMainland(
+  [
+    { source: "bing", mainland: true, countryCode: "CN" },
+    { source: "ipsb", mainland: false, countryCode: "JP", cityEn: "Tokyo", ip: "1.2.3.4" },
+  ],
+  { lock: true }
+);
+check("锁定国区：任一探针判境外即拦截（多源取最坏）", jBlocked.ok, false);
+checkTrue(
+  "拦截原因点名目标区域与判定来源",
+  /检测到非中国大陆区域/.test(jBlocked.reason || "") && /ipsb/.test(jBlocked.reason || ""),
+  jBlocked.reason
+);
+check("拦截结果带回触发拦截的出口（国家码 / IP / 归属地）", [jBlocked.ipcc, jBlocked.ip, jBlocked.geo], ["JP", "1.2.3.4", "Tokyo/JP(东京/日本)"]);
+check("多源一致为境内 → 放行", rmodQ.judgeMainland(
+  [
+    { source: "bing", mainland: true, countryCode: "CN" },
+    { source: "ipsb", mainland: true, countryCode: "CN" },
+  ],
+  { lock: true }
+).ok, true);
+// 保守放行是这条链路的原始设计：不能因为某个 GeoIP 服务抽风就停掉全天任务
+check("所有探针都给不出结论时保守放行（不因服务抽风误停任务）", rmodQ.judgeMainland(
+  [{ source: "bing", mainland: null }, { source: "ipsb", mainland: null }],
+  { lock: true }
+).ok, true);
+check("未锁区时境外只展示不拦截", rmodQ.judgeMainland([{ source: "ipsb", mainland: false, countryCode: "US" }], { lock: false }).ok, true);
+
+// —— 静态守卫：锁区判定链路 ——
+checkTrue(
+  "区域判定不再用模块级缓存（多账户 lock 不同会互相污染）",
+  !/let cachedHost/.test(rewardsSrcQ) &&
+    /return cfg\.region && cfg\.region\.lock \? "cn\.bing\.com" : "www\.bing\.com"/.test(rewardsSrcQ),
+  "cachedHost 回归 → 首个账户的判定会被后续账户复用"
+);
+checkTrue(
+  "锁定国区时双站探测 cn.bing.com + www.bing.com（识破分流规则下的直连盲区）",
+  /const hosts = lock \? \["cn\.bing\.com", "www\.bing\.com"\] : \[resolveHost\(ctx\)\]/.test(rewardsSrcQ) &&
+    /async function probeBingHost/.test(rewardsSrcQ),
+  "只探单站 → Clash/Mihomo TUN 下 cn.bing.com 走直连、任务走代理的盲区测不出来"
+);
+checkTrue(
+  "多站取最坏结果（任一非 CN 即整体判非 CN）",
+  /const nonCn = decisive\.find\(\(p\) => p\.ipcc !== "CN"\)/.test(rewardsSrcQ)
+);
+checkTrue(
+  "锁定国区额外强制探测 ipsb（境外 GeoIP，用来测真实任务出口）",
+  /ipLookup\.queryProvider\("ipsb", ctx\)/.test(rewardsSrcQ),
+  "去掉强制交叉验证 → 只信国内源，代理用户会被误判为境内"
+);
+checkTrue("导出 LOCK_REGION_LABEL（后期按国家/地区锁区时只改一处）", typeof rmodQ.LOCK_REGION_LABEL === "string" && rmodQ.LOCK_REGION_LABEL === "中国大陆");
+
+// —— 归属地展示 geoLabel ——
+check("geoLabel：境外带英文城市 → 东京/日本", ipLookup.geoLabel([{ countryCode: "JP", cityEn: "Tokyo" }]), "Tokyo/JP(东京/日本)");
+check("geoLabel：太平洋中文城市 → 徐州/中国大陆", ipLookup.geoLabel([{ countryCode: "CN", cityCn: "徐州" }]), "CN(徐州/中国大陆)");
+check("geoLabel：ip-api 中文国名直接透传", ipLookup.geoLabel([{ countryCode: "JP", cityCn: "东京", countryCn: "日本" }]), "JP(东京/日本)");
+check("geoLabel：无任何地理信息 → 未知", [ipLookup.geoLabel([]), ipLookup.geoLabel(null)], ["未知", "未知"]);
+check("geoLabel：只有国家码也能出中文国名", ipLookup.geoLabel([{ countryCode: "SG" }]), "SG(新加坡)");
+checkTrue(
+  "国家/地区中文名表述完整（港澳台均为中国的一部分）",
+  ipLookup.COUNTRY_CN.HK === "中国香港" && ipLookup.COUNTRY_CN.MO === "中国澳门" && ipLookup.COUNTRY_CN.TW === "中国台湾" && ipLookup.COUNTRY_CN.CN === "中国大陆",
+  JSON.stringify({ HK: ipLookup.COUNTRY_CN.HK, MO: ipLookup.COUNTRY_CN.MO, TW: ipLookup.COUNTRY_CN.TW })
+);
+
+// —— 拦截推送 ——
+checkTrue(
+  "拦截后推送 IP / 归属地 / 下次执行时间",
+  /async function pushRegionBlocked/.test(runnerSrcQ) &&
+    /当前 IP：/.test(runnerSrcQ) &&
+    /下次执行时间：/.test(runnerSrcQ) &&
+    /MS积分任务-区域拦截/.test(runnerSrcQ),
+  "拦截静默无声 → 用户只看到「今天没跑」，不知道是代理出口问题"
+);
+checkTrue(
+  "拦截分支接上推送（env.ok 为假时调用）",
+  /if \(!env\.ok\) \{[\s\S]{0,500}?await pushRegionBlocked\(ctx, env\)/.test(runnerSrcQ)
+);
+checkTrue(
+  "拦截原因透传 env.reason（带判定来源），不再写死文案",
+  /result\.reason = env\.reason \|\| "IP 非中国大陆，任务已停止"/.test(runnerSrcQ)
+);
+checkTrue(
+  "推送失败只 warn，绝不反过来影响拦截本身",
+  /区域拦截推送失败/.test(runnerSrcQ) && /logger\.warn\(`区域拦截推送失败/.test(runnerSrcQ)
+);
+
+// —— 每天开始时间（startTime）——
+check("config.schedule 默认 startTime 09:00", cfgDefaults.schedule.startTime, "09:00");
+check("global-config.schedule 默认 startTime 09:00", globalDefaults.schedule.startTime, "09:00");
+checkTrue("渲染层 mock 同步 startTime", /startTime: "09:00"/.test(mockSrc));
+checkTrue("类型定义 schedule 含 startTime", /startTime: string;/.test(typesSrcQ));
+check("老配置缺 startTime → 回落 09:00", runnerModule.normalizeSchedule({}).startTime, "09:00");
+check("非法 startTime → 回落 09:00", runnerModule.normalizeSchedule({ startTime: "99:99" }).startTime, "09:00");
+const atQ = (hh, mm) => {
+  const d = new Date();
+  d.setHours(hh, mm, 0, 0);
+  return d;
+};
+gCtx.config.set({ schedule: { enable: true, mode: "interval", startTime: "09:00", intervalMinutes: 60 } });
+check("每天开始时间之前不启动（08:30 < 09:00）", guardRunner.shouldRunNow(gCtx, atQ(8, 30)).run, false);
+check("到达每天开始时间后可以启动（09:30 ≥ 09:00）", guardRunner.shouldRunNow(gCtx, atQ(9, 30)).run, true);
+const qNext = guardRunner.nextRunTime(gCtx, atQ(6, 0));
+checkTrue(
+  "下次运行时间不早于每天开始时间（06:00 问 → 09:00）",
+  !!qNext && qNext.getHours() === 9 && qNext.getMinutes() === 0,
+  qNext ? String(qNext) : "null"
+);
+checkTrue("设置页有「每天开始时间」输入", /每天开始时间/.test(formSrcQ) && /patchSchedule\(\{ startTime: v \}\)/.test(formSrcQ));
+
+// —— 超额执行（allowExceed）——
+check("allowExceed：设定 10 / 剩余 3 → 保留设定值不截断", tlQ.resolveTaskCount({ base: 10, total: 3, random: false, allowExceed: true }).count, 10);
+check("未开启：设定 10 / 剩余 3 → 截断到剩余量", tlQ.resolveTaskCount({ base: 10, total: 3, random: false }).count, 3);
+check("没有可执行任务时始终为 0（超额也不凭空造任务）", tlQ.resolveTaskCount({ base: 10, total: 0, allowExceed: true }).count, 0);
+checkTrue(
+  "阅读与活动任务把 allowExceed 透传给 resolveTaskCount",
+  (tasksSource.match(/allowExceed: ctx\.force \? false : limits\.allowExceed/g) || []).length >= 2,
+  "只在配置里加字段、任务侧没透传 → 开关形同虚设"
+);
+checkTrue("设置页有「允许自定义数量超过剩余任务数」开关", /允许自定义数量超过剩余任务数/.test(formSrcQ) && /limits: \{ allowExceed: v \}/.test(formSrcQ));
+checkTrue("类型定义 limits 含 allowExceed 注释说明", /allowExceed: boolean;/.test(typesSrcQ));
+
+/* ============ P. 版本库完整性：「本地有、仓库没有」的隐雷 ============ */
+console.log("\n【P】版本库完整性（本地有、仓库没有）");
+//
+// 背景：两次真实事故，都是「本地打包全绿、clone 之后必炸」：
+//   1) build/license.txt 被 /build/*.txt 忽略 → 从未入库，但 package.json 的
+//      nsis.license 指向它 → 别人 clone 后打出来的安装器不弹协议页；
+//   2) 参考js脚本/ 被 .gitignore 排除，却仍留在 build.files → 第三方作者的脚本
+//      跟着安装包分发（版权风险）。
+// 共同点：electron-builder / CI 都只按**文件系统**收集，看不见 git，
+// 所以「本机存在」骗得过打包，骗不过一次干净 clone。
+// 因此这里把「被引用」与「已入库」直接对撞，让这类隐雷在本地就变红。
+const gitRun = (args) => {
+  try {
+    return execFileSync("git", args, {
+      cwd: ROOT,
+      encoding: "utf8",
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .split(/\r?\n/)
+      .filter(Boolean);
+  } catch (e) {
+    return null; // 读不到 git 索引时下面两条必须失败，绝不能静默放行
+  }
+};
+const gitTracked = gitRun(["ls-files"]);
+const gitLoose = gitRun(["ls-files", "--others", "--exclude-standard"]);
+const trackedSet = new Set(gitTracked || []);
+checkTrue(
+  "自检可读到 git 索引（读不到即判失败：否则下面两条守卫形同虚设）",
+  gitTracked !== null && gitLoose !== null,
+  "git ls-files 执行失败（非 git 工作区？）"
+);
+checkTrue(
+  "工作区没有未纳入版本库的游离文件（本地有、仓库没有 → clone 后必缺）",
+  gitLoose !== null && gitLoose.length === 0,
+  `游离文件 ${(gitLoose || []).length} 个：${(gitLoose || []).slice(0, 8).join(" | ")}`
+);
+
+// —— 收集「被引用」的仓库相对路径 ——
+const refList = [];
+const addRef = (rel, origin) => {
+  if (!rel) return;
+  const p = String(rel).replace(/\\/g, "/").replace(/^\.\//, "");
+  // 绝对路径与含通配的条目留给别的守卫（如 build.files 白名单），这里只管「确定的单个文件」
+  if (!p || p.startsWith("/") || /[*?[\]]/.test(p)) return;
+  refList.push({ p, origin });
+};
+const bcfg = pkgRaw.build || {};
+addRef(pkgRaw.main, "package.json#main");
+addRef(bcfg.beforePack, "package.json#build.beforePack");
+addRef(bcfg.afterPack, "package.json#build.afterPack");
+for (const f of bcfg.files || []) addRef(f, "package.json#build.files");
+for (const e of bcfg.extraResources || []) addRef(e && e.from, "package.json#build.extraResources");
+addRef(bcfg.win && bcfg.win.icon, "package.json#build.win.icon");
+if (bcfg.nsis) {
+  // nsis.license 相对 buildResources（build/）解析；图标/脚本是仓库相对路径
+  if (bcfg.nsis.license) addRef(`build/${bcfg.nsis.license}`, "package.json#build.nsis.license");
+  addRef(bcfg.nsis.include, "package.json#build.nsis.include");
+  addRef(bcfg.nsis.installerIcon, "package.json#build.nsis.installerIcon");
+  addRef(bcfg.nsis.uninstallerIcon, "package.json#build.nsis.uninstallerIcon");
+  addRef(bcfg.nsis.installerHeaderIcon, "package.json#build.nsis.installerHeaderIcon");
+}
+// Dockerfile：COPY 的第一组参数（跳过 --from 跨阶段拷贝与绝对路径）
+const dockerFileRef = path.join(ROOT, "docker", "Dockerfile");
+if (fs.existsSync(dockerFileRef)) {
+  for (const line of fs.readFileSync(dockerFileRef, "utf8").split(/\r?\n/)) {
+    const m = line.match(/^\s*COPY\s+(?!-?-?-?from)(.+?)\s+(\S+)\s*$/);
+    if (!m) continue;
+    for (const tok of m[1].trim().split(/\s+/)) addRef(tok, "docker/Dockerfile#COPY");
+  }
+}
+// CI：工作流里直接 node 执行的本地脚本
+const wfDirRef = path.join(ROOT, ".github", "workflows");
+if (fs.existsSync(wfDirRef)) {
+  for (const wf of fs.readdirSync(wfDirRef).filter((f) => /\.ya?ml$/.test(f))) {
+    const wfSrc = fs.readFileSync(path.join(wfDirRef, wf), "utf8");
+    for (const m of wfSrc.matchAll(/(?:node\s+)?(scripts\/[A-Za-z0-9_./-]+\.js)/g)) {
+      addRef(m[1], `.github/workflows/${wf}`);
+    }
+  }
+}
+// 主进程源码：require 的相对文件（构建产物目录跳过，它们本就不需要入库）
+const walkJsRef = (dir, out = []) => {
+  let entries = [];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch (e) {
+    return out;
+  }
+  for (const e of entries) {
+    if (e.name === "node_modules" || e.name === "dist" || e.name.startsWith(".")) continue;
+    const abs = path.join(dir, e.name);
+    if (e.isDirectory()) walkJsRef(abs, out);
+    else if (e.name.endsWith(".js")) out.push(abs);
+  }
+  return out;
+};
+const srcDirRef = path.join(ROOT, "src");
+if (fs.existsSync(srcDirRef)) {
+  for (const abs of walkJsRef(srcDirRef)) {
+    const jsSrc = fs.readFileSync(abs, "utf8");
+    for (const m of jsSrc.matchAll(/require\((['"])(\.\.?\/[^'"]+)\1\)/g)) {
+      const base = path.resolve(path.dirname(abs), m[2]);
+      for (const cand of [base, `${base}.js`, `${base}.json`, path.join(base, "index.js")]) {
+        if (fs.existsSync(cand) && fs.statSync(cand).isFile()) {
+          addRef(path.relative(ROOT, cand), `require@${path.relative(ROOT, abs)}`);
+          break;
+        }
+      }
+    }
+  }
+}
+const refsNotInGit = gitTracked === null ? [] : refList.filter((r) => {
+  if (trackedSet.has(r.p)) return false;
+  // 目录型引用（如 Dockerfile 的 `COPY src/ ./src/`）：目录下只要有任一文件入库即算通过
+  const absRef = path.join(ROOT, r.p);
+  if (fs.existsSync(absRef) && fs.statSync(absRef).isDirectory()) {
+    const prefix = `${r.p.replace(/\/+$/, "")}/`;
+    return !gitTracked.some((f) => f.startsWith(prefix));
+  }
+  return true;
+});
+checkTrue(
+  "被引用的文件全部已入库（打包 / CI / require 引用的文件不许只活在本地）",
+  refsNotInGit.length === 0,
+  refsNotInGit.slice(0, 8).map((r) => `${r.p} ← ${r.origin}`).join(" | ")
+);
+checkTrue(
+  "引用清单非空（断言非空转：至少覆盖 main / 打包资源 / EULA / 源码依赖）",
+  refList.length >= 8,
+  `只收集到 ${refList.length} 条引用，扫描逻辑可能失效`
 );
 
 /* ============ 汇总 ============ */

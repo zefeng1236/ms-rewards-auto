@@ -175,6 +175,7 @@ async function taskRead(ctx, token) {
       base: ctx.force ? 0 : limits.read,
       total: readsNeeded,
       random: ctx.force ? false : limits.random,
+      allowExceed: ctx.force ? false : limits.allowExceed,
     });
     const toRead = plan.count;
     // 写入初始篇数，GUI 卡片可实时显示「已读/总数」
@@ -761,6 +762,7 @@ async function taskPromos(ctx) {
     base: ctx.force ? 0 : limits.promos,
     total: totalNewTasks,
     random: ctx.force ? false : limits.random,
+    allowExceed: ctx.force ? false : limits.allowExceed,
   });
   const queue = promosArr.slice(0, plan.count);
   const runCount = queue.length;

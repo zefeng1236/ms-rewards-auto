@@ -177,6 +177,12 @@ export function SettingsForm({
           checked={value.limits?.random === true}
           onChange={(v) => onChange({ limits: { random: v } } as DeepPartial<AppConfig>)}
         />
+        <SwitchField
+          label="允许自定义数量超过剩余任务数"
+          hint="开启后阅读会按设定篇数继续尝试；积分活动仅能执行当前实际存在的条目，搜索仍按服务器额度停止。一次性完成模式不受影响。"
+          checked={value.limits?.allowExceed === true}
+          onChange={(v) => onChange({ limits: { allowExceed: v } } as DeepPartial<AppConfig>)}
+        />
         <div className="form-grid" style={{ marginTop: 12 }}>
           <NumberField
             label="阅读文章每次篇数"
@@ -215,7 +221,7 @@ export function SettingsForm({
         <div className="form-grid" style={{ marginTop: 12 }}>
           <SelectField
             label="IP 归属地查询服务"
-            hint="自动模式下 ip.sb 优先，失败依次降级太平洋 / ipinfo / ip-api，全部不可用再用 Bing 判定"
+            hint="自动模式下 ip.sb 优先，失败依次降级太平洋 / ipinfo / ip-api，全部不可用再用 Bing 判定。锁定国区时无论选哪家都会额外交叉验证 ipsb 境外 GeoIP，防止代理分流规则把检测和任务引导到不同出口"
             value={value.region?.ipProvider ?? "auto"}
             options={IP_PROVIDER_OPTIONS}
             onChange={(v) => onChange({ region: { ipProvider: v as AppConfig["region"]["ipProvider"] } })}
@@ -255,6 +261,13 @@ export function SettingsForm({
             value={mode}
             options={MODE_OPTIONS}
             onChange={(v) => patchSchedule({ mode: v as AppConfig["schedule"]["mode"] })}
+          />
+        </div>
+        <div className="form-grid" style={{ marginTop: 12 }}>
+          <TimeField
+            label="每天开始时间"
+            value={value.schedule?.startTime ?? "09:00"}
+            onChange={(v) => patchSchedule({ startTime: v })}
           />
         </div>
 

@@ -30,7 +30,7 @@ const DEFAULT_CONFIG: AppConfig = {
   tasks: { sign: true, read: true, daily: true, promos: true, claim: false, search: true },
   region: { lock: true, ipProvider: "bing" },
   search: { span: 30, api: "offline" },
-  limits: { random: false, read: 6, promos: 0, search: 6 },
+  limits: { random: false, read: 6, promos: 0, search: 6, allowExceed: false },
   schedule: {
     enable: true,
     mode: "interval",
@@ -38,6 +38,7 @@ const DEFAULT_CONFIG: AppConfig = {
     stopWhenDone: true,
     maxRounds: 0,
     time: "08:00",
+    startTime: "09:00",
     windows: [{ start: "09:00", end: "23:00" }],
     randomDelay: true,
     randomDelayMin: 20,
@@ -693,7 +694,7 @@ export function createMockApi(): ElectronApi {
       return {
         ok: true,
         updateAvailable: true,
-        currentVersion: "0.13.14",
+        currentVersion: "0.13.15",
         latestVersion: "0.14.0",
         downloadUrl: "https://github.com/zefeng1236/ms-rewards-auto/releases/download/v0.14.0/MS-Rewards-Auto-Setup-0.14.0.exe",
         assetName: "MS-Rewards-Auto-Setup-0.14.0.exe",

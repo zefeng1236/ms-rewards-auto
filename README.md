@@ -1,8 +1,10 @@
 # MS Rewards 自动任务（多账户 · GUI）
 
+[![CI](https://github.com/zefeng1236/ms-rewards-auto/actions/workflows/ci.yml/badge.svg)](https://github.com/zefeng1236/ms-rewards-auto/actions/workflows/ci.yml)
+
 独立于浏览器油猴插件的MS积分（MS Rewards）自动任务软件。基于 Electron + Playwright，提供多账户隔离、干净浏览器、图形界面与定时自动运行。
 
-> **当前版本：V0.13.14（正式版）** · [下载安装包](https://github.com/zefeng1236/ms-rewards-auto/releases)
+> **当前版本：V0.13.15（正式版）** · [下载安装包](https://github.com/zefeng1236/ms-rewards-auto/releases)
 >
 > ⚠️ 本软件为个人学习交流用途的开源工具，**非MS官方授权产品**，与 Microsoft Corporation 无任何关联。使用产生的风险请阅读文末免责声明。
 
@@ -254,7 +256,8 @@ node src/main.js browser        # 检查 Chromium
 ## 注意事项
 
 - 运行需网络可达 `login.live.com`、`rewards.bing.com`、`prod.rewardsplatform.microsoft.com`
-- 建议保持默认「锁定国区」，非中国大陆 IP 会自动停止任务
+- 建议保持默认「锁定国区」，非中国大陆 IP 会自动停止任务；判定为**多源保守取最坏**（`cn.bing.com` + `www.bing.com` 双站 + 第三方 GeoIP + 强制 ip.sb 交叉验证），任一源判境外即拦截，全部源不可用则放行。被拦截时会推送当前 IP / 归属地 / 下次执行时间（需先配置推送地址）
+- 自动运行可设「每天开始时间」（默认 `09:00`），该时刻之前不会启动
 - 搜索间隔建议 ≥ 20 秒，避免触发风控
 - 定时任务在 GUI 运行期间生效；如需纯后台运行，使用 `node src/main.js daemon`
 - `storage/` 目录含账户登录态与浏览器 profile，**切勿提交到版本库**（已在 `.gitignore` 排除）

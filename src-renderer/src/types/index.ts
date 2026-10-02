@@ -115,6 +115,8 @@ export interface AppConfig {
     promos: number;
     /** 搜索每次每轮的次数，0 = 沿用内置随机节奏（4–7，一次性完成模式 6–9）；默认 6 */
     search: number;
+    /** 允许阅读计划超过剩余篇数；活动仍只能执行实际存在的条目 */
+    allowExceed: boolean;
   };
   schedule: {
     enable: boolean;
@@ -123,6 +125,8 @@ export interface AppConfig {
     stopWhenDone: boolean;
     maxRounds: number;
     time: string;
+    /** 自动运行每天最早开始时间（HH:mm），默认 09:00 */
+    startTime: string;
     windows: ScheduleWindow[];
     /** 定时触发后先随机延迟再开始（规避固定时刻特征） */
     randomDelay: boolean;

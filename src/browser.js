@@ -25,7 +25,7 @@ const AUTH_COOKIE_NAMES = [
 ];
 
 // Bing 侧（bing.com 域下发）的认证票据。注意与 login.live.com 的 MSA 票据区分：
-// ESTSAUTH / WLSSC / KievRPSSecAuth 等只能证明「微软账号在线」，
+// ESTSAUTH / WLSSC / KievRPSSecAuth 等只能证明「MS账号在线」，
 // 不代表 bing.com 已登录 —— 正是漏掉这一层区分，导致部分用户同步后
 // Bing 首页仍显示「登录」、积分页被重定向到登录页（2026-09 用户反馈）。
 const BING_AUTH_COOKIE_NAMES = ["_U", ".MSA.Auth", "_C_Auth", "_M"];
@@ -356,7 +356,7 @@ async function closeContext(handle) {
  * 1. 存在 Bing 侧认证 Cookie（_U 等，bing.com 域下发）-> 已登录（最可靠，优先判断）
  * 2. 页面 HTML 中出现积分数据特征 -> 已登录
  * 3. 仅存在 login.live.com 的 MSA 票据（ESTSAUTH/WLSSC 等）-> 不算已登录：
- *    那只说明微软账号在线，bing.com 本身仍可能显示「登录」。
+ *    那只说明MS账号在线，bing.com 本身仍可能显示「登录」。
  *    调用方（syncCookies / waitForRewardsSession）会据此走静默 SSO 补票。
  */
 function checkLoggedIn(url, cookies, html) {
@@ -403,14 +403,14 @@ async function ensureBingSSO(page, context) {
 }
 
 /**
- * 点按钮兜底：Bing 首页点击「登录」按钮，并自动走完微软确认流程。
+ * 点按钮兜底：Bing 首页点击「登录」按钮，并自动走完MS确认流程。
  *
  * 这是静默 SSO 之后的更「强」兜底：静默授权在部分账号会卡在「选择账户 /
  * 隐私政策确认 / 需要点『是』继续」等中间态，此时像真人一样点一下 Bing
  * 右上角登录按钮，进入 login.live.com 后自动点确认、选择已登录账户，
  * 从而真正把 _U 票据补上。
  *
- * 按钮标识采用微软账号登录页多年不变的稳定 ID：
+ * 按钮标识采用MS账号登录页多年不变的稳定 ID：
  *   - Bing 首页登录入口：#id_l（或 aria-label 含「登录」）
  *   - 确认/下一步主按钮：#idSIButton9
  *   - 已登录账户瓦片：#tilesHolder .tile（另有 .tile-container 兜底）
@@ -542,7 +542,7 @@ async function syncCookies(ctx) {
     // MSA 在线但 Bing 侧没有 _U：仅访问首页不会触发 SSO，显式补一次静默登录。
     // 这是「部分用户 Bing 不会自动登录」的修复点 —— 以前会误判成已登录并原样存回。
     if (!hasBingAuthCookies(cookies) && hasAuthCookies(cookies)) {
-      logger.info("微软账号在线但 Bing 侧缺少登录票据，尝试静默 SSO 补登 Bing…");
+      logger.info("MS账号在线但 Bing 侧缺少登录票据，尝试静默 SSO 补登 Bing…");
       const sso = await ensureBingSSO(page, context);
       if (sso.ssoDone) {
         // 补票后再回一次 rewards 页，让 rewards 会话也吃 Bing 登录态
@@ -647,7 +647,7 @@ async function waitForRewardsSession(page, context) {
     // 登录完成后 Bing 仍是「登录」状态，搜索不计分）。
     if (!ssoTried && !hasBingAuthCookies(last.cookies) && hasAuthCookies(last.cookies)) {
       ssoTried = true;
-      logger.info("微软账号已授权，正在静默 SSO 补登 Bing…");
+      logger.info("MS账号已授权，正在静默 SSO 补登 Bing…");
       const sso = await ensureBingSSO(page, context);
       const loggedIn = checkLoggedIn(sso.url, sso.cookies, sso.html);
       last = { loggedIn, cookies: sso.cookies, url: sso.url, html: sso.html };
@@ -723,7 +723,7 @@ async function loginInteractive(ctx) {
     // 登录成功后，依次访问 bing.com 与 rewards.bing.com 完成 SSO 并同步 Cookie。
     // 必须先过一次 bing.com：授权页所在的 login.live.com 域拿不到 bing 的 _U 票据，
     // 只有实际访问过 bing 才会通过 SSO 下发，否则会一直显示「Cookie 待同步」。
-    // Microsoft 偶尔会在这里弹隐私政策更新确认，用户点「是」之后才会继续下发必要票据；
+    // MS 偶尔会在这里弹隐私政策更新确认，用户点「是」之后才会继续下发必要票据；
     // 因此关闭浏览器前必须确认认证 Cookie / Rewards 页面特征已抓到，没抓齐就继续等一会儿。
     const session = await waitForRewardsSession(page, context);
     const { url, cookies, html, loggedIn } = session;

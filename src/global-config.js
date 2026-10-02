@@ -43,6 +43,8 @@ const GLOBAL_DEFAULTS = {
     promos: 0,
     // 搜索每轮次数：0 = 沿用内置随机节奏（4–7，force 模式 6–9）；>0 = 固定值
     search: 6,
+    // 允许执行数量超过剩余任务总数（默认关闭）
+    allowExceed: false,
   },
   schedule: {
     enable: true,
@@ -51,6 +53,7 @@ const GLOBAL_DEFAULTS = {
     stopWhenDone: true,
     maxRounds: 0,
     time: "08:00",
+    startTime: "09:00",
     windows: [{ start: "09:00", end: "23:00" }],
     // 定时触发后随机延迟再开始（秒），弱化固定时刻特征
     randomDelay: true,

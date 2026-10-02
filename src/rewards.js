@@ -5,95 +5,189 @@ const ipLookup = require("./ip-lookup");
 const UA_PC = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0";
 const UA_MOBILE = "Mozilla/5.0 (Linux; Android 12; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36 EdgA/130.0.0.0";
 
-let cachedHost = "";
+// 锁区目标展示名。当前只锁中国大陆；预留后期按国家/地区锁区（届时改成配置项读取）。
+const LOCK_REGION_LABEL = "中国大陆";
 
-/** 解析 bing 主机：锁定国区则使用 cn.bing.com */
+/** 解析 bing 主机：锁定国区则使用 cn.bing.com。
+ *
+ * 不再使用模块级缓存：早期实现把首次解析结果缓存在 `cachedHost` 上，
+ * 后续所有账户复用同一份首账户的判定；lock 状态在多账户间翻转时会污染。
+ * 这里直接读 config（廉价），避免跨账户缓存。 */
 function resolveHost(ctx) {
-  if (cachedHost) return cachedHost;
   const cfg = ctx.config.get();
-  cachedHost = cfg.region && cfg.region.lock ? "cn.bing.com" : "www.bing.com";
-  return cachedHost;
+  return cfg.region && cfg.region.lock ? "cn.bing.com" : "www.bing.com";
 }
 
 /**
- * 旧版区域检查：解析 bing 首页脚本中的 Region / RevIpCC
+ * 解析单个 bing 主机首页中的 Region / RevIpCC。
+ * @returns {Promise<{host:string, region:string, ipcc:string, decisive:boolean}>}
+ *          decisive=false 表示拿到响应但 Bing 内嵌无国家码（构造失败 / 改版）
+ */
+async function probeBingHost(ctx, host) {
+  try {
+    const res = await httpRequest({
+      url: `https://${host}/`,
+      headers: {
+        "user-agent": UA_PC,
+        cookie: ctx.state.buildCookieHeader(host, ["_EDGE_S", "_Rwho", "_RwBf"]),
+      },
+      ctx,
+      dontLog: true,
+    });
+    if (!res.text) {
+      logger.warn(`区域检测(Bing/${host}) 无法获取首页，跳过`);
+      return { host, region: "", ipcc: "", decisive: false };
+    }
+    const clean = res.text.replace(/\s+/g, "");
+    const m = clean.match(/Region:"(.*?)"(.*?)RevIpCC:"(.*?)"/);
+    if (!m) {
+      logger.warn(`区域检测(Bing/${host}) 未解析到区域信息，跳过`);
+      return { host, region: "", ipcc: "", decisive: false };
+    }
+    const region = m[1].toUpperCase();
+    const ipcc = m[3].toUpperCase();
+    logger.info(`区域检测(Bing/${host}): Region=${region}, RevIpCC=${ipcc}`);
+    return { host, region, ipcc, decisive: true };
+  } catch (e) {
+    logger.warn(`区域检测(Bing/${host}) 异常: ${e.message}`);
+    return { host, region: "", ipcc: "", decisive: false };
+  }
+}
+
+/**
+ * Bing 首页区域检查
  *
- * 现在作为：① 用户在设置里显式选择「Bing 首页判定」时的主路径；
- *           ② 第三方 IP 服务全部不可用时的内部兜底。
+ * lock=false：按 `resolveHost` 单站探针，返回单一国家码。
+ * lock=true：双站（cn.bing.com + www.bing.com）并发探测，取最坏结果——
+ *   在分流规则下（如 Clash/Mihomo TUN 模式），`cn.bing.com` 几乎必然被
+ *   GEOIP,CN,DIRECT 命中走国内直连，而 `www.bing.com` 在某些规则集里
+ *   路由不同。两个站点比对能识破「检测走直连 / 任务走代理」的盲区。
+ *
  * @returns {Promise<{ok: boolean, region: string, ipcc: string, decisive: boolean}>}
- *          decisive=false 表示没能解析出国家码（调用方应据此保守放行）
+ *          decisive=false 表示全部站都没拿到判断（调用方据此保守放行）
  */
 async function bingRegionCheck(ctx) {
-  const host = resolveHost(ctx);
-  const res = await httpRequest({
-    url: `https://${host}/`,
-    headers: {
-      "user-agent": UA_PC,
-      cookie: ctx.state.buildCookieHeader(host, ["_EDGE_S", "_Rwho", "_RwBf"]),
-    },
-    ctx,
-    dontLog: true,
-  });
-  if (!res.text) {
-    logger.warn("无法获取 bing 首页（区域检查跳过）");
+  const cfg = ctx.config.get();
+  const lock = !!(cfg.region && cfg.region.lock);
+  const hosts = lock ? ["cn.bing.com", "www.bing.com"] : [resolveHost(ctx)];
+  const probes = await Promise.all(hosts.map((h) => probeBingHost(ctx, h)));
+  const decisive = probes.filter((p) => p.decisive);
+  if (decisive.length === 0) {
     return { ok: true, region: "", ipcc: "", decisive: false };
   }
-  const clean = res.text.replace(/\s+/g, "");
-  const m = clean.match(/Region:"(.*?)"(.*?)RevIpCC:"(.*?)"/);
-  if (!m) {
-    logger.warn("未从 bing 首页解析到区域信息（区域检查跳过）");
-    return { ok: true, region: "", ipcc: "", decisive: false };
+  // 保守：任何一个非 CN → 整体判定为非 CN（多源中取最坏）
+  const nonCn = decisive.find((p) => p.ipcc !== "CN");
+  if (nonCn) {
+    return { ok: true, region: nonCn.region, ipcc: nonCn.ipcc, decisive: true };
   }
-  const region = m[1].toUpperCase();
-  const ipcc = m[3].toUpperCase();
-  logger.info(`区域检测(Bing): Region=${region}, RevIpCC=${ipcc}`);
-  return { ok: true, region, ipcc, decisive: true };
+  // 全部 CN，取首个
+  return { ok: true, region: decisive[0].region, ipcc: decisive[0].ipcc, decisive: true };
 }
 
 /**
  * 大陆 IP 检查
  *
- * 优先用用户选择的第三方 IP 归属地服务（默认 auto：ip.sb → 太平洋 → ipinfo → ip-api），
- * 第三方不可用或给不出国家码时回落 Bing 首页的 RevIpCC，保证不会因为某个服务
- * 抽风就误停任务。用户也可在设置里固定使用某一家（含旧的 Bing 方式）。
- * @returns {Promise<{ok: boolean, region: string, ipcc: string}>}
+ * 锁定国区 (lock=true) 时，**多源保守并用**——绝不能让单源说了算：
+ *   - bingRegionCheck：双站 cn.bing.com + www.bing.com 并发（识别「同分流下不同站点
+ *     走不同通道」的盲区，例如 Clash TUN 规则命中 GEOIP,CN,DIRECT 仅放行 cn.bing.com）
+ *   - 第三方 IP 服务（用户选定的 provider，auto 时按 ipsb→pconline→ipinfo→ipapi 链降级）
+ *   - 锁定国区时**额外**强制探测一次 ipsb（境外 GeoIP，在分流规则下通常被路由到代理节点，
+ *     是测出「实际任务出口」的关键探针，不会被国内分流规则一票直连放行）
+ *   - 任一明确「非大陆」即判定为非大陆；全部失败 / 全部 undecidable 仍走「保守放行」
+ *     （保留「不因服务抽风而误停任务」的原始设计）
+ *
+ * lock=false：纯信息展示，按用户选的 provider 单源降级，失败回落 Bing。
+ * @returns {Promise<{ok: boolean, region: string, ipcc: string, reason?: string}>}
  */
 async function mainlandCheck(ctx) {
   const cfg = ctx.config.get();
   const lock = !!(cfg.region && cfg.region.lock);
   const provider = (cfg.region && cfg.region.ipProvider) || "auto";
 
-  // 显式选择旧的 Bing 方式
+  if (lock) {
+    // 并行：双站 Bing + 用户选定 provider + 强制 ipsb 交叉验证
+    const [b, rUser, ipsb] = await Promise.all([
+      bingRegionCheck(ctx),
+      ipLookup.queryProvider(provider, ctx),  // "bing" 时会 null，回落到 bing
+      ipLookup.queryProvider("ipsb", ctx),   // 强制必查：探测代理节点出口
+    ]);
+
+    const verdicts = [];
+    if (b.decisive) {
+      verdicts.push({ source: "bing", region: b.region, ipcc: b.ipcc, mainland: b.ipcc === "CN" });
+    } else {
+      verdicts.push({ source: "bing", mainland: null });
+    }
+    if (rUser) verdicts.push(rUser);
+    if (ipsb) verdicts.push(ipsb);
+
+    return judgeMainland(verdicts, { lock: true });
+  }
+
+  // lock=false：单源信息展示（保留原行为）
   if (provider === "bing") {
     const b = await bingRegionCheck(ctx);
-    if (lock && b.decisive && b.ipcc !== "CN") {
-      logger.warn("当前 IP 非中国大陆，已锁定国区，停止任务。");
-      return { ok: false, region: b.region, ipcc: b.ipcc };
-    }
     return { ok: true, region: b.region, ipcc: b.ipcc };
   }
 
-  // 第三方服务（auto 会在内部按顺序降级）
   const r = await ipLookup.lookupCountry(ctx, provider);
   if (r && r.mainland !== null) {
     const ipcc = r.countryCode || (r.mainland ? "CN" : "");
     logger.info(`区域检测(${r.source}): ip=${r.ip} 国家码=${ipcc || "未知"} ${r.detail || ""}`.trim());
-    if (lock && r.mainland === false) {
-      logger.warn(`当前 IP 非中国大陆（${r.source} 判定），已锁定国区，停止任务。`);
-      return { ok: false, region: "", ipcc };
-    }
     return { ok: true, region: "", ipcc };
   }
 
-  // 第三方没给出可信结论：回落 Bing
   if (r) logger.warn(`IP 服务 ${r.source} 未能确定国家码，回落 Bing 判定`);
   else logger.warn("所有第三方 IP 查询服务均不可用，回落 Bing 判定");
   const b = await bingRegionCheck(ctx);
-  if (lock && b.decisive && b.ipcc !== "CN") {
-    logger.warn("当前 IP 非中国大陆，已锁定国区，停止任务。");
-    return { ok: false, region: b.region, ipcc: b.ipcc };
-  }
   return { ok: true, region: b.region, ipcc: b.ipcc };
+}
+
+/**
+ * 纯函数：多源判定汇聚（无 IO，可在自检中离线断言）。
+ *
+ * 任一探针 mainland === false 且 lock=true → 拦截；
+ * 全部 inconclusive（mainland === null）→ 放行但记 warning（保留「保守放行」语义）；
+ * 至少一个 mainland === true 且无 mainland === false → 放行。
+ *
+ * @param {Array<{source:string, mainland:boolean|null, ip?:string, countryCode?:string, region?:string, detail?:string}>} verdicts
+ * @param {{lock: boolean}} opts
+ * @returns {{ok:boolean, region:string, ipcc:string, reason?:string}}
+ */
+function judgeMainland(verdicts, opts = {}) {
+  const lock = !!opts.lock;
+  const log = (msgs) => { try { require("./logger").info(msgs); } catch (_) { /* offline 自检允许 logger 失败 */ } };
+
+  for (const v of verdicts || []) {
+    if (v && v.mainland !== null && v.mainland !== undefined) {
+      const cc = v.countryCode || (v.mainland ? "CN" : "") || "未知";
+      log(`区域检测(${v.source}): ip=${v.ip || ""} 国家码=${cc} ${v.detail || ""}`.trim());
+    }
+  }
+
+  if (lock) {
+    const nonCn = (verdicts || []).find((v) => v && v.mainland === false);
+    if (nonCn) {
+      const reason = `检测到非${LOCK_REGION_LABEL}区域（由 ${nonCn.source} 判定），本次任务已取消执行`;
+      return {
+        ok: false,
+        region: nonCn.region || "",
+        ipcc: nonCn.countryCode || nonCn.ipcc || "",
+        ip: nonCn.ip || ((verdicts.map((v) => v && v.ip).find(Boolean)) || ""),
+        // 归属地优先取触发拦截的探针（多源冲突时展示的就是拦下的那个出口）
+        geo: ipLookup.geoLabel([nonCn].concat(verdicts)),
+        reason,
+      };
+    }
+    const allInconclusive = verdicts.every((v) => !v || v.mainland === null || v.mainland === undefined);
+    if (allInconclusive) {
+      log("区域检测: 所有探针均无明确结论，按保守放行；锁定国区用户请检查网络/代理设置。");
+    }
+  }
+
+  // 至少一个 mainland=true → 放行；否则空放行（兼容旧调用方）
+  const cn = (verdicts || []).find((v) => v && v.mainland === true);
+  return { ok: true, region: cn && cn.region ? cn.region : "", ipcc: cn && cn.countryCode ? cn.countryCode : "" };
 }
 
 /**
@@ -377,8 +471,12 @@ module.exports = {
   UA_MOBILE,
   READ_OFFER_ID,
   POINTS_PER_ARTICLE,
+  LOCK_REGION_LABEL,
   resolveHost,
   mainlandCheck,
+  bingRegionCheck,
+  judgeMainland,
+  probeBingHost,
   getRewardsInfo,
   getReadPro,
   parsePointsCounters,
