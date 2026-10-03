@@ -848,7 +848,7 @@ function PageFingerprint({ onCanProceed }: { onCanProceed: (v: boolean) => void 
   // 与主进程 DEFAULT_MIRROR / config.js 默认值保持一致；真实值由下面 setGlobalConfig 读到后覆盖
   const [mirror, setMirror] = useState("cdn.gh-proxy.org");
   const [st, setSt] = useState<FingerprintStatus | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [localBusy, setLocalBusy] = useState(false);
   const [progress, setProgress] = useState<InstallProgress | null>(null);
   const [err, setErr] = useState("");
 
@@ -892,6 +892,18 @@ function PageFingerprint({ onCanProceed }: { onCanProceed: (v: boolean) => void 
     onCanProceed(canProceed);
   }, [canProceed, onCanProceed]);
 
+  /**
+   * 「正在下载」的判定必须包含**主进程后台下载**。
+   *
+   * 实测踩到的 bug（2026-10-03）：首次运行时主进程会后台自动开始下载 181MB，
+   * 但界面只认自己 click 出来的 localBusy，于是按钮仍显示「立即下载」、进度条不渲染；
+   * 用户一点就被主进程以「正在下载，请稍候」拒绝，finally 又把 busy 置 false ——
+   * 表现为进度条「闪一下就消失」。
+   *
+   * 现在两个来源取或：st.downloading（主进程态）+ localBusy（本次点击态）。
+   */
+  const downloading = localBusy || !!st?.downloading;
+
   // 勾选/取消「跳过」：写全局配置的 enable（跳过 = 不启用），与设置页同源
   const choose = async (v: boolean) => {
     setEnable(v);
@@ -920,7 +932,7 @@ function PageFingerprint({ onCanProceed }: { onCanProceed: (v: boolean) => void 
   };
 
   const onInstall = async () => {
-    setBusy(true);
+    setLocalBusy(true);
     setErr("");
     setProgress({ pct: 0 });
     try {
@@ -936,7 +948,7 @@ function PageFingerprint({ onCanProceed }: { onCanProceed: (v: boolean) => void 
     } catch (e) {
       setErr(String((e as Error)?.message || e));
     } finally {
-      setBusy(false);
+      setLocalBusy(false);
       setProgress(null);
     }
   };
@@ -998,14 +1010,14 @@ function PageFingerprint({ onCanProceed }: { onCanProceed: (v: boolean) => void 
             <div className="wz-fp-act">
               <button
                 type="button"
-                className={`wz-dl${busy ? " danger" : ""}`}
-                onClick={() => (busy ? void onCancelInstall() : void onInstall())}
+                className={`wz-dl${downloading ? " danger" : ""}`}
+                onClick={() => (downloading ? void onCancelInstall() : void onInstall())}
                 disabled={skip || !!st?.ready}
               >
-                {st?.ready ? "已安装 ✓" : busy ? "取消下载" : "立即下载"}
+                {st?.ready ? "已安装 ✓" : downloading ? "取消下载" : "立即下载"}
               </button>
               <div className="wz-fp-prog">
-                {busy ? (
+                {downloading ? (
                   <>
                     <div className="fp-bar">
                       <div className="fp-bar-fill" style={{ width: `${pct}%` }} />

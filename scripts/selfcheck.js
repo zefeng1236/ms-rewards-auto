@@ -4,15 +4,42 @@
  * 用法: node scripts/selfcheck.js
  * 退出码 0 = 全部通过，1 = 有失败项
  *
- * passwordStrength.ts 是 TS，这里用 esbuild 现转 CJS 后 require，
- * 避免为了跑测试引入额外测试框架。
+ * passwordStrength.ts 是 TS，这里用 TypeScript 编译器 API（ts.transpileModule）
+ * 现转 CJS 后 require，避免为了跑测试引入额外测试框架或打包器。
+ * ⚠️ 不要改回 esbuild：vite 8 起不再传递依赖 esbuild，它不是本项目的直接依赖，
+ *    靠 hoisting 拿到就会在某次 npm 升级后突然 MODULE_NOT_FOUND（0.13.16 踩过）。
+ *    typescript 本来就在 devDependencies 里，是稳定的直接依赖。
  */
 const fs = require("fs");
 const path = require("path");
-const esbuild = require("esbuild");
+const ts = require("typescript");
 const { execFileSync } = require("child_process");
 
+/** 把一个 TS 文件就地转成 CJS 并 require（只做类型擦除，不做类型检查） */
+function requireTs(relPath) {
+  const abs = path.join(ROOT, ...relPath.split("/"));
+  const js = ts.transpileModule(fs.readFileSync(abs, "utf8"), {
+    compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2022,
+      esModuleInterop: true,
+    },
+    fileName: abs,
+  }).outputText;
+  const mod = { exports: {} };
+  // eslint-disable-next-line no-new-func
+  new Function("exports", "require", "module", "__filename", "__dirname", js)(
+    mod.exports,
+    require,
+    mod,
+    abs,
+    path.dirname(abs)
+  );
+  return mod.exports;
+}
+
 const ROOT = path.join(__dirname, "..");
+const os = require("os");
 let pass = 0;
 let fail = 0;
 
@@ -31,17 +58,7 @@ function checkTrue(name, cond, extra = "") {
 
 /* ============ 1. 密码强度 ============ */
 console.log("\n【1】密码强度 evaluatePassword");
-const os = require("os");
-const outFile = path.join(os.tmpdir(), "ms-rewards-pw-selfcheck.cjs");
-esbuild.buildSync({
-  entryPoints: [path.join(ROOT, "src-renderer", "src", "utils", "passwordStrength.ts")],
-  bundle: true,
-  format: "cjs",
-  platform: "node",
-  outfile: outFile,
-  logLevel: "silent",
-});
-const { evaluatePassword } = require(outFile);
+const { evaluatePassword } = requireTs("src-renderer/src/utils/passwordStrength.ts");
 
 // [密码, 期望 pass, 说明]
 const pwCases = [
@@ -68,8 +85,6 @@ checkTrue("生日会触发提醒", evaluatePassword("19990101Abc!").weakHints.le
 check("生日密码仍可通过（只提醒不禁止）", evaluatePassword("19990101Abc!").pass, true);
 checkTrue("连续字符会触发提醒", evaluatePassword("Abcd1234!").weakHints.length > 0);
 checkTrue("重复字符会触发提醒", evaluatePassword("Aa1!1111x").weakHints.length > 0);
-
-fs.rmSync(outFile, { force: true });
 
 /* ============ 2. 每日活动解析 ============ */
 console.log("\n【2】每日活动 dailySetItems 解析");
@@ -1237,6 +1252,7 @@ const typesSrcFp = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "types
 const stealthSrcFp = fs.readFileSync(path.join(ROOT, "src", "stealth.js"), "utf8");
 const browserSrcFp = fs.readFileSync(path.join(ROOT, "src", "browser.js"), "utf8");
 const cssSrcFp = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "styles", "global.css"), "utf8");
+const wizardSrcFp = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "views", "SetupWizard.tsx"), "utf8");
 
 // —— 下载链路 ——
 checkTrue(
@@ -1305,8 +1321,19 @@ checkTrue(
 
 // —— 解压：必须用操作系统自带工具 ——
 checkTrue(
-  "解压走系统自带 tar（不用 JS 解压库）",
-  /runCmd\("tar", \["-xf"/.test(fpSrc)
+  "解压走系统自带 tar（不用 JS 解压库），且**优先系统 bsdtar**",
+  // ⚠️ 三条都要锚在真实代码上，不能只匹配注释文字（实测踩过：守卫写成
+  // /System32.*tar\.exe/ 时，把 out.push(sys) 删掉仍然 PASS —— 因为注释里
+  // 那句「System32, tar.exe」被匹配上了，等于假绿）。
+  // 真实判据：tarCandidates 里有 existsSync(sys) 的守卫 + out.push(sys)。
+  /function tarCandidates\(\)\s*\{[\s\S]{0,400}?System32[\s\S]{0,300}?existsSync\(sys\)[\s\S]{0,120}?out\.push\(sys\)/.test(
+    fpSrc
+  ) &&
+    /out\.push\("tar"\)/.test(fpSrc) &&
+    /function tarArgs\(/.test(fpSrc) &&
+    // bsdtar 必须用 cwd + basename 绕开盘符冒号
+    /path\.basename\(file\)/.test(fpSrc),
+  "未优先系统 bsdtar → 装了 Git for Windows 的机器上 GNU tar 抢在前面，181MB 的 zip 必然装不上"
 );
 checkTrue(
   "Windows zip 有 PowerShell Expand-Archive 兜底",
@@ -1315,6 +1342,70 @@ checkTrue(
 checkTrue(
   "解压后校验目录非空（坏包不能算成功）",
   /assertExtracted\(dir/.test(fpSrc) && /解压后目录为空/.test(fpSrc)
+);
+
+// —— 2026-10-03：下载提速三件套（多连接分片 + hosts 优选 IP + 下载中状态）——
+const fpHttpSrc = fs.readFileSync(path.join(ROOT, "src", "http-get.js"), "utf8");
+const fhSrc = fs.readFileSync(path.join(ROOT, "src", "fast-hosts.js"), "utf8");
+
+checkTrue(
+  "下载走并发分片（单连接被TCP 流控卡在 0.5MiB/s，16 线程实测 10MiB/s）",
+  /const PARALLEL_CONNECTIONS = 16/.test(fpSrc) &&
+    /async function downloadParallel\(/.test(fpSrc) &&
+    /function downloadSegment\(/.test(fpSrc) &&
+    /downloadParallel\(raw, prefix, dest, total/.test(fpSrc),
+  "分片下载器缺失 → 下载速度回到单连接水平（181MB 要 4~5 分钟）"
+);
+checkTrue(
+  "分片下载必须校验 206（服务器无视Range 返回 200 时拼出来全是重复数据）",
+  // ⚠️ 必须锚定 downloadSegment 内部那一处：downloadOnce 里本来就有
+  // `status !== 200 && status !== 206`（串行路径允许 200），锚太宽会被它顶成假绿。
+  /function downloadSegment\([\s\S]{0,900}?if \(res\.status !== 206\)/.test(fpSrc) &&
+    /err\.noRange = true/.test(fpSrc)
+);
+checkTrue(
+  "分片失败可续传（分片临时文件按完整长度判定可用）",
+  /function listParts\(/.test(fpSrc) && /PART_SUFFIX/.test(fpSrc) &&
+    /st\.size === s\.end - s\.start \+ 1/.test(fpSrc)
+);
+checkTrue(
+  "hosts 优选 IP 直连：拉 hosts.json 并把 github.com 固定到优选 IP",
+  /hosts\.gitcdn\.top\/hosts\.json/.test(fhSrc) &&
+    /function pinnedLookup\(/.test(fhSrc) &&
+    // 必须真的被调用（只定义不使用 = 守卫白给）
+    /reqOpts\.lookup = pinnedLookup\(o\.ip\)/.test(fpHttpSrc)
+);
+checkTrue(
+  "优选 IP 只接管白名单域名（302 跳到的 release-assets 必须走系统 DNS）",
+  /WANTED = \["github\.com", "api\.github\.com"\]/.test(fhSrc) &&
+    /!WANTED\.includes/.test(fhSrc)
+);
+checkTrue(
+  "ip-direct 不进 MIRROR_KEYS（与 direct 同为空前缀，登记进去会让 PREFIX_TO_KEY 反查混淆）",
+  /const IP_DIRECT = "ip-direct"/.test(fpSrc) &&
+    !/const MIRROR_KEYS = \{[^}]*ip-direct/s.test(fpSrc)
+);
+checkTrue(
+  "换域名后自动放弃优选 IP（只对白名单域名生效）",
+  /ip = undefined/.test(fpHttpSrc),
+  "302 跳到 release-assets.githubusercontent.com 后仍强用 github.com 的 IP → 第二跳连不上"
+);
+checkTrue(
+  "状态接口下发 downloading 标志（否则进度条闪一下就消失：界面只认自己点击的那次）",
+  // 两处都要：handler 里推的、类型里声明的
+  /mainWindow\.webContents\.send\("fingerprint-status", \{ \.\.\.s, downloading: !!fingerprintInstallController \}\)/.test(
+    mainSrcFp
+  ) && /downloading\?: boolean/.test(typesSrcFp)
+);
+checkTrue(
+  "状态推送必须在 controller 置空之后（提前推等于告诉界面「还在下载」）",
+  // finally 块里 set null 之后才 pushFingerprintStatus
+  /fingerprintInstallController = null;[\s\S]{0,200}?pushFingerprintStatus\(\);/.test(mainSrcFp)
+);
+checkTrue(
+  "界面把「后台下载」并入 busy（向导页与设置面板两处，缺一就有一处闪一下就消失）",
+  /const downloading = localBusy \|\| !!st\?\.downloading/.test(wizardSrcFp) &&
+    /const busy = localBusy \|\| !!st\?\.downloading/.test(panelSrcFp)
 );
 checkTrue(
   "反例守卫 ⑩：不得依赖 extract-zip / yauzl（lockfile 里是 dev，打包会被剪掉）",
@@ -1563,7 +1654,7 @@ checkTrue(
 // —— CSS 结构完整性（0.10.1）——
 // liquidGlassCompat.css 的首行曾是被**截断的规则残片**（`.friend-actions` 的选择器与
 // 前半段声明在迁移时丢了，只剩尾部 49 字节 + 一个游离的 `}`）。这类损坏构建**照样成功**：
-// esbuild 只打一条 `Unexpected ";"` 警告、把顶层那条声明整条丢掉，产物里完全看不出来。
+// 打包器只打一条 `Unexpected ";"` 警告、把顶层那条声明整条丢掉，产物里完全看不出来。
 // 用「括号配平 + 顶层不得出现分号（@import 等 at-rule 除外）」把它锁死。
 const cssStructureOk = (rel) => {
   const src = fs.readFileSync(path.join(ROOT, ...rel.split("/")), "utf8");
@@ -1585,7 +1676,7 @@ const cssStructureOk = (rel) => {
   return depth === 0;
 };
 checkTrue(
-  "补位层 CSS 结构合法（无顶层游离分号 / 括号配平）—— 截断的规则残片会被 esbuild 静默丢弃",
+  "补位层 CSS 结构合法（无顶层游离分号 / 括号配平）—— 截断的规则残片会被打包器静默丢弃",
   cssStructureOk("src-renderer/src/components/liquidGlassCompat.css")
 );
 checkTrue("global.css 结构合法（无顶层游离分号 / 括号配平）", cssStructureOk("src-renderer/src/styles/global.css"));

@@ -38,6 +38,8 @@ const { spawn } = require("child_process");
 const { once } = require("events");
 const logger = require("./logger");
 const sp = require("./storage-path");
+const httpGet = require("./http-get");
+const fastHosts = require("./fast-hosts");
 
 const REPO = "adryfish/fingerprint-chromium";
 /** 固定版本：环境拟真浏览器的发布节奏与本项目不同步，钉死避免用户环境出现不可预期变化 */
@@ -75,25 +77,37 @@ const MIRROR_PREFIXES = [
  */
 const MIRROR_KEYS = {
   auto: null,
+  "cdn.gh-proxy.org": "https://cdn.gh-proxy.org/",
   "gh-proxy.com": "https://gh-proxy.com/",
   "v4.gh-proxy.org": "https://v4.gh-proxy.org/",
-  "cdn.gh-proxy.org": "https://cdn.gh-proxy.org/",
   "gh-proxy.org": "https://gh-proxy.org/",
   "axisnow.gh-proxy.org": "https://axisnow.gh-proxy.org/",
   "v6.gh-proxy.org": "https://v6.gh-proxy.org/",
   direct: "",
 };
 
+/**
+ * 「优选 IP 直连」是特例，**不进 MIRROR_KEYS**。
+ *
+ * 它和 direct 的 URL 前缀都是 ""，放进那张表会与 direct 撞成同一个键，
+ * 导致 PREFIX_TO_KEY 反查时"直连"到底对应哪个标识说不清。区别只在**解析方式**：
+ *   direct     → 系统 DNS（本地 hosts 把 github 指向 127.0.0.1 时必然失败）
+ *   ip-direct  → hosts.gitcdn.top 的优选 IP（绕开阻断，实测能到 5.5MiB/s）
+ * 所以由 resolveMirrors 单独识别，downloadAsset 再按标识决定要不要取优选 IP。
+ */
+const IP_DIRECT = "ip-direct";
+
 /** 供界面下拉展示的镜像源选项（顺序即自动链的尝试顺序） */
 const MIRROR_OPTIONS = [
   { value: "auto", label: "自动（测速选最快 · 推荐）" },
+  { value: IP_DIRECT, label: "优选 IP 直连（绕 hosts 阻断 + 16 线程）" },
   { value: "cdn.gh-proxy.org", label: "cdn.gh-proxy.org（Fastly）" },
   { value: "gh-proxy.com", label: "gh-proxy.com" },
   { value: "v4.gh-proxy.org", label: "v4.gh-proxy.org（官方推荐）" },
   { value: "gh-proxy.org", label: "gh-proxy.org" },
   { value: "axisnow.gh-proxy.org", label: "axisnow.gh-proxy.org" },
   { value: "v6.gh-proxy.org", label: "v6.gh-proxy.org（IPv6 线路）" },
-  { value: "direct", label: "直连 GitHub" },
+  { value: "direct", label: "直连 GitHub（系统 DNS）" },
 ];
 
 /**
@@ -200,6 +214,10 @@ async function mirrorsByLatency() {
  */
 async function resolveMirrors(mirror) {
   const key = String(mirror == null ? "" : mirror).trim();
+  // 优选 IP 直连：前缀为空串（真直连），但解析方式由标识本身决定。
+  // 放在自动链的最前面 —— 实测它在阻断环境下是唯一能通的直连方案，
+  // 而通了之后又有16 线程分片，吞吐比任何镜像都快。
+  if (key === IP_DIRECT) return [""];
   if (key && Object.prototype.hasOwnProperty.call(MIRROR_KEYS, key)) {
     const p = MIRROR_KEYS[key];
     return p === null ? await mirrorsByLatency() : [p];
@@ -537,22 +555,59 @@ function fmtEta(sec) {
  */
 async function probeTotal(rawUrl, version, mirror) {
   const mirrors = await resolveMirrors(mirror);
+  // 直连档要像下载那样用上优选 IP：api.github.com 在很多本地 hosts 里被指向
+  // 127.0.0.1（实测本机就是这样），走 fetch 会全盘失败 —— 结果 total=0、
+  // sha256=null，最强的完整性校验被静默跳过。必须与下载路径同源。
+  // ⚠️ github.com 与 api.github.com 是**两台不同的机器**（实测 .166 / .168），
+  // 必须按域名分别取 IP：用错会拿到 403，表现为探测静默失败。
+  let ipMap = null;
+  if (mirror === IP_DIRECT || (mirror !== "direct" && mirrors.length === 1 && mirrors[0] === "")) {
+    try {
+      const [ghIp, apiIp] = await Promise.all([fastHosts.githubIp(), fastHosts.apiGithubIp()]);
+      if (ghIp || apiIp) {
+        ipMap = {};
+        if (ghIp) ipMap["github.com"] = ghIp;
+        if (apiIp) ipMap["api.github.com"] = apiIp;
+      }
+    } catch {
+      ipMap = null;
+    }
+  }
+  /** 发探测请求：直连+有优选 IP 时走 http-get（能固定解析），否则用 fetch。
+   *  两者返回同形响应（有 ok / json / headers.get），上层无需分支。 */
+  const probeFetch = async (url, opts) => {
+    const isDirect = /^https:\/\/(github\.com|api\.github\.com)\//.test(url);
+    if (ipMap && isDirect) {
+      try {
+        return await httpGet.get(url, {
+          method: (opts && opts.method) || "GET",
+          headers: (opts && opts.headers) || {},
+          timeoutMs: (opts && opts.timeoutMs) || 8000,
+          ip: ipMap,
+        });
+      } catch {
+        return null;
+      }
+    }
+    try {
+      return await fetch(url, opts);
+    } catch {
+      return null;
+    }
+  };
 
   // ① HEAD：直连 GitHub 会如实返回 content-length；经 gh-proxy 时拿不到（实测为 null）
   const headTotal = async () => {
     for (const prefix of mirrors) {
-      try {
-        const res = await fetch(prefix + rawUrl, {
-          method: "HEAD",
-          redirect: "follow",
-          signal: AbortSignal.timeout(8000),
-        });
-        if (!res.ok) continue;
-        const n = parseInt(res.headers.get("content-length") || "0", 10);
-        // 必须 >= MIN_ASSET_BYTES 才信：环境拟真浏览器包至少 181MB，镜像对 HEAD 返回
-        // 0 / 几 KB 的异常值不能当权威总长（否则 knownTotal 失真，校验基准就错了）
-        if (n >= MIN_ASSET_BYTES) return n;
-      } catch {}
+      const res = await probeFetch(prefix + rawUrl, {
+        method: "HEAD",
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res || !res.ok) continue;
+      const n = parseInt(res.headers.get("content-length") || "0", 10);
+      // 必须 >= MIN_ASSET_BYTES 才信：环境拟真浏览器包至少 181MB，镜像对 HEAD返回
+      // 0 / 几 KB 的异常值不能当权威总长（否则 knownTotal 失真，校验基准就错了）
+      if (n >= MIN_ASSET_BYTES) return n;
     }
     return 0;
   };
@@ -566,20 +621,18 @@ async function probeTotal(rawUrl, version, mirror) {
     if (!asset) return { total: 0, sha256: null };
     const api = `https://api.github.com/repos/${REPO}/releases/tags/${version || PINNED_VERSION}`;
     for (const prefix of mirrors) {
-      try {
-        const res = await fetch(prefix + api, {
-          headers: { Accept: "application/vnd.github+json" },
-          signal: AbortSignal.timeout(10000),
-        });
-        if (!res.ok) continue;
-        const j = await res.json();
-        const hit = (j.assets || []).find((x) => x.name === asset);
-        if (hit && hit.size > 0) {
-          // digest 形如 "sha256:9ef3f4…"，剥掉算法前缀只留十六进制
-          const m = typeof hit.digest === "string" ? hit.digest.match(/^sha256:([0-9a-f]{64})$/i) : null;
-          return { total: hit.size, sha256: m ? m[1].toLowerCase() : null };
-        }
-      } catch {}
+      const res = await probeFetch(prefix + api, {
+        headers: { Accept: "application/vnd.github+json" },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!res || !res.ok) continue;
+      const j = await res.json();
+      const hit = (j.assets || []).find((x) => x.name === asset);
+      if (hit && hit.size > 0) {
+        // digest 形如 "sha256:9ef3f4…"，剥掉算法前缀只留十六进制
+        const m = typeof hit.digest === "string" ? hit.digest.match(/^sha256:([0-9a-f]{64})$/i) : null;
+        return { total: hit.size, sha256: m ? m[1].toLowerCase() : null };
+      }
     }
     return { total: 0, sha256: null };
   };
@@ -806,6 +859,237 @@ async function pipeTo(res, dest, start, onProgress, knownTotal, signal) {
   return { loaded, total: want };
 }
 
+/* ---------------- 分片并发下载 ---------------- */
+
+/**
+ * 并发连接数（实测定档，2026-10-03）。
+ *
+ * 单连接下载实测（181MB 的 ungoogled-chromium，同一台机器同一时刻）：
+ *   直连（hosts 优选 IP）单连接 0.63 MiB/s → 8 连接 1.46 → **16 连接 5.51**
+ *   gh-proxy 镜像  单连接 0.52 MiB/s → 6 连接 1.20
+ * 结论：单连接被TCP 流控与CDN 单流限速卡住，**并发是最有效的提速手段**，
+ * 16 连接能把181MB 从 4.8 分钟压到 33 秒。
+ *
+ * 取 16 而不是更多：并发连接数会线性增加服务端压力，且32 连接实测增益已
+ * 趋平（16 连接已达单连接的 8.7 倍）；16 也正好与主流下载器的默认档位一致。
+ */
+const PARALLEL_CONNECTIONS = 16;
+
+/** 分片临时文件后缀（拼接前的中间产物） */
+const PART_SUFFIX = ".part";
+
+/** 列出某个目标文件对应的所有分片临时文件 */
+function listParts(dest) {
+  const dir = path.dirname(dest);
+  const base = path.basename(dest) + PART_SUFFIX;
+  let ents = [];
+  try {
+    ents = fs.readdirSync(dir);
+  } catch {
+    return [];
+  }
+  return ents.filter((e) => e.startsWith(base)).map((e) => path.join(dir, e));
+}
+
+/**
+ * 把一个分片写进自己的临时文件。
+ *
+ * 每片独立文件而不是各写各的 fd 偏移：后者一旦某片失败，已写入的数据
+ * 会与「已下载字节数」的记账脱节（进度条说 60% 但文件只有 40%），
+ * 续传就没法可靠判断。独立文件让「完成」这件事变成一个原子事实：
+ * 文件大小等于分片长度 = 这片好了。
+ */
+async function downloadSegment(url, file, start, end, onBytes, signal, ip) {
+  throwIfAborted(signal);
+  const ac = new AbortController();
+  let timer = null;
+  const onAbort = () => {
+    try {
+      ac.abort();
+    } catch {}
+  };
+  if (signal) {
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+  }
+  let res;
+  try {
+    res = await httpGet.get(url, {
+      headers: { Range: `bytes=${start}-${end}` },
+      signal: ac.signal,
+      timeoutMs: HEADER_TIMEOUT_MS,
+      ip,
+    });
+  } finally {
+    if (signal) signal.removeEventListener("abort", onAbort);
+  }
+  // 206 = 正确按分片返回；200 = 服务器无视了Range 直接从头给整个文件
+  // （那样分片方案不成立，且写出来的文件会全是重复数据）
+  if (res.status !== 206) {
+    try {
+      await res.body.cancel();
+    } catch {}
+    const err = new Error(`分片请求返回 HTTP ${res.status}（期望 206，该源不支持并发分片）`);
+    err.noRange = true;
+    throw err;
+  }
+  const want = end - start + 1;
+  const ws = fs.createWriteStream(file);
+  const reader = res.body.getReader();
+  let got = 0;
+  try {
+    for (;;) {
+      throwIfAborted(signal);
+      let idleTimer = null;
+      const idle = new Promise((_, rej) => {
+        idleTimer = setTimeout(() => {
+          const e = new Error(`分片 ${start}-${end} 超过 ${IDLE_TIMEOUT_MS / 1000} 秒无数据`);
+          e.idle = true;
+          rej(e);
+        }, IDLE_TIMEOUT_MS);
+      });
+      let chunk;
+      try {
+        chunk = await Promise.race([reader.read(), idle]);
+      } finally {
+        if (idleTimer) clearTimeout(idleTimer);
+      }
+      const { done, value } = chunk;
+      if (done) break;
+      const buf = Buffer.from(value);
+      if (!ws.write(buf)) await once(ws, "drain");
+      got += buf.length;
+      if (onBytes) onBytes(buf.length);
+    }
+    ws.end();
+    await once(ws, "close");
+  } catch (e) {
+    try {
+      ws.destroy();
+    } catch {}
+    throw e;
+  }
+  if (got !== want) {
+    const err = new Error(`分片 ${start}-${end} 实收 ${got} 字节，应为 ${want} 字节`);
+    err.integrity = true;
+    throw err;
+  }
+  return got;
+}
+
+/**
+ * 分片并发下载一个源。
+ *
+ * 流程：切分→ 并发拉取（各自写 .part）→ 全部成功后按序拼接 → 删分片。
+ * 任何一片失败就整体失败（分片留在磁盘上，下次调用能按已有分片续传）。
+ *
+ * @param {string} rawUrl 原始 URL（不带镜像前缀）
+ * @param {string} prefix 镜像前缀（"" 表示直连）
+ * @param {string} dest 最终落盘路径
+ * @param {number} total 权威总长（必须> 0，否则无法切分，调用方退回串行）
+ * @returns {Promise<{file:string, size:number}>}
+ */
+async function downloadParallel(rawUrl, prefix, dest, total, onProgress, signal, ip) {
+  const url = prefix + rawUrl;
+  const n = Math.max(1, Math.min(PARALLEL_CONNECTIONS, Math.floor(total / (2 * 1024 * 1024)) || 1));
+  const span = Math.ceil(total / n);
+  const segs = [];
+  for (let i = 0; i < n; i++) {
+    const start = i * span;
+    const end = Math.min(total, start + span) - 1;
+    if (start > end) break;
+    segs.push({ start, end, file: dest + PART_SUFFIX + i, got: 0 });
+  }
+
+  // 已完成的分片（上次续传）：大小正好等于分片长度才算好
+  for (const s of segs) {
+    try {
+      const st = fs.statSync(s.file);
+      if (st.isFile() && st.size === s.end - s.start + 1) s.got = st.size;
+    } catch {}
+  }
+  const resumedBytes = segs.reduce((a, s) => a + s.got, 0);
+  if (onProgress && resumedBytes > 0) {
+    onProgress({
+      stage: "fingerprint/download",
+      message: `断点续传：已有 ${fmtSize(resumedBytes)} / ${fmtSize(total)}`,
+      pct: Math.min(99, Math.round((resumedBytes / total) * 100)),
+      loaded: resumedBytes,
+      total,
+    });
+  }
+
+  const t0 = Date.now();
+  let lastEmit = 0;
+  const emit = (force) => {
+    if (!onProgress) return;
+    const now = Date.now();
+    if (!force && now - lastEmit < 800) return;
+    const loaded = segs.reduce((a, s) => a + s.got, 0);
+    const dt = Math.max(1, (now - t0) / 1000);
+    const speed = loaded / dt;
+    lastEmit = now;
+    onProgress({
+      stage: "fingerprint/download",
+      message: `${n} 线程分片  ${fmtSize(loaded)} / ${fmtSize(total)}  ${fmtSize(speed)}/s  ${fmtEta(speed > 0 ? (total - loaded) / speed : 0)}`.trim(),
+      pct: Math.min(99, Math.round((loaded / total) * 100)),
+      speed,
+      loaded,
+      total,
+      connections: n,
+    });
+  };
+
+  await Promise.all(
+    segs.map(async (s) => {
+      if (s.got === s.end - s.start + 1) return; // 已完成，跳过
+      await downloadSegment(url, s.file, s.start, s.end, (n2) => {
+        s.got += n2;
+        emit(false);
+      }, signal, ip);
+      emit(false);
+    })
+  );
+  emit(true);
+  throwIfAborted(signal);
+
+  // 拼接：顺序流式写入，避免把 180MB 全读进内存。
+  // 用「读流的 end 事件」而不是 `rs.pipe(ws).on('close')`：pipe 返回的是目标流
+  // 而不是布尔值，而且 end:false 时目标流不会 close，等它会死锁。
+  const ws = fs.createWriteStream(dest);
+  for (const s of segs) {
+    await new Promise((resolve, reject) => {
+      const rs = fs.createReadStream(s.file);
+      let settled = false;
+      const done = (e) => {
+        if (settled) return;
+        settled = true;
+        try { rs.destroy(); } catch {}
+        if (e) reject(e);
+        else resolve();
+      };
+      ws.on("error", done);
+      rs.on("error", done);
+      rs.on("end", () => done(null));
+      rs.pipe(ws, { end: false });
+    });
+  }
+  ws.end();
+  await once(ws, "close");
+  for (const s of segs) {
+    try {
+      fs.rmSync(s.file, { force: true });
+    } catch {}
+  }
+  const size = fs.existsSync(dest) ? fs.statSync(dest).size : 0;
+  if (size !== total) {
+    const err = new Error(`分片拼接后大小不符：${fmtSize(size)} / ${fmtSize(total)}`);
+    err.integrity = true;
+    throw err;
+  }
+  return { file: dest, size };
+}
+
 /**
  * 按镜像链下载，中途失败换下一个镜像并复用已下载的部分。
  */
@@ -830,6 +1114,21 @@ async function downloadAsset(version, onProgress, mirror, signal) {
     logger.info(`环境拟真浏览器官方 sha256 = ${meta.sha256}（Releases API digest）`);
   }
 
+  // hosts 优选 IP：只在「直连」这一档用（镜像节点有自己的 CDN，不需要也不该改解析）。
+  // auto 链如果排到了空前缀（直连）也同样适用 —— 但前提是用户**不是**显式选了
+  // direct（那是"我就用系统 DNS"的意思，不该被优选 IP 覆盖）。
+  const wantPinned = mirror === IP_DIRECT || (mirror !== "direct" && mirrors.length === 1 && mirrors[0] === "");
+  let pinnedIp = null;
+  if (wantPinned) {
+    try {
+      pinnedIp = await fastHosts.githubIp();
+      if (pinnedIp) logger.info(`使用 hosts 优选 IP 直连 GitHub: ${pinnedIp}`);
+      else logger.warn("hosts 优选 IP 获取失败，退化为普通直连（可能被本地 hosts 阻断）");
+    } catch (e) {
+      logger.warn(`hosts 优选 IP 获取异常: ${e.message}`);
+    }
+  }
+
   let lastErr = null;
   // 两轮：第一轮允许续传（省带宽）；一轮下来全挂过就清掉分片从头再来一次，
   // 排除「分片不可信 / 连接僵死」这类只在续传路径上出现的问题。
@@ -839,55 +1138,81 @@ async function downloadAsset(version, onProgress, mirror, signal) {
       try {
         fs.rmSync(dest, { force: true });
       } catch {}
+      // 分片文件同样清掉：残留分片来自别的轮次/别的源，混用会拼出坏文件
+      for (const f of listParts(dest)) {
+        try {
+          fs.rmSync(f, { force: true });
+        } catch {}
+      }
     }
-  for (const prefix of mirrors) {
-    throwIfAborted(signal);
-    const label = prefix ? prefix.replace(/\/$/, "") : "直连";
-    try {
-      if (onProgress) onProgress({ stage: "fingerprint/download", message: `下载源: ${label}`, pct: 0 });
-      const r = await downloadOnce(prefix + raw, dest, (p) =>
-        onProgress({ ...p, stage: "fingerprint/download", mirror: label })
-      , total, allowResume, signal);
-      const size = fs.existsSync(dest) ? fs.statSync(dest).size : 0;
-      // 镜像出错时常常是 200 + 一个 HTML 错误页，按体积与长度双校验拦掉
-      if (size < MIN_ASSET_BYTES) throw new Error(`文件过小（${fmtSize(size)}），疑似镜像返回了错误页`);
-      if (r.total > 0 && size !== r.total) throw new Error(`文件不完整（${fmtSize(size)} / ${fmtSize(r.total)}）`);
-      // 官方 sha256 校验（最后一道、也是最硬的一道防线）：
-      // gh-proxy 对续传分片做重压缩，长度校验完全测不出来，只有哈希能抓住。
-      if (meta.sha256) {
-        if (onProgress) onProgress({ stage: "fingerprint/download", message: "校验下载完整性（sha256）…", pct: 100 });
-        const actual = await sha256File(dest);
-        if (actual !== meta.sha256) {
-          const err = new Error(`完整性校验失败：sha256 不匹配（实得 ${actual.slice(0, 12)}…，应为 ${meta.sha256.slice(0, 12)}…），文件已损坏`);
-          err.integrity = true; // 分片不可信，外层会清掉重下
-          throw err;
+    for (const prefix of mirrors) {
+      throwIfAborted(signal);
+      const label = prefix ? prefix.replace(/\/$/, "") : "直连";
+      try {
+        if (onProgress) onProgress({ stage: "fingerprint/download", message: `下载源: ${label}`, pct: 0 });
+        // 分片并发：能探到总长就用（实测16 线程能把直连从 0.63 拉到 5.5 MiB/s）。
+        // 探不到总长就没法切分，老老实实退回串行。
+        let r;
+        if (total > 0) {
+          r = await downloadParallel(raw, prefix, dest, total, (p) =>
+            onProgress({ ...p, mirror: label })
+          , signal, prefix === "" ? pinnedIp : null);
+        } else {
+          r = await downloadOnce(prefix + raw, dest, (p) =>
+            onProgress({ ...p, stage: "fingerprint/download", mirror: label })
+          , total, allowResume, signal);
+        }
+        const size = fs.existsSync(dest) ? fs.statSync(dest).size : 0;
+        // 镜像出错时常常是 200 + 一个 HTML 错误页，按体积与长度双校验拦掉
+        if (size < MIN_ASSET_BYTES) throw new Error(`文件过小（${fmtSize(size)}），疑似镜像返回了错误页`);
+        if (r.total > 0 && size !== r.total) throw new Error(`文件不完整（${fmtSize(size)} / ${fmtSize(r.total)}）`);
+        // 官方 sha256 校验（最后一道、也是最硬的一道防线）：
+        // gh-proxy 对续传分片做重压缩，长度校验完全测不出来，只有哈希能抓住。
+        if (meta.sha256) {
+          if (onProgress) onProgress({ stage: "fingerprint/download", message: "校验下载完整性（sha256）…", pct: 100 });
+          const actual = await sha256File(dest);
+          if (actual !== meta.sha256) {
+            const err = new Error(`完整性校验失败：sha256 不匹配（实得 ${actual.slice(0, 12)}…，应为 ${meta.sha256.slice(0, 12)}…），文件已损坏`);
+            err.integrity = true; // 分片不可信，外层会清掉重下
+            throw err;
+          }
+        }
+        return { file: dest, size, mirror: label };
+      } catch (e) {
+        if (e && e.canceled) throw e;
+        lastErr = e;
+        logger.warn(`环境拟真浏览器下载失败（${label}）: ${e.message}`);
+        // 两种情况本地分片都不可信，必须清掉从头再来：
+        //   ① 完整性校验失败（镜像提前断流，分片是残缺的）
+        //   ② 体积异常的小文件（镜像返回了 HTML 错误页），留着会让续传一路错下去
+        // 其余（网络中断等）保留分片，下一个镜像接着续传。
+        try {
+          const st = fs.existsSync(dest) ? fs.statSync(dest).size : 0;
+          if (st > 0 && (e.integrity || st < MIN_ASSET_BYTES)) fs.rmSync(dest, { force: true });
+        } catch {}
+        // 并发分片失败时同理：残缺的分片留着会让下轮续传拼出坏文件。
+        // 判据是「没有一片达到完整长度」——只要有一片是好的，它就还能复用。
+        if (e.noRange || e.integrity || e.idle) {
+          for (const f of listParts(dest)) {
+            try {
+              if (fs.statSync(f).size === 0) fs.rmSync(f, { force: true });
+            } catch {}
+          }
         }
       }
-      return { file: dest, size, mirror: label };
-    } catch (e) {
-      if (e && e.canceled) throw e;
-      lastErr = e;
-      logger.warn(`环境拟真浏览器下载失败（${label}）: ${e.message}`);
-      // 两种情况本地分片都不可信，必须清掉从头再来：
-      //   ① 完整性校验失败（镜像提前断流，分片是残缺的）
-      //   ② 体积异常的小文件（镜像返回了 HTML 错误页），留着会让续传一路错下去
-      // 其余（网络中断等）保留分片，下一个镜像接着续传。
-      try {
-        const st = fs.existsSync(dest) ? fs.statSync(dest).size : 0;
-        if (st > 0 && (e.integrity || st < MIN_ASSET_BYTES)) fs.rmSync(dest, { force: true });
-      } catch {}
     }
-  }
   }
   throw new Error(`所有下载源均失败，最后一个错误: ${lastErr ? lastErr.message : "未知"}`);
 }
 
 /* ---------------- 解压 ---------------- */
 
-function runCmd(cmd, args) {
+function runCmd(cmd, args, cwd) {
   return new Promise((resolve, reject) => {
     let err = "";
-    const child = spawn(cmd, args, { windowsHide: true });
+    // cwd 单独传而不是拼进参数：bsdtar 遇到 `-f C:\...` 的冒号会当远程主机，
+    // 只有把工作目录切到包所在处、-f 给纯文件名才绕得开（见 tarArgs）
+    const child = spawn(cmd, args, { windowsHide: true, cwd });
     child.stdout.on("data", () => {});
     child.stderr.on("data", (d) => (err += d.toString()));
     child.on("error", reject);
@@ -908,27 +1233,96 @@ function psQuote(s) {
  *
  * 刻意**不用** extract-zip / yauzl：它们在 package-lock.json 里是 dev=true，
  * electron-builder 打包时会把 devDependencies 剪掉 —— 开发环境能跑，发布版直接
- * 模块找不到。改用操作系统自带工具：优先 tar（Windows 10 17063+ 与 Win11 自带
- * bsdtar，zip 和 tar.xz 都能解），失败时 Windows 再退 PowerShell Expand-Archive。
+ * 模块找不到。改用操作系统自带工具，顺序是「bsdtar → tar → PowerShell」。
+ *
+ * ⚠️ 为什么必须显式找 bsdtar（2026-10-03 实测抓到的真bug）：
+ * 裸 `tar` 走 PATH 解析，而**装了Git for Windows / PortableGit 的机器上，
+ * PortableGit 的 GNU tar 排在 `C:\Windows\System32\tar.exe` 前面**。
+ * GNU tar 1.35 不支持 zip（实测报 "This does not look like a tar archive"，
+ * 退出码 2），于是：
+ *   ① 主路径 tar 失败 → 回落 PowerShell Expand-Archive
+ *   ② 但 Expand-Archive 对 181MB 的包也失败（同样是空目录）
+ *   ③ 结果「下载成功却装不上」，报错还指向"压缩包可能已损坏"（误导）
+ * 实测用 `C:\Windows\System32\tar.exe`（bsdtar 3.8.8，libarchive）解同一个包
+ * 直接成功（退出码 0）。所以这里**按绝对路径优先挑 bsdtar**，而不是赌 PATH。
+ *
+ * 另外 bsdtar 有个坑：`-f C:\path\file.zip` 里的冒号会被当成**远程主机分隔符**
+ * （报 "Cannot connect to C: resolve failed"）。所以 cwd 切到包所在目录、
+ * `-f` 只给文件名，绕开冒号。
  */
 async function extractArchive(file, dir) {
-  const isZip = /\.zip$/i.test(file);
-  try {
-    await runCmd("tar", ["-xf", file, "-C", dir]);
-    assertExtracted(dir, "tar");
-    return "tar";
-  } catch (e) {
-    if (!isZip || process.platform !== "win32") throw e;
-    logger.warn(`tar 解压失败，回落 PowerShell Expand-Archive: ${e.message}`);
-    await runCmd("powershell", [
+  const attempts = tarCandidates().map((cmd) => {
+    const t = tarArgs(cmd, file, dir);
+    return { cmd, args: t.args, cwd: t.cwd };
+  });
+  attempts.push({
+    cmd: "powershell",
+    args: [
       "-NoProfile",
       "-NonInteractive",
       "-Command",
       `Expand-Archive -LiteralPath ${psQuote(file)} -DestinationPath ${psQuote(dir)} -Force`,
-    ]);
-    assertExtracted(dir, "powershell");
-    return "powershell";
+    ],
+    cwd: undefined,
+  });
+
+  let lastErr = null;
+  for (const a of attempts) {
+    try {
+      await runCmd(a.cmd, a.args, a.cwd);
+      assertExtracted(dir, path.basename(a.cmd));
+      return path.basename(a.cmd);
+    } catch (e) {
+      lastErr = e;
+      logger.warn(`${a.cmd} 解压失败: ${e.message}`);
+      // 解压失败要把目录清空，否则下一候选可能对着残留目录报"成功"
+      try {
+        for (const ent of fs.readdirSync(dir)) {
+          fs.rmSync(path.join(dir, ent), { recursive: true, force: true });
+        }
+      } catch {}
+      // 非 Windows 上没有 PowerShell 兜底，失败就直接抛
+      if (a.cmd === "powershell" && process.platform !== "win32") break;
+    }
   }
+  throw new Error(
+    `所有解压方式均失败（最后一个错误: ${lastErr ? lastErr.message : "未知"}）`
+  );
+}
+
+/**
+ * 按可用性列出 tar 可执行文件候选：先系统 bsdtar（支持 zip），再退 PATH 里的 tar。
+ *
+ * 用绝对路径而不是裸 `tar`，原因见 extractArchive 的注释（PATH 里排在前面的
+ * 可能是 GNU tar，装不了 zip）。系统 bsdtar 不存在时（非 Windows / 老系统）
+ * 才退PATH，那台机器上没有 Git 版tar 的话 GNU tar 至少能解 tar.xz。
+ */
+function tarCandidates() {
+  const out = [];
+  if (process.platform === "win32") {
+    const sys = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe");
+    if (fs.existsSync(sys)) out.push(sys);
+  }
+  out.push("tar");
+  return out;
+}
+
+/**
+ * 组装 tar 参数。
+ *
+ * bsdtar 必须用 cwd + 纯文件名：`-f C:\...\x.zip` 里的冒号会被解释成 `host:path`，
+ * 报 "Cannot connect to C: resolve failed"。spawn 的数组参数天然隔离空格，
+ * 路径里有空格不用担心。
+ */
+function tarArgs(cmd, file, dir) {
+  const isSystemBsdtar =
+    process.platform === "win32" &&
+    String(cmd).toLowerCase().endsWith("tar.exe") &&
+    path.isAbsolute(file);
+  if (isSystemBsdtar) {
+    return { args: ["-xf", path.basename(file), "-C", dir], cwd: path.dirname(file) };
+  }
+  return { args: ["-xf", file, "-C", dir], cwd: undefined };
 }
 
 /**
@@ -1145,6 +1539,9 @@ module.exports = {
   buildArgs,
   // 打桩/诊断用
   downloadOnce,
+  downloadParallel,
+  downloadSegment,
+  listParts,
   probeTotal,
   extractArchive,
   fmtSize,
@@ -1152,6 +1549,9 @@ module.exports = {
   hasChromeExe,
   MIRROR_OPTIONS,
   MIRROR_KEYS,
+  IP_DIRECT,
+  PARALLEL_CONNECTIONS,
+  PART_SUFFIX,
   DEFAULT_MIRROR,
   resolveMirrors,
   sha256File,

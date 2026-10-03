@@ -49,11 +49,20 @@ const PLATFORM_OPTIONS = [
 export function FingerprintBrowserPanel() {
   const [st, setSt] = useState<FingerprintStatus | null>(null);
   const [cfg, setCfg] = useState<FpCfg>(FALLBACK);
-  const [busy, setBusy] = useState(false);
+  const [localBusy, setLocalBusy] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
   const [progress, setProgress] = useState<InstallProgress | null>(null);
   const [check, setCheck] = useState<CheckFingerprintUpdateResult | null>(null);
   const [checking, setChecking] = useState(false);
+
+  /**
+   * 正在下载 = 本次点击态|| 主进程后台下载态。
+   *
+   * 同向导页的踩坑（2026-10-03）：首次运行主进程会后台自动下载，只认localBusy 时
+   * 界面仍显示「下载并安装」，用户一点就被「正在下载，请稍候」拒绝 —— 按钮与进度条
+   * 表现为闪一下就没。st.downloading 由主进程在 pushFingerprintStatus 时下发。
+   */
+  const busy = localBusy || !!st?.downloading;
 
   useEffect(() => {
     api
@@ -103,7 +112,7 @@ export function FingerprintBrowserPanel() {
   };
 
   const onInstall = async (force: boolean) => {
-    setBusy(true);
+    setLocalBusy(true);
     setProgress({ pct: 0 });
     try {
       const r = await api.installFingerprint({ force });
@@ -120,7 +129,7 @@ export function FingerprintBrowserPanel() {
       }
       await refresh();
     } finally {
-      setBusy(false);
+      setLocalBusy(false);
       setProgress(null);
     }
   };
@@ -152,7 +161,7 @@ export function FingerprintBrowserPanel() {
   };
 
   const onUninstall = async () => {
-    setBusy(true);
+    setLocalBusy(true);
     try {
       const r = await api.uninstallFingerprint();
       // 镜像内置（Docker）时后端会拒绝删除，必须把真实原因透出来，
@@ -161,7 +170,7 @@ export function FingerprintBrowserPanel() {
       else toast.success("已删除环境拟真浏览器，后续将使用普通 Chromium");
       await refresh();
     } finally {
-      setBusy(false);
+      setLocalBusy(false);
       setConfirmDel(false);
     }
   };

@@ -464,7 +464,14 @@ function pushFingerprintStatus() {
   Promise.resolve(fpBrowser.status())
     .then((s) => {
       if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send("fingerprint-status", s);
+        // ⚠️ 必须带上 downloading —— 首次运行时主进程会**后台自动开始下载**
+        // （startBackgroundWork 里的那段），此时界面若还显示「立即下载」，
+        // 用户一点就被"正在下载，请稍候"拒绝，finally 又把 busy 置false，
+        // 表现为进度条闪一下就消失、且看不到任何进度。
+        // 界面靠这个标志把按钮切成「取消下载」并持续显示进度。
+        try {
+          mainWindow.webContents.send("fingerprint-status", { ...s, downloading: !!fingerprintInstallController });
+        } catch {}
       }
     })
     .catch((e) => logger.warn(`推送环境拟真浏览器状态失败: ${e.message}`));
@@ -785,11 +792,12 @@ function startBackgroundWork() {
     })
       .then((r) => {
         logger.info(`后台环境拟真浏览器安装结果: ok=${r.ok}, skipped=${r.skipped || false}, canceled=${r.canceled || false}`);
-        pushFingerprintStatus();
       })
       .catch((e) => logger.error(`后台环境拟真浏览器安装失败: ${e && e.message ? e.message : e}`))
       .finally(() => {
         fingerprintInstallController = null;
+        // 同上：置空之后再推，界面才会立刻从「取消下载」变回「立即下载」
+        pushFingerprintStatus();
       });
   }
 }
@@ -1234,10 +1242,14 @@ function registerIpc() {
     } catch (e) {
       const canceled = !!(e && e.canceled);
       if (!canceled) logger.error(`环境拟真浏览器安装失败: ${e.message}`);
-      pushFingerprintStatus();
       return { ok: false, canceled, error: canceled ? "下载已取消" : e.message };
     } finally {
       fingerprintInstallController = null;
+      // ⚠️ 状态推送必须放在 controller 置空**之后**：pushFingerprintStatus 会把
+      // `downloading: !!fingerprintInstallController` 带给界面，提前推等于告诉
+      // 界面「还在下载」，而实际上这一次已经结束 —— 界面会把按钮卡在「取消下载」
+      // 直到下一次周期推送（最长 10 秒）才恢复。
+      pushFingerprintStatus();
       setRunning(false);
     }
   });

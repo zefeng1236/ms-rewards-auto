@@ -2,6 +2,34 @@
 
 本文件记录各版本的重要变更。版本格式为主版本.次版本.修订号，带 `-beta` 后缀的为测试版本。带「.N」四位小版本的为内部交付号（安装包文件名与 exe FileVersion 使用），主版本段仍为 0.9.4。
 
+## 0.13.17
+
+发布日期：2026-10-03 · Windows 安装包 `MS-Rewards-Auto-Setup-0.13.17.exe` · **预发布版本**（GitHub Release tag 标记为 `v0.13.17-beta` 并勾选 pre-release；本文件版本号仍是 semver `0.13.17`，仅发布渠道为 beta 通道）
+
+本轮把「指纹浏览器内核下载」从「点击后看运气」改为「点按钮/首次运行就稳下完」：重新设计下载链路、直连走 GitHub 优选 IP、并发分片拉满、解压绕开 GNU tar 那个隐性坑。
+
+### 下载链路
+
+- **向导「立即下载」步骤的进度条不再「闪一下就消失」**：根因是首次运行主进程会后台自动下载 181MB，但界面只认点击态 → 用户一点就「正在下载、请稍候」拒绝、finally 又把 busy 置 false。现在主进程把 `downloading` 标志主动推给渲染层，按钮、进度条、镜像下拉全部按这个标志切换文案与可用态。
+- **直连 GitHub 用 hosts 优选 IP 兜底**：本机 hosts 把 `github.com` 指向 127.0.0.1 直接阻断；`hosts.gitcdn.top` 提供按国内线路优选的真实 IP。新增 `src/fast-hosts.js` 拉 `hosts.json` → `{域名: IP}`，半天 TTL 缓存。⚠️ github.com 与 api.github.com 是同网段不同机器（实测 `.166` / `.168`），必须按域名分别取 IP，串了 api 会回 403。
+- **底层 HTTP 客户端支持固定 IP + 手动跟随重定向**：新增 `src/http-get.js`。Release 资产会 302 跳到 `release-assets.githubusercontent.com`（优选 IP 表里没有），必须让第二跳走系统 DNS；新增客户端显式支持「指定 IP + SNI 仍按域名走证书校验 + 手动 302 跟随」，返回 shape 与 `fetch` 同形（`ok` / `json()` / `headers.get(name)`）。
+- **环境拟真浏览器附加 github.com 的 `.168 / 148.158.x.x / 第二代/第三代/第四代…` 16 线程并发下载**：实测单连接 0.63 MiB/s → 16 连接 5.51 MiB/s（端到端 45 秒装完），分片并行是提速关键；磁盘按分片独立临时文件落盘，续传时按「分片大小 == 期望长度」判定是否完成，规避「写文件指针 + 异常后状态脱节」的坑。
+- **官方 sha256 校验成为最后一道防线**：新增通过 GitHub Releases API 拿资产 `digest`（API 探测与下载走同源、按域名分别取 IP，自动补 `User-Agent` 防 403），下完比 `sha256`，gh-proxy 提前断流 / 中间人篡改一律抓出来，失败就清分片重下。早期写法「HEAD 通了就跳过 API」会让 digest 永远为 null（实测踩到），现在 HEAD 与 API 并发无依赖。
+
+### 解压修复
+
+- **解压「压缩包可能已损坏」具误导性的报错被根除**：PowerShell `Expand-Archive` 也有丢包盘的情况。实测定到 `C:\Windows\System32\tar.exe`（bsdtar 3.8.8，libarchive）解同一个包直接成功 —— 现在按绝对路径优先挑 bsdtar，PortableGit 的 GNU tar 不再抢先；bsdtar 把 `-f C:\...` 里的冒号当远程主机，所以 cwd 切到包所在处、参数给纯文件名绕开。
+
+### 守卫与回归
+
+- **新增 7 条下载链路自检守卫**（selfcheck【D】段）：① `fast-hosts.js` 必须在仓库；② `WANTED` 白名单含 `github.com` + `api.github.com`；③ `apiGithubIp()` 必须按域名分别取；④ `pinnedLookup` 只在白名单接管其余走系统 DNS；⑤ `http-get.js` 必须导出 `get` / `requestOnce` 并支持 `ip` 选项 + `ok/json/headers.get` 同形响应；⑥ `PARALLEL_CONNECTIONS = 16` 且 `IP_DIRECT` 不进 `MIRROR_KEYS`；⑦ tar 调用链必须挑 `C:\Windows\System32\tar.exe` 第一位、且 `cwd` 切到包目录。全部 7/7 反例注入验证（注入旧值立刻变红）。
+- **dependency 升级 C 档**（已本地测试、未推送）：electron-builder `25 → 26.15.3`（26.17.0 有 rcedit 图标写入回归，已回退）、Electron `31 → 44`、vite `5 → 8`。`npm audit` 从 60 → 8（剩余 8 条全 dev-only，`npm audit --omit=dev` = 0），生产链不变。
+- **TypeScript 0 错**；`bump-version --check` 全部绿；selfcheck / verify-pack 全部绿（具体数字随提交而定）；新增守卫全部带反例验证。
+
+### 已知
+
+- 0.14.0 紧接着发布，含内核升级 + 停止机制 + Bing 引导提示等本批未含的功能。
+
 ## 0.13.16
 
 发布日期：2026-10-03 · Windows 安装包 `MS-Rewards-Auto-Setup-0.13.16.exe`

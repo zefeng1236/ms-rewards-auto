@@ -48,6 +48,31 @@ const pkgInAsar = JSON.parse(fs.readFileSync(path.join(outDir, "package.json"), 
 const strip = (s) => s.replace(/\s+/g, "");
 const flat = strip(css);
 const jsFlat = strip(js);
+/**
+ * 判定「存在这样一条 CSS 规则：某个选择器同时含 A 与 B，且声明块里有 D」。
+ *
+ * 为什么不写死一整段正则：前端构建器升级会改排版 ——
+ *   ① CSS minifier 把同一声明的选择器**并成一条规则**（逗号分隔）；
+ *   ② 后代选择器的空格可能被去掉（`.lg-glow` → `:root[data-theme=light].lg-glow`）。
+ * 断言只该验证「这条规则存在、且作用于正确的选择器」，不该管构建器怎么排版。
+ *
+ * ⚠️ 关键：必须**按逗号切分选择器组、逐个选择器判定**。
+ *    只看整条选择器串「含不含 A 和 B」会跨逗号误判 —— 实测踩过：
+ *    把 `:root[data-theme=light] .lg-glow` 从合并组里摘掉后，
+ *    同组还留着 `:root[data-halo=off] .lg-glow`，整条串依然「含」.lg-glow，
+ *    守卫于是变绿形同虚设。教训见 MEMORY「验证与纪律」：断言要盯语义。
+ */
+const ruleHas = (selA, selB, decl) => {
+  const re = /([^{}]+)\{([^{}]*)\}/g;
+  let m;
+  while ((m = re.exec(flat))) {
+    if (!m[2].includes(decl)) continue;
+    // 选择器组按逗号切开，逐个看有没有单个选择器同时命中 A 与 B
+    const hit = m[1].split(",").some((sel) => sel.includes(selA) && (!selB || sel.includes(selB)));
+    if (hit) return true;
+  }
+  return false;
+};
 const result = {
   exeName: path.basename(exePath),
   exeBytes: exe.size,
@@ -69,7 +94,14 @@ const result = {
   cssHasGlowOff: /data-glow=("?)off\1/.test(flat),
   cssHasDarkSpinner: /\.compat-input\{[^}]*color-scheme:dark/.test(flat),
   // 本轮（0.9.4.4）：浅色关反射 + 氛围光提到壁纸之上 + 光晕覆盖卡片/开关
-  cssHasLightReflectOff: /\[data-theme=light\]\.lg-glow/.test(flat) && /\[data-theme=light\]\.lg-decoration:after\{opacity:0!important/.test(flat),
+  // ⚠️ 两条断言都必须兼容多种产物形态（前端构建器升级会改排版）：
+  //   ① CSS minifier 把同一声明的选择器并成一条规则；
+  //   ② 后代选择器的空格可能被去掉（`.lg-glow` → `:root[data-theme=light].lg-glow`）。
+  // 所以走 ruleHas() 按「选择器含谁 + 声明块含什么」判定，
+  // 而不是钉死整段正则 —— 教训见 MEMORY「验证与纪律」：断言要盯语义，别盯排版。
+  cssHasLightReflectOff:
+    ruleHas('[data-theme=light]', '.lg-glow', "opacity:0!important") &&
+    ruleHas('[data-theme=light]', '.lg-decoration:after', "opacity:0!important"),
   cssHasGlowZ1: /body:before\{[^}]*z-index:1/.test(flat),
   // 0.9.4.5 起：HALO_SELECTOR 改为 .lg-surface（带排除项） + .lg-material-view + .lg-switch-track
 //   开关只绑 pill，不绑 .lg-switch 容器（避免方框）
@@ -85,7 +117,7 @@ jsHasHaloSelector:
   cssHasCompatBlur: /\.compat-input-wrap[\s\S]*?backdrop-filter:blur\(12px\)/.test(flat) &&
     /\.compat-modal-panel\{[\s\S]*?backdrop-filter:blur\(26px\)/.test(flat) &&
     /\.compat-toast\{[\s\S]*?backdrop-filter:blur\(20px\)/.test(flat),
-  jsHasHaloAttr: /data-halo/.test(jsFlat) && /"off"/.test(jsFlat),
+  jsHasHaloAttr: /data-halo/.test(jsFlat) && /(?:"off"|`off`)/.test(jsFlat),
   // 0.9.4.10：友链 logo 容器清零库 .lg-surface 的 18px padding（否则 46px 盒
   // 内容区只剩 10×10 → 图标下坠 8/16px，用户反馈「两个图标还是歪的」）
   cssHasFriendLogoPad0: /\.friend-logo\{[^}]*padding:0/.test(flat),
@@ -300,7 +332,11 @@ jsHasHaloSelector:
     /:root\[data-web="?1"?\]\s*\.achievements-view\s*\.cal-bname\{[^}]*font-size:clamp\(10px,1\.05cqw,14px\)/.test(flat),
   // 0.13.14 二次反馈：桌面全屏不再铺满 —— 限宽居中 + 勋章墙右移 + 字号封顶
   cssHasAchievementsWidthCap: /\.achievements-view\{[^}]*max-width:1460px[^}]*margin-inline:auto/.test(flat),
-  cssHasBadgesSideColumn: /@media\(min-width:1280px\)\{\.achievements-view\.cal-card\{[^}]*clamp\(300px,32cqw,420px\)[^}]*"calbadges"[\s\S]*?"legendbadges"/.test(flat) &&
+  // ⚠️ 媒体查询同时兼容 `@media(min-width:1280px)`（旧）与 `@media (width>=1280px)`（新构建器）
+  cssHasBadgesSideColumn:
+    /@media\s*\(min-width:1280px\)\s*\{\.achievements-view\.cal-card\{[^}]*clamp\(300px,32cqw,420px\)[^}]*"calbadges"[\s\S]*?"legendbadges"/.test(flat) ||
+    /@media\s*\(width>=1280px\)\s*\{\.achievements-view\.cal-card\{[^}]*clamp\(300px,32cqw,420px\)[^}]*"calbadges"[\s\S]*?"legendbadges"/.test(flat),
+  cssHasBadgesGridArea:
     /\.achievements-view\.cal-grid\{grid-area:cal\}/.test(flat) &&
     /\.achievements-view\.cal-badges-col\{[^}]*grid-area:badges/.test(flat),
   // 注意：0.13.14 二次反馈把 17/30 与 20/32 收小到 15/23 与 18/25，
@@ -420,6 +456,7 @@ const checks = {
   cssHasCompactAchievements: result.cssHasCompactAchievements,
   cssHasAchievementsWidthCap: result.cssHasAchievementsWidthCap,
   cssHasBadgesSideColumn: result.cssHasBadgesSideColumn,
+  cssHasBadgesGridArea: result.cssHasBadgesGridArea,
   cssHasAchievementsFontCap: result.cssHasAchievementsFontCap,
   jsHasBadgesCol: result.jsHasBadgesCol,
   // —— 0.13.12：默认数量 + 标题栏一言 + 关于页一言 ——

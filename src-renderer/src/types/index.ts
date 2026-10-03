@@ -395,6 +395,10 @@ export interface FingerprintStatus {
   /** 可选下载镜像源（供界面渲染下拉，由主进程下发，避免前后端各写一份）；
    *  label 已带实测延迟后缀，latencyMs 供需要单独渲染延迟的界面用 */
   mirrors?: { value: string; label: string; latencyMs?: number | null }[];
+  /** 主进程当前是否正在下载（首次运行会后台自动下）。
+   *  界面据此把按钮切成「取消下载」并持续显示进度条 —— 否则用户点「立即下载」
+   *  会被主进程以「正在下载，请稍候」拒绝，表现为进度条闪一下就消失。 */
+  downloading?: boolean;
 }
 
 /** 「检查更新」的查询结果（只查不下载，0.9.4.18 起与安装动作分离） */
