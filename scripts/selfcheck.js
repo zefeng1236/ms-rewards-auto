@@ -2422,6 +2422,25 @@ checkTrue(
   })(),
   "两处版本号漂移 → 镜像里预装的版本与状态接口自报的「钉死版本」对不上，界面永远提示「需重建镜像对齐」"
 );
+// docker 文档里的「锁定版本」示例必须等于当前版本号。
+// 这几处是用户会照抄的操作指引，示例停在历史版本会让人以为最新版只能回退。
+// 形如「（如 0.13.16）」「如 `:0.13.16`」——注意「如」与版本号之间可能隔着
+// 全角括号、反引号、半角冒号（实测 `:0.13.16` 紧跟全角「）」），所以字符类要放宽。
+// 收集全部命中而不是只取第一个：compose 里有两处示例，只查第一处会漏。
+const dockerDocDrift = [
+  ["docker/docker-compose.yml", composeSrc],
+  ["docker/README.md", fs.readFileSync(path.join(ROOT, "docker", "README.md"), "utf8")],
+]
+  .flatMap(([name, text]) =>
+    [...text.matchAll(/如[\s`:\u3001\uFF08]*v?(\d+\.\d+\.\d+)/g)]
+      .filter((m) => m[1] !== pkgRaw.version)
+      .map((m) => `${name} 示例写 ${m[1]}`)
+  );
+checkTrue(
+  "docker 文档里的示例版本号 == 当前 package.json 版本（防「锁版本」示例漂移到历史版本）",
+  dockerDocDrift.length === 0,
+  dockerDocDrift.join("；") + `（当前 ${pkgRaw.version}）`
+);
 checkTrue(
   "compose 指向 ghcr 预构建镜像（latest）、且不再传已废弃的 Chromium 兜底环境变量",
   // image 已改为 :latest 配合 Watchtower 自动更新，不再是版本 tag。
