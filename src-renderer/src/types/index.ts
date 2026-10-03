@@ -435,6 +435,30 @@ export interface CheckAppUpdateResult {
   error?: string;
 }
 
+/** 应用更新安装包的内置下载进度（主进程 update-download-progress 推送） */
+export interface UpdateDownloadProgress {
+  /** 已下载字节 */
+  loaded?: number;
+  /** 总字节（取不到 Content-Length 时为 0） */
+  total?: number;
+  /** 进度百分比 0–100 */
+  pct?: number;
+  /** 平均下载速度（字节/秒） */
+  speed?: number;
+}
+
+/** 应用更新安装包的内置下载结果（app:downloadUpdate 返回） */
+export interface UpdateDownloadResult {
+  ok: boolean;
+  /** 下载完成的本地路径 */
+  path?: string;
+  /** 文件字节数 */
+  bytes?: number;
+  /** 用户主动取消 */
+  canceled?: boolean;
+  error?: string;
+}
+
 export interface InstallFingerprintResult {
   ok: boolean;
   error?: string;

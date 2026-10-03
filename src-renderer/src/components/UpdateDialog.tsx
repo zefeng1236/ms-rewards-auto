@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { GlassButton } from "@ttqtt/liquid-glass-react";
 import { api } from "../api/ipc";
 import { DISPLAY_VERSION } from "../version";
-import type { CheckAppUpdateResult } from "../types";
+import type { CheckAppUpdateResult, UpdateDownloadProgress, UpdateDownloadResult } from "../types";
 
 /**
  * 「自动更新」弹窗（对齐参考设计）：
@@ -18,11 +18,19 @@ import type { CheckAppUpdateResult } from "../types";
  * 与补位层 Modal 同一套路（见 liquidGlassCompat 的 ModalBase 注释）。
  */
 
-type Phase = "checking" | "result";
+type Phase = "checking" | "result" | "downloading" | "downloaded" | "dl-error";
 
 /** 版本号是否带预发布后缀（-alpha / -beta / -rc / -test）→ 测试版频道 */
 function isPrereleaseChannel(v: string): boolean {
   return /-(alpha|beta|rc|test|pre)/i.test(v || "");
+}
+
+/** 字节数 → 人类可读（KB / MB） */
+function fmtBytes(n?: number): string {
+  if (!n || n <= 0) return "0 B";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
 }
 
 /* ---------------- Markdown-lite 渲染（纯 React 节点，不走 innerHTML） ---------------- */
@@ -102,6 +110,15 @@ export function UpdateDialog({
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [phase, setPhase] = useState<Phase>("checking");
   const [info, setInfo] = useState<CheckAppUpdateResult | null>(null);
+  const [dlProgress, setDlProgress] = useState<UpdateDownloadProgress | null>(null);
+  const [dlResult, setDlResult] = useState<UpdateDownloadResult | null>(null);
+  const [dlError, setDlError] = useState<string | null>(null);
+
+  // 订阅内置下载进度（主进程 update-download-progress 推送）
+  useEffect(() => {
+    const off = api.onUpdateDownloadProgress((p) => setDlProgress(p));
+    return off;
+  }, []);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -116,6 +133,9 @@ export function UpdateDialog({
     let alive = true;
     setPhase("checking");
     setInfo(null);
+    setDlProgress(null);
+    setDlResult(null);
+    setDlError(null);
     api
       .checkAppUpdate()
       .then((r) => {
@@ -139,9 +159,43 @@ export function UpdateDialog({
   const hasUpdate = !!info && info.ok && info.updateAvailable;
   const channel = isPrereleaseChannel(checking ? DISPLAY_VERSION : info?.latestVersion || DISPLAY_VERSION);
 
-  const onDownload = () => {
-    if (!info) return;
-    window.open(info.pageUrl || info.downloadUrl, "_blank", "noopener,noreferrer");
+  const onDownload = async () => {
+    if (!info || !info.downloadUrl) return;
+    setPhase("downloading");
+    setDlProgress(null);
+    setDlResult(null);
+    setDlError(null);
+    try {
+      const r = await api.downloadUpdate(info.downloadUrl, info.assetName);
+      if (r && r.ok) {
+        setDlResult(r);
+        setPhase("downloaded");
+      } else if (r && r.canceled) {
+        // 用户取消：回到「有更新」结果态
+        setPhase("result");
+      } else {
+        setDlError((r && r.error) || "下载失败");
+        setPhase("dl-error");
+      }
+    } catch {
+      setDlError("下载失败，请检查网络后重试");
+      setPhase("dl-error");
+    }
+  };
+
+  const onCancelDownload = async () => {
+    await api.cancelUpdateDownload();
+    setPhase("result");
+  };
+
+  const onInstall = async () => {
+    if (!dlResult?.path) return;
+    await api.runUpdateInstaller(dlResult.path);
+  };
+
+  const onReveal = async () => {
+    if (!dlResult?.path) return;
+    await api.revealUpdateFile(dlResult.path);
   };
 
   return createPortal(
@@ -177,7 +231,57 @@ export function UpdateDialog({
 
         {/* 主体 */}
         <div className="upd-body">
-          {checking ? (
+          {phase === "downloading" ? (
+            <div className="upd-checking">
+              <div className="upd-progress-track">
+                <div
+                  className="upd-progress-bar"
+                  style={{ width: `${Math.max(0, Math.min(100, dlProgress?.pct ?? 0))}%` }}
+                />
+              </div>
+              <div className="upd-checking-text">正在下载安装包… {dlProgress?.pct ?? 0}%</div>
+              <div className="upd-checking-ver">
+                {fmtBytes(dlProgress?.loaded)} / {fmtBytes(dlProgress?.total)}
+                {dlProgress?.speed ? ` · ${fmtBytes(dlProgress.speed)}/s` : ""}
+              </div>
+              <div className="upd-checking-ver">{info?.assetName}</div>
+            </div>
+          ) : phase === "downloaded" && dlResult ? (
+            <>
+              <div className="upd-hero">
+                <span className="upd-hero-icon upd-hero-icon-static is-ok" aria-hidden>
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="m5 13 4 4L19 7" />
+                  </svg>
+                </span>
+                <div>
+                  <div className="upd-hero-title">安装包已下载完成</div>
+                  <div className="upd-hero-ver">
+                    <span className="upd-ver-new">{info?.assetName || "安装包"}</span>
+                  </div>
+                </div>
+              </div>
+              <div className="upd-notes" tabIndex={0}>
+                <p className="upd-note-p">
+                  文件已保存到系统「下载」目录（{fmtBytes(dlResult.bytes)}）。
+                  点击「立即安装」将关闭本软件并启动安装向导。
+                </p>
+                <p className="upd-note-p">{dlResult.path}</p>
+              </div>
+            </>
+          ) : phase === "dl-error" ? (
+            <div className="upd-checking">
+              <div className="upd-hero-icon upd-hero-icon-static is-warn" aria-hidden>
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 9v4" />
+                  <path d="M12 17h.01" />
+                  <circle cx="12" cy="12" r="9" />
+                </svg>
+              </div>
+              <div className="upd-checking-text">下载失败</div>
+              <div className="upd-checking-ver">{dlError || "请稍后重试"}</div>
+            </div>
+          ) : checking ? (
             <div className="upd-checking">
               <div className="upd-spinner" aria-hidden />
               <div className="upd-checking-text">正在检查更新...</div>
@@ -234,19 +338,48 @@ export function UpdateDialog({
           )}
         </div>
 
-        {/* 底部：关闭 + 下载更新 */}
+        {/* 底部：按阶段切换按钮 */}
         <div className="upd-foot">
-          <GlassButton variant="plain" controlSize="small" onClick={() => onOpenChange(false)}>
-            关闭
-          </GlassButton>
-          <GlassButton
-            variant="glassProminent"
-            controlSize="small"
-            disabled={checking || !hasUpdate}
-            onClick={onDownload}
-          >
-            下载更新
-          </GlassButton>
+          {phase === "downloading" ? (
+            <GlassButton variant="plain" controlSize="small" onClick={onCancelDownload}>
+              取消下载
+            </GlassButton>
+          ) : phase === "downloaded" ? (
+            <>
+              <GlassButton variant="plain" controlSize="small" onClick={() => onOpenChange(false)}>
+                关闭
+              </GlassButton>
+              <GlassButton variant="plain" controlSize="small" onClick={onReveal}>
+                打开文件夹
+              </GlassButton>
+              <GlassButton variant="glassProminent" controlSize="small" onClick={onInstall}>
+                立即安装
+              </GlassButton>
+            </>
+          ) : phase === "dl-error" ? (
+            <>
+              <GlassButton variant="plain" controlSize="small" onClick={() => onOpenChange(false)}>
+                关闭
+              </GlassButton>
+              <GlassButton variant="glassProminent" controlSize="small" onClick={onDownload}>
+                重试下载
+              </GlassButton>
+            </>
+          ) : (
+            <>
+              <GlassButton variant="plain" controlSize="small" onClick={() => onOpenChange(false)}>
+                关闭
+              </GlassButton>
+              <GlassButton
+                variant="glassProminent"
+                controlSize="small"
+                disabled={checking || !hasUpdate}
+                onClick={onDownload}
+              >
+                下载更新
+              </GlassButton>
+            </>
+          )}
         </div>
       </div>
     </dialog>,

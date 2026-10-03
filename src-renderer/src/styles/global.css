@@ -430,6 +430,20 @@ body::before {
   font-family: "Cascadia Mono", Consolas, ui-monospace, monospace;
   max-width: 420px;
 }
+/* 内置下载进度条 */
+.upd-progress-track {
+  width: min(100%, 420px);
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+.upd-progress-bar {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent, #7c5cff);
+  transition: width 0.2s ease;
+}
 /* 结果态：圆形 accent 图标 + 标题 + 版本箭头行 */
 .upd-hero {
   display: flex;

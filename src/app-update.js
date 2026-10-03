@@ -1,4 +1,5 @@
 const logger = require("./logger");
+const fs = require("fs");
 
 const OWNER = "zefeng1236";
 const REPO = "ms-rewards-auto";
@@ -63,8 +64,8 @@ function normalizeAsset(asset) {
 
 /**
  * 查询本应用 GitHub Releases 最新正式版。
- * 目前只返回版本号、更新日志与下载地址，不在主进程做热更新下载，
- * 「立即更新」先交给系统浏览器打开 Release 页，等项目开源后再补完整升级链路。
+ * 只返回版本号、更新日志与下载地址（不下载）；「立即更新」由主进程
+ * 调 downloadUpdate 内置下载安装包到系统「下载」目录，见下方 downloadUpdate。
  */
 async function checkAppUpdate(currentVersion) {
   try {
@@ -110,8 +111,98 @@ function compareVersionTagForSort(a, b) {
   return compareVersion(va, vb);
 }
 
+/**
+ * 内置下载安装包：流式写入 destFile，走与「检查更新」同源的 gh-proxy 镜像链
+ * （国内直连 GitHub 慢/失败时自动换下一个镜像，最后回落直连）。
+ *
+ * 进度经 onProgress({ loaded, total, pct, speed }) 周期性回调（按 1% 节流）；
+ * 传入 signal 可取消（abort 后返回 { ok:false, canceled:true } 并清理半截文件）。
+ *
+ * 为什么不是 electron 的 session.downloadURL：那个走 Chromium 下载栈，
+ * 一来在无窗口/后台场景不好用，二来镜像链需要逐个试（下载栈没法优雅回退）。
+ */
+async function downloadUpdate({ url, destFile, signal, onProgress }) {
+  const rawUrl = String(url || "");
+  if (!rawUrl) return { ok: false, error: "缺少下载地址" };
+
+  let lastErr = null;
+  let canceled = false;
+
+  for (const prefix of MIRROR_PREFIXES) {
+    if (signal && signal.aborted) {
+      canceled = true;
+      break;
+    }
+    try {
+      const res = await fetch(prefix + rawUrl, {
+        redirect: "follow",
+        signal: signal || AbortSignal.timeout(180000),
+        headers: { Accept: "application/octet-stream" },
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+      const total = Number(res.headers.get("content-length")) || 0;
+      const reader = res.body.getReader();
+      const fd = fs.createWriteStream(destFile);
+      const start = Date.now();
+      let loaded = 0;
+      let lastPct = -1;
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          loaded += value.length;
+          if (!fd.write(value)) {
+            await new Promise((r) => fd.once("drain", r));
+          }
+          if (onProgress && total > 0) {
+            const pct = Math.floor((loaded / total) * 100);
+            if (pct !== lastPct) {
+              lastPct = pct;
+              const secs = (Date.now() - start) / 1000;
+              onProgress({
+                loaded,
+                total,
+                pct,
+                speed: secs > 0 ? Math.round(loaded / secs) : 0,
+              });
+            }
+          }
+        }
+      } finally {
+        await new Promise((r) => fd.end(r));
+      }
+
+      const bytes = fs.statSync(destFile).size;
+      return { ok: true, path: destFile, bytes };
+    } catch (e) {
+      if (signal && signal.aborted) {
+        canceled = true;
+        break;
+      }
+      lastErr = e;
+      try {
+        if (fs.existsSync(destFile)) fs.unlinkSync(destFile);
+      } catch {
+        /* 忽略清理失败 */
+      }
+    }
+  }
+
+  if (canceled) {
+    try {
+      if (fs.existsSync(destFile)) fs.unlinkSync(destFile);
+    } catch {
+      /* 忽略 */
+    }
+    return { ok: false, canceled: true, error: "下载已取消" };
+  }
+  return { ok: false, error: lastErr ? lastErr.message || "下载失败" : "下载失败" };
+}
+
 module.exports = {
   OWNER,
   REPO,
   checkAppUpdate,
+  downloadUpdate,
 };

@@ -407,6 +407,12 @@ export function createWebApi(): ElectronApi {
     uninstallFingerprint: () => rpc<{ ok: boolean }>("uninstallFingerprint"),
     checkFingerprintUpdate: () => rpc<CheckFingerprintUpdateResult>("checkFingerprintUpdate"),
     checkAppUpdate: () => rpc<CheckAppUpdateResult>("checkAppUpdate"),
+    // Web/Docker 版无桌面安装包，更新走 `docker compose pull` 重建镜像，这里返回明确语义
+    downloadUpdate: async () => ({ ok: false, error: "Web 版请通过 docker compose pull 更新镜像" }),
+    cancelUpdateDownload: async () => ({ ok: true }),
+    runUpdateInstaller: async () => ({ ok: false, error: "Web 版无桌面安装包" }),
+    revealUpdateFile: async () => ({ ok: false, error: "Web 版无桌面安装包" }),
+    onUpdateDownloadProgress: () => () => {},
 
     /* ---------------- 事件订阅 ---------------- */
     onRunning: (cb) => { subscribe("running", cb as (v: never) => void); },

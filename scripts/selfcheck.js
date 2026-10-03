@@ -2876,6 +2876,16 @@ checkTrue("接口链路：web.ts 转发 getHistory", /getHistory: \(id, year, mo
 checkTrue("接口链路：mock 提供 getHistory（dev:web 可预览）", /getHistory: async/.test(mockApiSrc));
 checkTrue("接口链路：类型声明含 getHistory", /getHistory\(id: string/.test(dtsSrc));
 
+// —— 内置下载更新：downloadUpdate 六处同步（缺一处就是「点了下载没反应 / 静默失败」）——
+const appUpdateSrc = fs.readFileSync(path.join(ROOT, "src", "app-update.js"), "utf8");
+checkTrue("下载链路：preload 暴露 downloadUpdate + 进度订阅", /downloadUpdate: \(url, assetName\)/.test(preloadSrc) && /onUpdateDownloadProgress/.test(preloadSrc));
+checkTrue("下载链路：主进程注册 下载/取消/安装/打开文件夹 四 handler", /ipcMain\.handle\("app:downloadUpdate"/.test(mainSrcHist) && /ipcMain\.handle\("app:cancelUpdateDownload"/.test(mainSrcHist) && /ipcMain\.handle\("app:runUpdateInstaller"/.test(mainSrcHist) && /ipcMain\.handle\("app:revealUpdateFile"/.test(mainSrcHist));
+checkTrue("下载链路：主进程推送进度事件 update-download-progress", /"update-download-progress"/.test(mainSrcHist));
+checkTrue("下载链路：app-update 提供流式 downloadUpdate（走镜像链）", /async function downloadUpdate/.test(appUpdateSrc) && /MIRROR_PREFIXES/.test(appUpdateSrc) && /AbortSignal\.timeout/.test(appUpdateSrc));
+checkTrue("下载链路：web.ts 提供 downloadUpdate（Docker 提示语义）", /downloadUpdate: async/.test(webTsSrc));
+checkTrue("下载链路：mock 提供 downloadUpdate（预览提示语义）", /downloadUpdate: async/.test(mockApiSrc));
+checkTrue("下载链路：类型声明含 downloadUpdate 与进度", /downloadUpdate\(url: string, assetName: string\)/.test(dtsSrc) && /UpdateDownloadProgress/.test(dtsSrc));
+
 // —— 日历界面静态守卫 ——
 const calSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "views", "CalendarPanel.tsx"), "utf8");
 const calCss = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "styles", "global.css"), "utf8");

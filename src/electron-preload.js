@@ -112,6 +112,19 @@ contextBridge.exposeInMainWorld("api", {
 
   // 应用本身更新检查（查询 GitHub Releases 最新正式版，自动加速）
   checkAppUpdate: () => ipcRenderer.invoke("app:checkAppUpdate"),
+  // 内置下载安装包（不跳浏览器）到系统「下载」目录；进度经 onUpdateDownloadProgress 推送
+  downloadUpdate: (url, assetName) => ipcRenderer.invoke("app:downloadUpdate", { url, assetName }),
+  cancelUpdateDownload: () => ipcRenderer.invoke("app:cancelUpdateDownload"),
+  // 运行下载好的安装包（NSIS 会覆盖本体，主进程随后退出应用）
+  runUpdateInstaller: (filePath) => ipcRenderer.invoke("app:runUpdateInstaller", filePath),
+  // 打开安装包所在文件夹并选中
+  revealUpdateFile: (filePath) => ipcRenderer.invoke("app:revealUpdateFile", filePath),
+  // 更新下载进度推送：{ loaded, total, pct, speed }；返回退订函数
+  onUpdateDownloadProgress: (cb) => {
+    const handler = (_e, v) => cb(v);
+    ipcRenderer.on("update-download-progress", handler);
+    return () => ipcRenderer.removeListener("update-download-progress", handler);
+  },
 
   // 实时运行状态（主进程在任务开始/结束时推送）
   onRunning: (cb) => ipcRenderer.on("running", (_e, v) => cb(v)),

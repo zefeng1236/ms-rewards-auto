@@ -28,6 +28,8 @@ import type {
   SaveTextResult,
   SetupState,
   TestUrlResult,
+  UpdateDownloadProgress,
+  UpdateDownloadResult,
   VaultResult,
   VaultStatus,
   WipeResult,
@@ -165,6 +167,16 @@ export interface ElectronApi {
   checkFingerprintUpdate(): Promise<CheckFingerprintUpdateResult>;
   /** 应用本身更新检查：查询 GitHub Releases 最新正式版（自动加速），只查不下载 */
   checkAppUpdate(): Promise<CheckAppUpdateResult>;
+  /** 内置下载安装包到系统「下载」目录，进度经 onUpdateDownloadProgress 推送 */
+  downloadUpdate(url: string, assetName: string): Promise<UpdateDownloadResult>;
+  /** 取消当前更新下载 */
+  cancelUpdateDownload(): Promise<{ ok: boolean; error?: string }>;
+  /** 运行下载好的安装包（NSIS 会覆盖本体，主进程随后退出应用） */
+  runUpdateInstaller(filePath: string): Promise<{ ok: boolean; error?: string }>;
+  /** 打开安装包所在文件夹并选中 */
+  revealUpdateFile(filePath: string): Promise<{ ok: boolean; error?: string }>;
+  /** 更新下载进度推送：{ loaded, total, pct, speed }；返回退订函数 */
+  onUpdateDownloadProgress(cb: (v: UpdateDownloadProgress) => void): () => void;
 
   // ---- 主进程推送 ----
   onRunning(cb: (v: boolean) => void): void;

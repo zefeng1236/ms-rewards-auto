@@ -694,7 +694,7 @@ export function createMockApi(): ElectronApi {
       return {
         ok: true,
         updateAvailable: true,
-        currentVersion: "0.13.15",
+        currentVersion: "0.13.16",
         latestVersion: "0.14.0",
         downloadUrl: "https://github.com/zefeng1236/ms-rewards-auto/releases/download/v0.14.0/MS-Rewards-Auto-Setup-0.14.0.exe",
         assetName: "MS-Rewards-Auto-Setup-0.14.0.exe",
@@ -704,6 +704,12 @@ export function createMockApi(): ElectronApi {
         publishedAt: new Date().toISOString(),
       };
     },
+    // 预览模式：内置下载无桌面主进程，返回明确「不支持」语义
+    downloadUpdate: async () => ({ ok: false, error: "浏览器预览模式不支持内置下载" }),
+    cancelUpdateDownload: async () => ({ ok: true }),
+    runUpdateInstaller: async () => ({ ok: false, error: "浏览器预览模式不支持安装" }),
+    revealUpdateFile: async () => ({ ok: false, error: "浏览器预览模式不支持打开文件夹" }),
+    onUpdateDownloadProgress: () => () => {},
 
     onRunning: noop,
     onLog: noop,

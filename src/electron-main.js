@@ -317,6 +317,8 @@ function setRunning(v) {
  */
 const runStatus = new Map();
 let fingerprintInstallController = null;
+/** 内置下载更新安装包时的取消控制器（同一时刻只允许一个下载任务） */
+let updateDownloadController = null;
 /** 批次运行中、用户在排队阶段就要求「停止此账号」的 id 集合（轮到时直接跳过） */
 const batchSkip = new Set();
 
@@ -1255,9 +1257,71 @@ function registerIpc() {
   // 「检查更新」只查询不下载（0.9.4.18 修：此前按钮直连 install(force) 会重下 181MB）
   ipcMain.handle("app:checkFingerprintUpdate", () => fpBrowser.checkUpdate());
 
-  // 应用本身更新检查：查询 GitHub Releases 最新正式版（自动走 gh-proxy 加速）。
-  // 「立即更新」当前只打开 Release 页，不在主进程内下载/替换本体。
+  // 应用本身更新检查：查询 GitHub Releases 最新正式版（自动走 gh-proxy 加速），只查不下载。
   ipcMain.handle("app:checkAppUpdate", () => appUpdate.checkAppUpdate(displayVersion()));
+
+  // ---- 应用更新：内置下载（不跳浏览器）----
+  // 下载安装包到系统「下载」目录，进度经 update-download-progress 推给渲染端。
+  ipcMain.handle("app:downloadUpdate", async (_e, payload) => {
+    const { url, assetName } = payload || {};
+    if (!url) return { ok: false, error: "缺少下载地址" };
+    if (updateDownloadController) return { ok: false, error: "已有更新正在下载，请稍候" };
+
+    const downloadsDir = app.getPath("downloads") || app.getPath("home");
+    const safeName = String(assetName || "MS-Rewards-Auto-Setup.exe")
+      .replace(/[\\/:*?"<>|]/g, "_");
+    const destFile = path.join(downloadsDir, safeName);
+
+    updateDownloadController = new AbortController();
+    try {
+      const r = await appUpdate.downloadUpdate({
+        url,
+        destFile,
+        signal: updateDownloadController.signal,
+        onProgress: (p) => {
+          try {
+            mainWindow?.webContents?.send("update-download-progress", p);
+          } catch {
+            /* 窗口已销毁时忽略 */
+          }
+        },
+      });
+      if (r.ok) {
+        logger.info(`更新安装包已下载：${destFile}（${r.bytes} 字节）`);
+      }
+      return r;
+    } finally {
+      updateDownloadController = null;
+    }
+  });
+
+  ipcMain.handle("app:cancelUpdateDownload", () => {
+    if (!updateDownloadController) return { ok: false, error: "当前没有正在下载的更新" };
+    updateDownloadController.abort();
+    return { ok: true };
+  });
+
+  // 运行下载好的安装包（NSIS 会覆盖正在运行的本体，先退出应用再启动安装器）
+  ipcMain.handle("app:runUpdateInstaller", async (_e, filePath) => {
+    const p = String(filePath || "");
+    if (!p || !fs.existsSync(p)) return { ok: false, error: "安装包不存在" };
+    const err = await shell.openPath(p);
+    if (err) return { ok: false, error: err };
+    // 稍等片刻让安装器进程接管，再退出本体，避免退出时把安装器一起带崩
+    setTimeout(() => {
+      forceQuit = true;
+      app.quit();
+    }, 1200);
+    return { ok: true };
+  });
+
+  // 打开安装包所在文件夹并选中该文件
+  ipcMain.handle("app:revealUpdateFile", (_e, filePath) => {
+    const p = String(filePath || "");
+    if (!p || !fs.existsSync(p)) return { ok: false, error: "安装包不存在" };
+    shell.showItemInFolder(p);
+    return { ok: true };
+  });
 
   // ---- 外观个性化 ----
   ipcMain.handle("appearance:get", () => appearance.get());
