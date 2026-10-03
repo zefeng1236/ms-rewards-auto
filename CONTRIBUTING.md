@@ -6,18 +6,25 @@
 
 这是一个**个人学习交流性质**的开源工具，与 Microsoft / Bing 无任何隶属、代理或授权关系。使用它可能违反 Microsoft 服务协议中关于自动化访问的条款，导致账户受限或积分回收，**风险由使用者自行承担**。
 
-## 2. 本仓库没有 CI
+## 2. CI 与门禁
 
-**没有 GitHub Actions，没有自动化测试流水线。** 所有门禁都是本机手动跑的：
+仓库有 GitHub Actions（`.github/workflows/ci.yml`），推送 main / 提 PR / 手动触发都会跑：
+
+| Job | 做什么 | 触发条件 |
+|---|---|---|
+| verify | typecheck + 自检 + 前端构建（桌面 + Web/Docker 产物） | 总是 |
+| desktop | 打 Windows NSIS 安装包，上传 artifacts（保留 14 天） | 非 PR（推 main / 手动） |
+| docker | 构建镜像并推送 ghcr（版本 tag + `latest`） | 非 PR（PR 只构建校验） |
+
+门禁三件套（发版前必须全绿）：
 
 ```bash
-npm run typecheck    # tsc，仅覆盖 src-renderer
-npm test             # 自检脚本
+npm run typecheck   # tsc，仅覆盖 src-renderer
+npm test            # 自检脚本（selfcheck）
+npm run verify:pack # 读 app.asar 真读校验打包产物（需先 npm run pack）
 ```
 
-外加一项按版本临时编写、读 `app.asar` 真读校验打包产物的 verify 脚本（收尾时别漏跑）。
-
-**这意味着**：如果你提 PR，合并前请自己确认这三项全绿，并在 PR 里贴出结果。维护者没有自动验证你的改动。
+**这意味着**：提 PR 后 CI 会自动跑 verify（typecheck + 自检 + 构建）。但 `verify:pack` 依赖打包产物（只有 desktop job 产出，PR 不打包），所以请在本地先 `npm run pack` 再跑一遍，全绿再提 PR。
 
 ## 3. 版本号与发版由维护者控制
 
