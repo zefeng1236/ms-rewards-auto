@@ -2,7 +2,7 @@
 
 # MS Rewards Auto
 
-**独立于油猴插件的 Microsoft Rewards（MS 积分）多账户自动任务软件**
+**独立于油猴插件的 MS Rewards（MS 积分）多账户自动任务软件**
 
 [![CI](https://github.com/zefeng1236/ms-rewards-auto/actions/workflows/ci.yml/badge.svg)](https://github.com/zefeng1236/ms-rewards-auto/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/zefeng1236/ms-rewards-auto?label=%E6%9C%80%E6%96%B0%E7%89%88)](https://github.com/zefeng1236/ms-rewards-auto/releases)
