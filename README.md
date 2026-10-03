@@ -7,6 +7,7 @@
 > **当前版本：V0.13.15（正式版）** · [下载安装包](https://github.com/zefeng1236/ms-rewards-auto/releases)
 >
 > ⚠️ 本软件为个人学习交流用途的开源工具，**非MS官方授权产品**，与 Microsoft Corporation 无任何关联。使用产生的风险请阅读文末免责声明。
+> ⚠️ 本软件完全使用Vibe conding开发，所有代码均为AI自动生成，如果发现问题请提交
 
 ## 核心特性
 
