@@ -317,6 +317,10 @@ function setRunning(v) {
  */
 const runStatus = new Map();
 let fingerprintInstallController = null;
+/** 后台静默下载控制器（与上面的区别：写 stagingDir，不动 installDir） */
+let fingerprintStagedController = null;
+/** 闲时替换轮询定时器（fpContext=0 且无任务运行时把 staging 切换为活动） */
+let fingerprintCommitTimer = null;
 /** 内置下载更新安装包时的取消控制器（同一时刻只允许一个下载任务） */
 let updateDownloadController = null;
 /** 批次运行中、用户在排队阶段就要求「停止此账号」的 id 集合（轮到时直接跳过） */
@@ -470,11 +474,19 @@ function pushFingerprintStatus() {
         // 表现为进度条闪一下就消失、且看不到任何进度。
         // 界面靠这个标志把按钮切成「取消下载」并持续显示进度。
         try {
-          mainWindow.webContents.send("fingerprint-status", { ...s, downloading: !!fingerprintInstallController });
+          // ⚠️ 必须带上 downloading —— 后台下载（staging 或主路径）期间
+          // 界面若还显示「立即下载」，用户一点就被"正在下载，请稍候"拒绝。
+          // downloading = 任一 fp 下载控制器非空。
+          mainWindow.webContents.send("fingerprint-status", {
+            ...s,
+            downloading: !!(fingerprintInstallController || fingerprintStagedController),
+          });
         } catch {}
       }
     })
     .catch((e) => logger.warn(`推送环境拟真浏览器状态失败: ${e.message}`));
+  // 顺手检查后台下载/闲时替换（每次推送都重评估，幂等）
+  maybeStartBackgroundFingerprint();
 }
 
 /** 启动周期性推送：任务运行中 3 秒一次，空闲时 10 秒一次 */
@@ -779,27 +791,114 @@ function startBackgroundWork() {
       .catch((e) => logger.error(`后台 Chromium 安装失败: ${e.message}`));
   }
 
-  // 首次运行自动下载环境拟真浏览器（默认已启用；未安装时后台下载约 181MB，不阻塞 UI）
-  if (!IS_SMOKE && globalConfig.get()?.browser?.fingerprint?.enable && !fpBrowser.isReady() && !fingerprintInstallController) {
-    logger.info("检测到环境拟真浏览器未安装且已默认启用，后台开始自动下载…");
-    fingerprintInstallController = new AbortController();
-    fpBrowser.install({
+  // 首次运行 / 内核升级 → 后台静默下载指纹浏览器（默认已启用；不阻塞 UI）
+  //
+  // 0.14 起：所有后台下载统一走 staging 路径（installStaged → commitStagedInstall）。
+  // - 首次启动：installedVersion=null，下载完 commitStagedInstall 立即执行（条件全满足）
+// - 已装旧版本（pinned 升级）：下载写 staging，**不动 installDir**，等闲时再切
+// 用户主动点的「立即下载 / 重新下载」走另一条 IPC 路径（fingerprintInstallController），
+// 行为不变；这里的入口只在 app 启动 / staged 缺失时被触发。
+  maybeStartBackgroundFingerprint();
+}
+
+/**
+ * 按需触发后台下载/闲时替换。
+ *
+ * 触发条件：
+ *   1. 指纹功能开启
+ *   2. 平台支持 + 未被镜像预装
+ *   3. installedVersion !== PINNED_VERSION（新装或升级）
+ *   4. 当前没有任何 fp 下载控制器（不与用户主动下载冲突）
+ *   5. staging 里也还没有 pinned（避免装完一次又立刻重装）
+ *
+ * 启动成功后：开闲时 commit 轮询定时器；下载完成时主动尝试一次 commit。
+ */
+function maybeStartBackgroundFingerprint() {
+  if (IS_SMOKE) return;
+  const cfg = globalConfig.get()?.browser?.fingerprint;
+  if (!cfg || !cfg.enable) return;
+  if (!fpBrowser.isSupported || !fpBrowser.isSupported()) return;
+  if (fpBrowser.preinstalledDir && fpBrowser.preinstalledDir()) return;
+  if (fingerprintInstallController || fingerprintStagedController) return;
+  // 已 pinned → 什么都不做
+  try {
+    if (fpBrowser.installedVersion && fpBrowser.installedVersion() === fpBrowser.PINNED_VERSION) return;
+  } catch {}
+  // staging 里已经有 pinned → 直接走 commit，不重新下载
+  try {
+    if (fpBrowser.stagedVersion && fpBrowser.stagedVersion() === fpBrowser.PINNED_VERSION) {
+      ensureFingerprintCommitTimer();
+      tryCommitFingerprintStaged();
+      return;
+    }
+  } catch {}
+
+  logger.info(`检测到指纹内核与钉死版本不一致（已装 ${fpBrowser.installedVersion?.() || "无"} / 钉死 ${fpBrowser.PINNED_VERSION}），后台开始静默下载…`);
+  fingerprintStagedController = new AbortController();
+  fpBrowser
+    .installStaged({
       mirror: globalConfig.get()?.browser?.fingerprint?.mirror,
-      signal: fingerprintInstallController.signal,
+      signal: fingerprintStagedController.signal,
       onProgress: (p) => {
         try { mainWindow?.webContents?.send("install-progress", p); } catch {}
       },
     })
-      .then((r) => {
-        logger.info(`后台环境拟真浏览器安装结果: ok=${r.ok}, skipped=${r.skipped || false}, canceled=${r.canceled || false}`);
-      })
-      .catch((e) => logger.error(`后台环境拟真浏览器安装失败: ${e && e.message ? e.message : e}`))
-      .finally(() => {
-        fingerprintInstallController = null;
-        // 同上：置空之后再推，界面才会立刻从「取消下载」变回「立即下载」
-        pushFingerprintStatus();
-      });
+    .then((r) => {
+      if (!r.ok) {
+        logger.warn(`后台指纹浏览器下载未完成: ok=${r.ok}, canceled=${r.canceled}, error=${r.error || ""}`);
+        return;
+      }
+      logger.info(`后台指纹内核新版 ${r.version} 解压就绪，等待闲时切换`);
+      // 下载完成 → 立刻尝试一次切换；不满足条件就靠定时器兜底
+      tryCommitFingerprintStaged();
+      ensureFingerprintCommitTimer();
+    })
+    .catch((e) => logger.error(`后台指纹浏览器下载失败: ${e && e.message ? e.message : e}`))
+    .finally(() => {
+      fingerprintStagedController = null;
+      pushFingerprintStatus();
+    });
+}
+
+/**
+ * 单次尝试：把 staging 切换到活动安装。
+ *
+ * 满足条件（staged ready、fpContext=0、没在跑账户任务）就执行；否则只记一行日志。
+ * 成功 → 顺手取消 commit 定时器；失败 → 让定时器继续兜底。
+ */
+function tryCommitFingerprintStaged() {
+  if (typeof fpBrowser.commitStagedInstall !== "function") return;
+  const r = fpBrowser.commitStagedInstall({ isIdle: !running });
+  if (r && r.ok) {
+    if (r.swapped) logger.info(`指纹内核已闲时切换为 ${fpBrowser.PINNED_VERSION}`);
+    if (r.cleaned) logger.info(`staging 已清理（已是钉死版本）`);
+    if (fingerprintCommitTimer) {
+      clearInterval(fingerprintCommitTimer);
+      fingerprintCommitTimer = null;
+    }
+    pushFingerprintStatus();
+    return;
   }
+  if (r && r.reason) {
+    // 静默 → 定时器下轮再来；只记 warn 一次免得刷屏
+    if (!tryCommitFingerprintStaged._lastReason || tryCommitFingerprintStaged._lastReason !== r.reason) {
+      logger.info(`指纹内核闲时切换未触发: ${r.reason}`);
+      tryCommitFingerprintStaged._lastReason = r.reason;
+    }
+  }
+}
+
+/**
+ * 启动闲时 commit 轮询定时器（30 秒一次）。
+ *
+ * 已存在则不重复启动。下载完成时由 maybeStartBackgroundFingerprint 主动
+ * 调一次 tryCommitFingerprintStaged → 立刻切换；切不上才轮到定时器每 30s 兜底。
+ */
+function ensureFingerprintCommitTimer() {
+  if (fingerprintCommitTimer) return;
+  fingerprintCommitTimer = setInterval(() => {
+    tryCommitFingerprintStaged();
+  }, 30 * 1000);
 }
 
 /**

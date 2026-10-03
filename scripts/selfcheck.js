@@ -1350,7 +1350,8 @@ const fhSrc = fs.readFileSync(path.join(ROOT, "src", "fast-hosts.js"), "utf8");
 
 checkTrue(
   "下载走并发分片（单连接被TCP 流控卡在 0.5MiB/s，16 线程实测 10MiB/s）",
-  /const PARALLEL_CONNECTIONS = 16/.test(fpSrc) &&
+  /const MAX_PARALLEL_CONNECTIONS = 16/.test(fpSrc) &&
+    /function pickConnections\(/.test(fpSrc) &&
     /async function downloadParallel\(/.test(fpSrc) &&
     /function downloadSegment\(/.test(fpSrc) &&
     /downloadParallel\(raw, prefix, dest, total/.test(fpSrc),
@@ -1392,15 +1393,15 @@ checkTrue(
 );
 checkTrue(
   "状态接口下发 downloading 标志（否则进度条闪一下就消失：界面只认自己点击的那次）",
-  // 两处都要：handler 里推的、类型里声明的
-  /mainWindow\.webContents\.send\("fingerprint-status", \{ \.\.\.s, downloading: !!fingerprintInstallController \}\)/.test(
+  // 两处都要：handler 里推的、类型里声明的；0.14 起 counting 任一 fp 下载控制器
+  /downloading:\s*!!\s*\(\s*fingerprintInstallController\s*\|\|\s*fingerprintStagedController\s*\)/.test(
     mainSrcFp
   ) && /downloading\?: boolean/.test(typesSrcFp)
 );
 checkTrue(
   "状态推送必须在 controller 置空之后（提前推等于告诉界面「还在下载」）",
   // finally 块里 set null 之后才 pushFingerprintStatus
-  /fingerprintInstallController = null;[\s\S]{0,200}?pushFingerprintStatus\(\);/.test(mainSrcFp)
+  /fingerprintInstallController = null;[\s\S]{0,600}?pushFingerprintStatus\(\);/.test(mainSrcFp)
 );
 checkTrue(
   "界面把「后台下载」并入 busy（向导页与设置面板两处，缺一就有一处闪一下就消失）",
@@ -3464,6 +3465,229 @@ checkTrue(
   filesQ.indexOf("!gui-react/*.png") > filesQ.indexOf("gui-react/**/*") &&
     filesQ.indexOf("gui-react/icon.png") > filesQ.indexOf("!gui-react/*.png"),
   "electron-builder 的 files 按顺序生效，顺序错了排除不生效"
+);
+
+/* ============ 【R】0.14.0 新功能 ==============================
+ * 内核升级 150 / 后台 staging / 闲时 commit / 任务停止立即生效 /
+ * Bing 登录自动点 + 引导提示 / 自适应 4~16 线程 / 检查更新双 V 修复
+ * ============================================================ */
+console.log("\n【R】0.14.0 新功能（内核升级 + 后台 staging + 停止立即生效 + Bing 引导）");
+
+// 内核版本升级到 150
+const fpSrcR = fs.readFileSync(path.join(ROOT, "src", "fingerprint-browser.js"), "utf8");
+checkTrue(
+  "指纹内核升级到 150.0.7871.186（PINNED_VERSION 落在最新版）",
+  /PINNED_VERSION\s*=\s*"150\.0\.7871\.186"/.test(fpSrcR),
+  fpSrcR.match(/PINNED_VERSION\s*=\s*"([^"]+)"/)?.[1] || "(未匹配)"
+);
+
+// 自适应并发 4..16
+checkTrue(
+  "并发下载自适应 4..16 线程（MIN/MAX 常量在档）",
+  /MIN_PARALLEL_CONNECTIONS\s*=\s*4/.test(fpSrcR) &&
+    /MAX_PARALLEL_CONNECTIONS\s*=\s*16/.test(fpSrcR) &&
+    /function\s+pickConnections\s*\(/.test(fpSrcR),
+  "pickConnections 缺失或 MIN/MAX 偏移"
+);
+
+// staging 暂存 + 闲时 commit
+checkTrue(
+  "存在 stagingDir / installStaged / commitStagedInstall / fpContextActive / notifyFpContext 导出",
+  /function\s+stagingDir\s*\(/.test(fpSrcR) &&
+    /async\s+function\s+installStaged\s*\(/.test(fpSrcR) &&
+    /function\s+commitStagedInstall\s*\(/.test(fpSrcR) &&
+    /function\s+fpContextActive\s*\(/.test(fpSrcR) &&
+    /function\s+notifyFpContext\s*\(/.test(fpSrcR),
+  "staging/commit/fpContext 任一缺失"
+);
+checkTrue(
+  "module.exports 含 stagingDir / installStaged / commitStagedInstall / fpContextActive / notifyFpContext",
+  /module\.exports\s*=\s*\{[\s\S]*?stagingDir[\s\S]*?installStaged[\s\S]*?commitStagedInstall[\s\S]*?fpContextActive[\s\S]*?notifyFpContext[\s\S]*?\};/.test(fpSrcR),
+  "新导出至少缺一个（render / 主进程靠这几个 import）"
+);
+checkTrue(
+  "staging 不与 installDir 混用：installStaged 写 stagingDir，install() 写 installDir",
+  /async\s+function\s+install\s*\(/.test(fpSrcR) &&
+    /async\s+function\s+installStaged\s*\(/.test(fpSrcR) &&
+    /const\s+dir\s*=\s*stagingDir\(\)/.test(fpSrcR),
+  "installStaged 必须显式写到 stagingDir() 而不是 installDir()"
+);
+checkTrue(
+  "commitStagedInstall 全部条件：staged===pinned / fpContextActive===0 / isIdle!==false",
+  /staged\s*!==\s*PINNED_VERSION/.test(fpSrcR) &&
+    /fpContextActive\(\)\s*>\s*0/.test(fpSrcR) &&
+    /o\.isIdle\s*===\s*false/.test(fpSrcR),
+  "commit 缺任一守门"
+);
+
+// 主进程后台编排
+const mainSrcR = fs.readFileSync(path.join(ROOT, "src", "electron-main.js"), "utf8");
+checkTrue(
+  "主进程有 fingerprintStagedController + maybeStartBackgroundFingerprint + tryCommitFingerprintStaged + ensureFingerprintCommitTimer",
+  /fingerprintStagedController\s*=\s*null/.test(mainSrcR) &&
+    /function\s+maybeStartBackgroundFingerprint\s*\(/.test(mainSrcR) &&
+    /function\s+tryCommitFingerprintStaged\s*\(/.test(mainSrcR) &&
+    /function\s+ensureFingerprintCommitTimer\s*\(/.test(mainSrcR),
+  "主进程编排入口至少缺一个"
+);
+checkTrue(
+  "pushFingerprintStatus 把任一 fp 下载控制器都计入 downloading（不丢后台下载态）",
+  /downloading:\s*!!\s*\(\s*fingerprintInstallController\s*\|\|\s*fingerprintStagedController\s*\)/.test(mainSrcR),
+  "downloading 标志只看了 fingerprintInstallController（漏 staged）"
+);
+checkTrue(
+  "maybeStartBackgroundFingerprint 在 pushFingerprintStatus 路径上周期性重评估",
+  /pushFingerprintStatus[\s\S]{0,1200}maybeStartBackgroundFingerprint\(\)/.test(mainSrcR),
+  "push 后没调 maybeStartBackgroundFingerprint（永远不会触发升级）"
+);
+
+// browser.js 上下文计数 + page-guide
+const brSrcR = fs.readFileSync(path.join(ROOT, "src", "browser.js"), "utf8");
+checkTrue(
+  "browser.js openContext 调用 fpBrowser.notifyFpContext(+1)，closeContext 调用 -1",
+  /notifyFpContext\(\s*\+1\s*\)/.test(brSrcR) &&
+    /notifyFpContext\(\s*-1\s*\)/.test(brSrcR),
+  "fp 上下文计数未生效"
+);
+checkTrue(
+  "browser.js openContext 用 context.on('page') 装 page-guide（拟真模式也能用）",
+  /context\.on\(\s*['"]page['"]/.test(brSrcR) &&
+    /pageGuide\.attachPageGuide\s*\(/.test(brSrcR),
+  "page-guide 漏装（拟真模式页面无引导提示）"
+);
+checkTrue(
+  "page-guide 模块存在并导出 attachPageGuide / TERMS_KEYWORDS",
+  fs.existsSync(path.join(ROOT, "src", "page-guide.js")) &&
+    /module\.exports[\s\S]*?attachPageGuide[\s\S]*?TERMS_KEYWORDS/.test(fs.readFileSync(path.join(ROOT, "src", "page-guide.js"), "utf8")),
+  "src/page-guide.js 缺失或 export 不全"
+);
+
+// Bing 登录自动点
+const pgSrcR = fs.readFileSync(path.join(ROOT, "src", "page-guide.js"), "utf8");
+checkTrue(
+  "Bing 登录入口自动点（#id_l + 几个兜底选择器）",
+  /tryClickBingLogin/.test(pgSrcR) &&
+    /#id_l/.test(pgSrcR) &&
+    /a\[aria-label\*?=['"]登录['"]\]?/.test(pgSrcR),
+  "Bing 登录入口选择器缺失"
+);
+checkTrue(
+  "「微软更新条款」类页面命中关键词 + 切换引导文案",
+  /TERMS_KEYWORDS/.test(pgSrcR) &&
+    /更新条款|更新服务协议|更新隐私政策/.test(pgSrcR) &&
+    /请按微软要求点下方「下一步」按钮继续|请按微软要求点下方/.test(pgSrcR),
+  "条款更新页引导逻辑缺失"
+);
+checkTrue(
+  "page-guide 提示元素 z-index=2147483647（置顶）+ 右下角（不挡用户操作）",
+  /z-index:\s*2147483647/.test(pgSrcR) &&
+    /right:\s*24px/.test(pgSrcR) &&
+    /bottom:\s*24px/.test(pgSrcR),
+  "提示元素位置 / 层级不合格"
+);
+
+// 任务停止立即生效
+checkTrue(
+  "src/cancel.js 提供 throwIfAborted（poll 循环用它判断中止）",
+  /function\s+throwIfAborted\s*\(/.test(fs.readFileSync(path.join(ROOT, "src", "cancel.js"), "utf8")),
+  "cancel.throwIfAborted 缺失"
+);
+// runner.js 延时日志必须含 scheduledAt/startedAt
+const runSrcR = fs.readFileSync(path.join(ROOT, "src", "runner.js"), "utf8");
+checkTrue(
+  "runner.js 启动延时日志包含「计划 / 实际开始 / 延时时长」",
+  /命中随机启动延迟/.test(runSrcR) &&
+    /scheduledAt/.test(runSrcR) &&
+    /实际开始执行/.test(runSrcR),
+  "延时日志缺字段（用户无法核对实际开始时间）"
+);
+// 关键的等待超时（page.waitForTimeout）应被 cancel.sleep 替换
+checkTrue(
+  "browser.js syncCookies / ensureBingLoginByClick / loginInteractive 中 page.waitForTimeout 已替换为 cancel.sleep",
+  // 仅断言剩下的 waitForTimeout 都是 user 主动点「取消」之类的不可中断等待
+  (brSrcR.match(/page\.waitForTimeout\(/g) || []).length <= 1,
+  `剩余 ${(brSrcR.match(/page\.waitForTimeout\(/g) || []).length} 处 page.waitForTimeout 不可中断`
+);
+
+// GitHub 连通判定：fast-hosts.js 头注释必须区分"看就阻断" vs "Watt Toolkit 本地代理"
+const fhSrcR = fs.readFileSync(path.join(ROOT, "src", "fast-hosts.js"), "utf8");
+checkTrue(
+  "fast-hosts.js 头注释明确指出 127.0.0.1 可能是 Watt Toolkit 等本地代理",
+  /127\.0\.0\.1/.test(fhSrcR) && /Watt Toolkit|本地代理|代理客户端/.test(fhSrcR) && /不能假设|不能作为判据|不要/.test(fhSrcR),
+  "fast-hosts.js 头注释没改正（用户反馈的关键误解）"
+);
+checkTrue(
+  "下载链路：wantPinned 退化为只看 IP_DIRECT（不再因 auto 链到 direct 就接管）",
+  /const\s+wantPinned\s*=\s*mirror\s*===\s*IP_DIRECT/.test(fpSrcR),
+  "wantPinned 仍带 auto 直连兜底分支（违反用户修正）"
+);
+
+// 自适应 4~16 线程：downloadParallel 必须用 pickConnections
+checkTrue(
+  "downloadParallel 用 pickConnections(total) 取并发数（不再写死 16）",
+  /async\s+function\s+downloadParallel[\s\S]*?pickConnections\(total\)/.test(fpSrcR),
+  "downloadParallel 仍写死并发数"
+);
+
+// 应用更新 VV 修复
+const updSrcR = fs.readFileSync(path.join(ROOT, "src", "app-update.js"), "utf8");
+checkTrue(
+  "app-update.js checkAppUpdate 剥掉 tag_name 前导 v（修双 V）",
+  /tag_name[\s\S]{0,200}\.replace\(\s*\/\^v\/i/.test(updSrcR) ||
+    /tag_name[\s\S]{0,200}\.replace\(\s*\/\^v\//.test(updSrcR),
+  "latestVersion 仍带前导 v（UI 会拼出双 V）"
+);
+
+// 渲染层 UI 不准硬拼 v 前缀（防止上游漏剥 v 时再次出现「VV0.13.X」双 V bug）
+const updDlgSrcR = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "components", "UpdateDialog.tsx"), "utf8");
+const sidebarSrcR = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "components", "Sidebar.tsx"), "utf8");
+const mockSrcR = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "api", "mock.ts"), "utf8");
+const rVerSrcR = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "version.ts"), "utf8");
+// 「>v${...}」形态：HTML 元素内容起始 + v 模板。SVG path data 里的 "V" 大写且独立，
+// 这里用「小写 v + ${...}」的组合精确锁定，禁止这种拼接出现在 .tsx。
+const vPrefixTpl = /<span[^>]*>\s*v\s*\$\{[^}]+\}|>\s*v\s*\$\{\s*(DISPLAY_VERSION|info|updateInfo)/;
+const oldSideTitle = /v\$\{updateInfo\.latestVersion\}/;
+const oldSideBtn = />\s*v\{DISPLAY_VERSION\}/;
+const oldUpdHero = />\s*v\{info\.currentVersion[^}]*\}|>\s*v\{info\.latestVersion\}/;
+const oldUpdChecking = />\s*v\{DISPLAY_VERSION\}/;
+checkTrue(
+  "UpdateDialog.tsx 不再硬拼 v 前缀（currentVersion / latestVersion 自带展示）",
+  !oldUpdHero.test(updDlgSrcR) && !oldUpdChecking.test(updDlgSrcR) && !vPrefixTpl.test(updDlgSrcR),
+  "UpdateDialog.tsx 里发现 >v${...} 形态拼接 → 一旦 app-update.js 漏剥前导 v，会拼出双 V"
+);
+checkTrue(
+  "Sidebar.tsx 不再硬拼 v 前缀（DISPLAY_VERSION / latestVersion 自带展示）",
+  !oldSideBtn.test(sidebarSrcR) && !oldSideTitle.test(sidebarSrcR) && !vPrefixTpl.test(sidebarSrcR),
+  "Sidebar.tsx 里发现 >v${...} 形态拼接 → 会拼出双 V（用户 2026-10-03 反馈）"
+);
+
+// mock.ts currentVersion 必须走 DISPLAY_VERSION，不准另起炉灶
+checkTrue(
+  "mock.ts currentVersion 从 DISPLAY_VERSION 取（与 package.json 单源，避免侧边栏与检查更新对不齐）",
+  /currentVersion:\s*DISPLAY_VERSION/.test(mockSrcR),
+  "mock.ts currentVersion 仍写死字符串 → 与 Sidebar 左下角的 DISPLAY_VERSION 对不齐"
+);
+checkTrue(
+  "mock.ts latestVersion 不带前导 v（修双 V 的辅助：连 mock 也不准写）",
+  !/latestVersion:\s*["']v\d/.test(mockSrcR),
+  "mock.ts latestVersion 带前导 v"
+);
+
+// version.ts APP_VERSION 必须不带 v 前缀（DISPLAY_VERSION 自带展示）
+checkTrue(
+  "version.ts APP_VERSION / DISPLAY_VERSION 不带 v 前缀",
+  /APP_VERSION\s*=\s*"\d/.test(rVerSrcR) &&
+    /DISPLAY_VERSION\s*=/.test(rVerSrcR) &&
+    !/DISPLAY_VERSION\s*=\s*`v\$\{/.test(rVerSrcR),
+  "version.ts APP_VERSION 或 DISPLAY_VERSION 带 v 前缀"
+);
+
+// 设置文案
+const fpPanelR = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "components", "FingerprintBrowserPanel.tsx"), "utf8");
+checkTrue(
+  "设置项「启用环境拟真浏览器」追加了 (adryfish/fingerprint-chromium)",
+  /label="启用环境拟真浏览器（adryfish\/fingerprint-chromium）"/.test(fpPanelR),
+  "文案未追加项目地址"
 );
 
 /* ============ 汇总 ============ */

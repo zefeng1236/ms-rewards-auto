@@ -335,7 +335,7 @@ export function Sidebar({
             type="button"
             className="nav-update-badge"
             aria-label={`发现新版本 ${updateInfo.latestVersion}，点击查看更新日志`}
-            title={`发现新版本 v${updateInfo.latestVersion}`}
+            title={`发现新版本 ${updateInfo.latestVersion}`}
             onClick={() => setUpdateOpen(true)}
           >
             <span>NEW</span>
@@ -536,14 +536,17 @@ export function Sidebar({
           </div>
         )}
 
-        {/* 左下角版本号（v 主版本.交付号，与安装包文件名一致）；点击也可打开自动更新弹窗 */}
+        {/* 左下角版本号（v 主版本.交付号，与安装包文件名一致）；点击也可打开自动更新弹窗
+            DISPLAY_VERSION 自带完整展示文案（见 src/version.ts），UI 不再硬拼前缀 v——
+            否则一旦上游接口漏剥前导 v，UI 会拼出 "VV0.13.15" 这种双 V bug（2026-10-03
+            用户反馈，selfcheck 守卫不准 UI 拼 v）。 */}"
         <button
           type="button"
           className="nav-version hint nav-version-btn"
           title="当前软件版本 · 点击检查更新"
           onClick={() => setUpdateOpen(true)}
         >
-          v{DISPLAY_VERSION}
+          {DISPLAY_VERSION}
         </button>
       </div>
 

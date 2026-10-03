@@ -306,7 +306,33 @@ async function openContext(ctx, headless, opts) {
       }
     }
   }
-  return { context, executable, headless, tempDir };
+
+  // 0.14：指纹浏览器上下文计数 +1（closeContext 对称 -1），让后台 staging
+  // 切换判定能感知"现在有 fp 内核在跑，不要动 installDir"
+  if (isFp && fpBrowser && typeof fpBrowser.notifyFpContext === "function") {
+    try { fpBrowser.notifyFpContext(+1); } catch {}
+  }
+
+  // 0.14：每个 page（含 context 新开的 page）装上引导提示。
+  // 注意：环境拟真浏览器模式刻意不用 addInitScript（CDP 指纹见 browser.js:282-285），
+  // page-guide 走 page.evaluate，与既有 tasks.js:495/539 的 DOM 范式同源，
+  // 不在 navigator / UA / WebGL 上添指纹。
+  const pageGuide = require("./page-guide");
+  try {
+    context.on("page", (p) => {
+      try { pageGuide.attachPageGuide(p); } catch (e) {
+        logger.warn(`装引导提示失败: ${e.message}`);
+      }
+    });
+    // 已有页面（首次启动时 launchPersistentContext 已建好首页）
+    for (const p of context.pages()) {
+      try { pageGuide.attachPageGuide(p); } catch {}
+    }
+  } catch (e) {
+    logger.warn(`注册页面引导失败（不影响主流程）: ${e.message}`);
+  }
+
+  return { context, executable, headless, tempDir, isFp };
 }
 
 /**
@@ -339,6 +365,10 @@ function sanitizeCookies(cookies) {
 /** 关闭上下文并删除临时 profile（磁盘上不留会话痕迹） */
 async function closeContext(handle) {
   if (!handle) return;
+  // 0.14：环境拟真浏览器上下文出栈时 -1，让后台 staging 切换判定立刻松绑
+  if (handle.isFp && fpBrowser && typeof fpBrowser.notifyFpContext === "function") {
+    try { fpBrowser.notifyFpContext(-1); } catch {}
+  }
   try {
     await handle.context.close();
   } catch {}
@@ -382,7 +412,7 @@ async function ensureBingSSO(page, context) {
     try {
       await page.goto(ssoUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
       await page.waitForLoadState("networkidle", { timeout: 12000 }).catch(() => {});
-      await page.waitForTimeout(4500);
+      await cancel.sleep(4500);
     } catch (e) {
       logger.warn(`Bing 静默 SSO 跳转失败: ${e.message}`);
     }
@@ -422,7 +452,7 @@ async function ensureBingLoginByClick(page, context) {
   try {
     await page.goto("https://www.bing.com/", { waitUntil: "domcontentloaded", timeout: 60000 });
     await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
-    await page.waitForTimeout(2500);
+    await cancel.sleep(2500);
   } catch (e) {
     logger.warn(`点按钮兜底：打开 Bing 首页失败: ${e.message}`);
     return out;
@@ -449,7 +479,8 @@ async function ensureBingLoginByClick(page, context) {
   // 等待弹窗/跳转到 login.live.com，并循环处理确认页 / 账户选择（最多 ~30s）
   const deadline = Date.now() + 30 * 1000;
   while (Date.now() < deadline) {
-    await page.waitForTimeout(2500);
+    cancel.throwIfAborted();
+    await cancel.sleep(2500);
     const url = page.url();
     const cookies = await context.cookies();
     // 补上票就收工
@@ -523,11 +554,18 @@ async function syncCookies(ctx) {
     // 先过 bing.com 触发 SSO，再读 rewards 页。
     // cn / www 都要过：_U 票据可能只落在其中一个域上。
     for (const target of ["https://cn.bing.com/", "https://www.bing.com/", "https://rewards.bing.com/earn"]) {
+      // 0.14：响应「停止任务」—— 以前光靠 page.goto 的超时（60s）等
+      // 队列里点停止后到下一个 throwIfAborted 检查点才生效，日志会卡
+      // 二十多秒才能停；现在每个目标入口先抛一次 AbortError，立刻打断。
+      cancel.throwIfAborted();
       try {
         await page.goto(target, { waitUntil: "domcontentloaded", timeout: 60000 });
         await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
-        await page.waitForTimeout(3000);
+        // page.waitForTimeout 不可中断（底层就是 setTimeout）；改用 cancel.sleep
+        // 让"停止任务"立即打断，避免用户看着 20s 静默等
+        await cancel.sleep(3000);
       } catch (e) {
+        if (e && e.isAbort) throw e;
         logger.warn(`打开 ${target} 失败: ${e.message}`);
       }
     }
@@ -549,8 +587,10 @@ async function syncCookies(ctx) {
         try {
           await page.goto("https://rewards.bing.com/earn", { waitUntil: "domcontentloaded", timeout: 60000 });
           await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
-          await page.waitForTimeout(3000);
-        } catch {}
+          await cancel.sleep(3000);
+        } catch (e) {
+          if (e && e.isAbort) throw e;
+        }
         cookies = await context.cookies();
         let html2 = "";
         try {
@@ -565,11 +605,14 @@ async function syncCookies(ctx) {
           logger.warn("静默 SSO 未补齐票据，回退到模拟点登录按钮…");
           const byClick = await ensureBingLoginByClick(page, context);
           if (byClick.done) {
+            cancel.throwIfAborted();
             try {
               await page.goto("https://rewards.bing.com/earn", { waitUntil: "domcontentloaded", timeout: 60000 });
               await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
-              await page.waitForTimeout(3000);
-            } catch {}
+              await cancel.sleep(3000);
+            } catch (e) {
+              if (e && e.isAbort) throw e;
+            }
             cookies = await context.cookies();
             let html3 = "";
             try { html3 = await page.content(); } catch {}
@@ -625,11 +668,13 @@ async function waitForRewardsSession(page, context) {
       throw e;
     }
     for (const target of targets) {
+      cancel.throwIfAborted();
       try {
         await page.goto(target, { waitUntil: "domcontentloaded", timeout: 60000 });
         await page.waitForLoadState("networkidle", { timeout: 12000 }).catch(() => {});
-        await page.waitForTimeout(4500);
+        await cancel.sleep(4500);
       } catch (e) {
+        if (e && e.isAbort) throw e;
         logger.warn(`访问 ${target} 失败: ${e.message}`);
       }
       const url = page.url();
@@ -712,7 +757,7 @@ async function loginInteractive(ctx) {
       } catch {}
       // 用户可能直接关闭了浏览器
       if (context.pages().length === 0) break;
-      await page.waitForTimeout(600);
+      await cancel.sleep(600);
     }
 
     if (!code) {

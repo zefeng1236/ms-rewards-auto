@@ -688,13 +688,15 @@ export function createMockApi(): ElectronApi {
       reinstallAvailable: true,
     }),
     // 预览模式：伪造一个比当前版本新的正式版，方便直接看到 NEW 徽标与更新弹窗样式。
-    // 加 900ms 延迟模拟真实网络往返，让「检查中」转圈态在预览里也能看到（真实环境本就有时延）。
+    // currentVersion 直接从 DISPLAY_VERSION 取（package.json 单源），避免 mock 写死
+    // 与 Sidebar 左下角 / 检查更新里的「当前版本」对不上——以前写死 "0.14.0" 但用户装
+    // 的还是 0.13.16，看着「侧边栏 0.13.16 / 检查更新里 0.14.0」对不齐。
     checkAppUpdate: async () => {
       await sleep(900);
       return {
         ok: true,
         updateAvailable: true,
-        currentVersion: "0.13.17",
+        currentVersion: DISPLAY_VERSION,
         latestVersion: "0.14.0",
         downloadUrl: "https://github.com/zefeng1236/ms-rewards-auto/releases/download/v0.14.0/MS-Rewards-Auto-Setup-0.14.0.exe",
         assetName: "MS-Rewards-Auto-Setup-0.14.0.exe",

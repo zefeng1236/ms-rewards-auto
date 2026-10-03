@@ -201,7 +201,7 @@ export function FingerprintBrowserPanel() {
         ) : (
           <>
             <SwitchField
-              label="启用环境拟真浏览器"
+              label="启用环境拟真浏览器（adryfish/fingerprint-chromium）"
               hint={
                 st?.preinstalled
                   ? "Docker 版镜像内置，且容器里只有环境拟真浏览器可用，因此始终启用（不可关闭）"
@@ -346,6 +346,17 @@ export function FingerprintBrowserPanel() {
               注意两处上游限制：GPU 环境特征仅 Linux 生效（Windows 上 WebGL 由本项目自己的补丁兜底）；
               headless 下它只把 UA 的 HeadlessChrome 改成 Chrome，其余 headless 特征不变。
             </div>
+
+            {/* 0.14：后台 staging 状态提示 —— 仅在"已装旧版 + 钉死版本更新"或"刚装好新版"两种场景出现 */}
+            {!st?.preinstalled &&
+              st?.staged?.ready &&
+              !st?.staged?.committed && (
+                <div className="hint fp-note" style={{ marginTop: 4 }}>
+                  新版本 <strong>{st.staged.version}</strong> 已下载到临时位置，等待空闲时段自动切换；
+                  当前任务完全不受影响，正在跑的内核照常用，闲下来再切。
+                  （当前活跃内核数：{st.fpContextCount ?? 0}）
+                </div>
+              )}
           </>
         )}
       </AppCard>

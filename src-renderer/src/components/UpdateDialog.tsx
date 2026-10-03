@@ -285,7 +285,7 @@ export function UpdateDialog({
             <div className="upd-checking">
               <div className="upd-spinner" aria-hidden />
               <div className="upd-checking-text">正在检查更新...</div>
-              <div className="upd-checking-ver">v{DISPLAY_VERSION}</div>
+              <div className="upd-checking-ver">{DISPLAY_VERSION}</div>
             </div>
           ) : hasUpdate && info ? (
             <>
@@ -299,9 +299,9 @@ export function UpdateDialog({
                 <div>
                   <div className="upd-hero-title">版本更新可用</div>
                   <div className="upd-hero-ver">
-                    <span className="upd-ver-old">v{info.currentVersion || DISPLAY_VERSION}</span>
+                    <span className="upd-ver-old">{info.currentVersion || DISPLAY_VERSION}</span>
                     <span className="upd-ver-arrow">→</span>
-                    <span className="upd-ver-new">v{info.latestVersion}</span>
+                    <span className="upd-ver-new">{info.latestVersion}</span>
                   </div>
                 </div>
               </div>

@@ -1,15 +1,23 @@
 /**
  * GitHub 优选 IP（hosts 加速）
  *
- * 为什么需要它 —— 实测抓到的三件事：
- *   1. 很多国内网络环境（含本机）会在 **系统 hosts 里把 github.com 指向 127.0.0.1**
- *      直接阻断，直连必然失败；gh-proxy 镜像虽有 CDN 兜底，但单连接被限速到
- *      0.5MiB/s 量级。
- *   2. hosts.gitcdn.top 提供的 hosts.json 是**按国内线路优选过的真实 IP**，
- *      绕过本地 hosts 阻断 + 绕开镜像限速。
- *   3. Release 下载会302 跳到 release-assets.githubusercontent.com，
- *      这个域名**不在** hosts.json 里（实测），所以只需要给 github.com
- *      指定 IP 就能打通整条链，第二跳走正常 DNS 即可。
+ * 为什么需要它 —— 实测抓到的真实场景：
+ *   1. **不能假设 hosts→127.0.0.1 就是「被阻断」**。很多加速器（典型代表：Watt
+ *      Toolkit / Steam++ / DevSidecar）会在系统 hosts 里把 github.com 指向
+ *      127.0.0.1 —— 那是它们本地代理服务的监听地址，访问 github.com 时实际由
+ *      这台本地客户端代为出网，**正常工作**。所以"hosts 把 github 指向 127.0.0.1"
+ *      不能作为连通性判据，更不能用 ping 测试（ping 命中本地代理的监听端口不等于
+ *      "GitHub 可达"）。
+ *   2. 但**也确有**只写了 hosts→127.0.0.1、且本地没有跑代理客户端的真阻断场景：
+ *      系统 hosts 被手工加了一行指向环回地址但客户端没装 / 没启 —— 直连必然失败。
+ *      hosts.gitcdn.top 提供的 hosts.json 是按国内线路优选过的真实 IP，绕过阻断。
+ *   3. Release 下载会 302 跳到 release-assets.githubusercontent.com，这个域名
+ *      **不在** hosts.json 里（实测），所以只需要给 github.com 指定 IP 就能打通
+ *      整条链，第二跳走正常 DNS 即可。
+ *
+ * 何时用：本项目**只在用户主动选了 `ip-direct` 镜像档、或自动链一路失败后由
+ * downloadAsset 触发 ip-direct 兜底时**才接管解析。**不会因为 hosts 看着像 127.0.0.1
+ * 就自动接管**——那样会绕过 Watt Toolkit 等本地代理，明明能用的链路也会被掐断。
  *
  * 实现方式：**不写系统 hosts**（要管理员权限、会污染用户全局环境），
  * 而是在 https.request 的 lookup 回调里返回指定 IP —— SNI 与证书校验

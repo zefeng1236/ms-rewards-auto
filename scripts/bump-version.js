@@ -128,8 +128,21 @@ if (checkOnly) {
     path.join(ROOT, "src-renderer", "src", "api", "mock.ts"),
     "utf8"
   );
-  const mockV = (mockSrc.match(/currentVersion:\s*"([^"]+)"/) || [])[1];
-  add("mock.ts currentVersion", mockV === expected, `${mockV} vs ${expected}`);
+  // currentVersion 允许两种合法形态：
+  //   ① 字面量 `"x.y.z"` —— 与 package.json 同步
+  //   ② `DISPLAY_VERSION` —— 单源到 APP_VERSION/BUILD_NUMBER，自动同步
+  //   0.14 起要求强单源（mock 写死"0.14.0"会让装 0.13.x 的用户看到「侧边栏 0.13.x / 检查更新 0.14」对不齐）
+  const mockVLiteral = (mockSrc.match(/currentVersion:\s*"([^"]+)"/) || [])[1];
+  const mockUsesDisplay =
+    /currentVersion:\s*DISPLAY_VERSION\b/.test(mockSrc) &&
+    !/currentVersion:\s*"[^"]+"/.test(mockSrc);
+  add(
+    "mock.ts currentVersion",
+    mockVLiteral === expected || mockUsesDisplay,
+    mockUsesDisplay
+      ? `DISPLAY_VERSION（与 package.json 单源） vs ${expected}`
+      : `${mockVLiteral} vs ${expected}`
+  );
 
   const readmeSrc = fs.readFileSync(path.join(ROOT, "README.md"), "utf8");
   const readmeOk = readmeSrc.includes(`当前版本：V${expected}`);

@@ -205,7 +205,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 #   - 写 version.txt：让 src/fingerprint-browser.js 的 installedVersion() 能报出版本号
 #     （与桌面版运行时下载安装的产物同构，状态接口不用为 Docker 单独开分支）。
 #   - ldd 自检：缺运行库直接让构建失败，而不是等用户在容器里看到浏览器起不来。
-ARG FPCB_VERSION=148.0.7778.215
+ARG FPCB_VERSION=150.0.7871.186
 ARG FPCB_URL=https://github.com/adryfish/fingerprint-chromium/releases/download/${FPCB_VERSION}/ungoogled-chromium-${FPCB_VERSION}-1-x86_64_linux.tar.xz
 ARG FPCB_PROXY=https://gh-proxy.com/
 RUN set -eux; \

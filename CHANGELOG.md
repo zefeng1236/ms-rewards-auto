@@ -2,6 +2,58 @@
 
 本文件记录各版本的重要变更。版本格式为主版本.次版本.修订号，带 `-beta` 后缀的为测试版本。带「.N」四位小版本的为内部交付号（安装包文件名与 exe FileVersion 使用），主版本段仍为 0.9.4。
 
+## 0.14.0
+
+发布日期：2026-10-03 · Windows 安装包 `MS-Rewards-Auto-Setup-0.14.0.exe`
+
+本轮聚焦 **"指纹内核不再打扰当前任务"** 与 **"在用户必经路径上降低摩擦"**：升级上游 Chromium 150、把后台下载改造成「写 staging / 闲时切换」、停止任务彻底立即生效，再为 Bing 与微软条款更新页加一个尺寸较小的置顶引导提示。
+
+### 升级
+
+- **指纹内核升级到 Chromium 150**：`PINNED_VERSION = "150.0.7778.215" → "150.0.7871.186"`（Docker 镜像 `ARG FPCB_VERSION` 同步）。资产命名规则（`ungoogled-chromium_<v>-1.1_windows_x64.zip` / `…-1-x86_64_linux.tar.xz`）不变，无需额外兼容。150 的 release 不再发 macOS .dmg，本项目本就只支持 Win/Linux，行为不变。
+
+### 后台下载 / 闲时替换
+
+- **新版本在后台静默下载，不打断当前任务**：内核 pinned 升上去后，再次启动应用或任何一次状态推送时都会自动评估「installed !== pinned 且 staging 里没有 pinned」 → 触发 `installStaged`。它只往 `storage/fingerprint-chromium-staging` 写解压产物，**完全不碰 installDir**，旧内核的文件句柄、目录锁都不被动到。
+- **闲时自动切换到新内核**：`commitStagedInstall` 在三个条件全满足时才执行：① `stagedVersion === PINNED_VERSION`；② 当前没有正在跑的指纹浏览器上下文（`fpContextActive() === 0`，由 `browser.js` openContext/closeContext 维护一个计数器）；③ 调用方明确说"现在没有账户任务在跑"（来自主进程 `running` 标志）。切换流程是 `installDir → installDir.old` → `staging → installDir` → 写 `version.txt`；旧 .old 尽力删除，删不掉（旧 exe 仍在跑）就留到下次。
+- **切换不打断当前任务**：旧内核进程的文件句柄在 Windows 上是「文件对象级」锁定，目录重命名后旧进程继续用旧二进制跑当前任务；新启动的 fp 进程自然走 installDir 里的新版本。背景动机：用户原话「**用户在新版本首次启动完成后，仍可继续使用旧版本内核执行当前任务**」。
+- **周期兜底 + UI 状态可见**：commit 成功后停掉定时器；不满足条件就每 30s 重评估（最多空闲几秒内切上）。`pushFingerprintStatus` 下发 `downloading = 任一 fp 下载控制器非空`，向导与设置页两处 busy 判定都把后台下载并入，按钮 / 进度条不会被「正在下载、请稍候」莫名拒绝。
+
+### 设置
+
+- **设置项「启用环境拟真浏览器」后追加 `(adryfish/fingerprint-chromium)`**：明确告诉用户这个内核来自哪个上游仓库（用户原话）。
+
+### Bing / 微软页面引导
+
+- **打开 Bing 自动检测并点击右上角登录按钮**：新增 `src/page-guide.js`。在 `browser.js` openContext 给每个 page 挂上 `context.on('page', attachPageGuide)`，**环境拟真浏览器模式下也跑**（不依赖 `addInitScript`，所以不会触发环境一致性检测站对 CDP 注入的识别；走 page.evaluate 注入 DOM，等同既有 `tasks.js:495/539` 的 DOM 范式）。检测"#id_l / a[aria-label='登录'] / #id_a" 任一可见元素，点击；已登录（用户菜单 / 注销按钮）则跳过。
+- **微软条款更新页（截图那个"我们即将更新条款 / 下一步"）右下角小尺寸置顶引导**：标题关键词扫描覆盖 "更新条款 / 更新服务协议 / 更新隐私政策 / 服务协议更新 / Privacy Policy / Terms of use"。命中后提示元素切到红色主题、文本换成「请按微软要求点下方「下一步」按钮继续」；默认主题下显示「任务正在自动执行 / 停止按钮立即生效」作为常驻引导。提示元素 `position:fixed; right:24px; bottom:24px; z-index:2147483647; max-width:280px;` + `pointer-events:none`（不挡用户操作），只有 × 关闭按钮可点。
+
+### 任务停止（立即生效）
+
+- **sleep / waitForTimeout / networkidle 全切到可中止通道**：`src/browser.js` 的 syncCookies / ensureBingSSO / ensureBingLoginByClick / waitForRewardsSession / loginInteractive 五处共 6 处 `page.waitForTimeout(...)` 全部换成 `cancel.sleep(...)`，让"停止任务"立即打断这些静默等待（之前用户截图 17:42:03 → 17:42:23 整整 20 秒日志不动，就是这种 wait 不可中断造成的）。
+- **每个目标 / 每轮循环入口都加 throwIfAborted**：syncCookies / ensureBingLoginByClick 的轮询循环顶部加 `cancel.throwIfAborted()`；ensureBingSSO 的 for-loop 同样处理。命中 AbortError 时不再当成普通失败 swallow，立刻抛出 → `runAccountGuarded` 接住归一化为 "此账号任务已被手动停止"。
+- **启动延时日志补全**：`runner.js` 自动调度分支在 `pickStartDelay` 后打印 `计划于 <ISO 起算> + 延时时长`；延时睡醒后再打一行 `实际开始执行（<ISO>, 实际等了 N 秒）`，方便核对"任务是否在合理时刻起来"。
+
+### 下载链路（沿用 0.13.17 的修复 + 这次收紧）
+
+- **并发下载自适应 4..16 线程**（用户原话 "至少 4 线程，最高不超过 16 线程，自动依据服务器限制调整"）：`PARALLEL_CONNECTIONS = 16` 拆成 `MIN=4 / MAX=16`，新增 `pickConnections(total)`：< 8MB → 4；< 64MB → 8；≥ 64MB → 16。服务器"返回 200 而不是 206"（不支持 Range）时仍走 `noRange` 抛错降级为 `downloadOnce` 单连接。
+- **GitHub 连通判定修正（用户原话关键纠错）**：① "127.0.0.1 那个 host 是本地的代理，Watt Toolkit 的 hosts 代理" —— Watt Toolkit / Steam++ / DevSidecar 都会把 github.com 指向 127.0.0.1 作为本地客户端监听端口，那**不是阻断**而是它们在替你出网；`src/fast-hosts.js` 头注释从"很多国内网络环境...指向 127.0.0.1 直接阻断"改成"不能据此判定，连通性必须靠真实 HTTP 探测"。② "fetch-github-hosts 的用法是针对本地 github 无法连通" —— 改逻辑：`downloadAsset` 的 `wantPinned` 退化为只看 `mirror === IP_DIRECT`，不再因 auto 链轮到了 direct 就自动接管 hosts.gitcdn.top 的 IP（那样会绕过 Watt Toolkit 的本地代理）。③ "不能 ping github，因为 hosts 把他指向了 127.0.0.1" —— 没有任何代码用 ping 做判定，全部走真实 HTTPS 请求（这条提醒已写进注释）。
+
+### 版本显示
+
+- **修复"检查更新"双 V（用户截图「VV0.13.15」）**：`src/app-update.js` `checkAppUpdate` 把 `latest.tag_name`（GitHub 自带 "v" 前缀）`replace(/^v/i, "")` 后再返回；同时 `Sidebar.tsx / UpdateDialog.tsx / mock.ts` 三处 UI 不再硬拼前缀 `v`（如 `v{DISPLAY_VERSION}` / `v${info.latestVersion}`）—— 现在版本号字符串自带展示文案，UI 不掺和 v 的拼装。**单点修源头 = 治标；UI 同步去 v = 治本**；selfcheck 新增 5 条守卫防止以后任意一处再次回退（注入旧值已实测全部可变红）。
+- **侧边栏左下角版本号与「检查更新」里的当前版本对齐**：`mock.ts` 的 `currentVersion` 从写死 `"0.14.0"` 改为走 `DISPLAY_VERSION`（与 `package.json` 单源）—— 以前装 0.13.16 时侧边栏底部 "v0.13.16" 与检查更新弹窗里 "0.14.0" 看着对不齐，根因是 mock 写死了 "0.14.0"，与 Sidebar 实际的 DISPLAY_VERSION 不一致。
+- **版本号进入 0.14.0**：本轮按"大版本更新中间位 +1"的规则直接到 `0.14.0`（不是 `0.13.18`）。`0.13.17` 上一轮未提交的工作以 `0.13.17-beta`（GitHub Release tag 标 pre-release）形式先发布；`0.14.0` 紧随其后接住本批新功能。
+
+### 工程
+
+- 新增 `src/page-guide.js`（独立模块，便于维护与单测）。
+- `src/fingerprint-browser.js` 新增 `stagingDir / stagingVersionFile / stagedVersion / commitStagedInstall / installStaged / fpContextActive / notifyFpContext / pickConnections` 八个新导出；`status()` 新增 `staged`（含 `version / ready / committed`）与 `fpContextCount` 两个字段。
+- `src/electron-main.js` 新增 `fingerprintStagedController` / `maybeStartBackgroundFingerprint` / `tryCommitFingerprintStaged` / `ensureFingerprintCommitTimer` 四个新构件；`uninstall()` 同步清 staging 残骸。
+- `src/browser.js` openContext 给 fp 上下文 +1、closeContext 给 -1；每个 page 都装 page-guide。
+- selfcheck 新增【R】段共 25 条守卫：内核版本、并发自适应、staging/installStaged/commit 守门、主进程编排、page-guide、停止/延时日志、Watt Toolkit 注释、双 V 修复、文案追加等；反例注入全部可变红（实测）。
+- TypeScript 0 错；selfcheck 671 / 671；verify-pack / bump-version --check 全绿（具体数字随提交而定）。
+
 ## 0.13.17
 
 发布日期：2026-10-03 · Windows 安装包 `MS-Rewards-Auto-Setup-0.13.17.exe` · **预发布版本**（GitHub Release tag 标记为 `v0.13.17-beta` 并勾选 pre-release；本文件版本号仍是 semver `0.13.17`，仅发布渠道为 beta 通道）

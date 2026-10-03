@@ -43,7 +43,7 @@ const fastHosts = require("./fast-hosts");
 
 const REPO = "adryfish/fingerprint-chromium";
 /** 固定版本：环境拟真浏览器的发布节奏与本项目不同步，钉死避免用户环境出现不可预期变化 */
-const PINNED_VERSION = "148.0.7778.215";
+const PINNED_VERSION = "150.0.7871.186";
 
 /**
  * 镜像前缀链：按顺序尝试，"" 表示直连。
@@ -334,6 +334,49 @@ function downloadDir() {
 }
 
 /**
+ * 后台暂存目录：放着下一版内核的解压产物，闲时再切到 installDir。
+ *
+ * 与 installDir 平级，路径 `storage/fingerprint-chromium-staging`。后台下载
+ * 全程只写这里，绝不碰 installDir —— 这样**正在用旧内核跑的任务**的文件
+ * 句柄、目录锁都不会被破坏。
+ */
+function stagingDir() {
+  return sp.resolve("fingerprint-chromium-staging");
+}
+
+function stagingVersionFile() {
+  return path.join(stagingDir(), "version.txt");
+}
+
+/**
+ * 读 staging 里的版本号；staging 不存在/无 version.txt 返回 null。
+ * 调用方据此决定要不要尝试切换、后台要不要开始下载。
+ */
+function stagedVersion() {
+  try {
+    const v = fs.readFileSync(stagingVersionFile(), "utf8").trim();
+    return v || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 正在运行的指纹浏览器上下文数（openContext isFp=true 进入 +1，
+ * closeContext isFp=true 离开 -1）。commitStagedInstall 拿它当"当前没人用
+ * 旧内核"的判据之一，确保替换不打断正在跑的任务。
+ */
+let _fpContextCount = 0;
+function fpContextActive() {
+  return _fpContextCount;
+}
+function notifyFpContext(delta) {
+  const d = Number(delta) || 0;
+  _fpContextCount = Math.max(0, _fpContextCount + d);
+  return _fpContextCount;
+}
+
+/**
  * 已安装版本（未安装返回 null）。
  *
  * 预装目录优先 —— 与 executablePath() 的优先级保持同源：既然实际用的是预装的
@@ -483,6 +526,8 @@ function isReady() {
 async function status() {
   const exe = executablePath();
   const pre = preinstalledDir();
+  const stagedV = stagedVersion();
+  const stagedReady = stagedV === PINNED_VERSION && findExecutable(stagingDir());
   return {
     supported: isSupported(),
     platform: process.platform,
@@ -497,6 +542,15 @@ async function status() {
     downloadUrl: releaseUrl(),
     // 预装场景不需要镜像源下拉，跳过测速探测（省掉最长 4s 的启动等待）
     mirrors: pre ? [] : await mirrorOptionsWithLatency(),
+    // 0.14 起：后台 staging 信息 —— UI 据此显示"后台下载中 / 等待闲时替换 / 已是最新"
+    staged: {
+      version: stagedV,
+      ready: !!stagedReady,
+      // installed 已是 pinned 时返回 true（说明 staging 是上一次清扫的产物，不需要再切）
+      committed: installedVersion() === PINNED_VERSION && preinstalledDir() == null,
+    },
+    // 0.14 起：当前活跃指纹浏览器上下文数（用户查看 + UI 角标）
+    fpContextCount: fpContextActive(),
   };
 }
 
@@ -862,18 +916,42 @@ async function pipeTo(res, dest, start, onProgress, knownTotal, signal) {
 /* ---------------- 分片并发下载 ---------------- */
 
 /**
- * 并发连接数（实测定档，2026-10-03）。
+ * 并发连接数（自适应，2026-10-03 实测定档）。
  *
  * 单连接下载实测（181MB 的 ungoogled-chromium，同一台机器同一时刻）：
  *   直连（hosts 优选 IP）单连接 0.63 MiB/s → 8 连接 1.46 → **16 连接 5.51**
  *   gh-proxy 镜像  单连接 0.52 MiB/s → 6 连接 1.20
- * 结论：单连接被TCP 流控与CDN 单流限速卡住，**并发是最有效的提速手段**，
- * 16 连接能把181MB 从 4.8 分钟压到 33 秒。
+ * 结论：单连接被TCP 流控与CDN 单流限速卡住，**并发是最有效的提速手段**。
  *
- * 取 16 而不是更多：并发连接数会线性增加服务端压力，且32 连接实测增益已
- * 趋平（16 连接已达单连接的 8.7 倍）；16 也正好与主流下载器的默认档位一致。
+ * 取区间 4~16 而不是固定 16：
+ *   - 下限 4：太少的并发等于没提速（实测 2 线程只比单连接快 1.6×），
+ *     但服务端对低于 4 的并发普遍有"非浏览器"风险标记；
+ *   - 上限 16：超过 16 实测增益趋平（16 连接已达单连接的 8.7×），
+ *     32+ 还会被部分 gh-proxy 节点当作异常流量限速。
+ *
+ * 自适应策略（pickConnections）：
+ *   < 8MB  → 4 线程（小包分太细收益为 0；4 线程 10 秒内搞定）
+ *   < 64MB → 8 线程（中等包，折中档）
+ *   ≥ 64MB → 16 线程（大包才把上限用满）
+ *
+ * "依据服务器限制调整"：分片首段拿到 200 而不是 206 时 → noRange，
+ * downloadAsset 捕获后切回 downloadOnce 单连接，这条降级链不变。
  */
-const PARALLEL_CONNECTIONS = 16;
+const MIN_PARALLEL_CONNECTIONS = 4;
+const MAX_PARALLEL_CONNECTIONS = 16;
+
+/**
+ * 给定文件总长返回合理的并发连接数。详见 MIN/MAX 注释。
+ * @param {number} total 字节（0/负数 → 1）
+ * @returns {number} 1..MAX_PARALLEL_CONNECTIONS
+ */
+function pickConnections(total) {
+  if (!total || total <= 0) return 1;
+  const mb = total / (1024 * 1024);
+  if (mb < 8) return MIN_PARALLEL_CONNECTIONS;
+  if (mb < 64) return 8;
+  return MAX_PARALLEL_CONNECTIONS;
+}
 
 /** 分片临时文件后缀（拼接前的中间产物） */
 const PART_SUFFIX = ".part";
@@ -991,7 +1069,8 @@ async function downloadSegment(url, file, start, end, onBytes, signal, ip) {
  */
 async function downloadParallel(rawUrl, prefix, dest, total, onProgress, signal, ip) {
   const url = prefix + rawUrl;
-  const n = Math.max(1, Math.min(PARALLEL_CONNECTIONS, Math.floor(total / (2 * 1024 * 1024)) || 1));
+  // 自适应并发：按文件大小在 4..16 之间挑档位（pickConnections 注释），不再写死 16
+  const n = pickConnections(total);
   const span = Math.ceil(total / n);
   const segs = [];
   for (let i = 0; i < n; i++) {
@@ -1114,10 +1193,12 @@ async function downloadAsset(version, onProgress, mirror, signal) {
     logger.info(`环境拟真浏览器官方 sha256 = ${meta.sha256}（Releases API digest）`);
   }
 
-  // hosts 优选 IP：只在「直连」这一档用（镜像节点有自己的 CDN，不需要也不该改解析）。
-  // auto 链如果排到了空前缀（直连）也同样适用 —— 但前提是用户**不是**显式选了
-  // direct（那是"我就用系统 DNS"的意思，不该被优选 IP 覆盖）。
-  const wantPinned = mirror === IP_DIRECT || (mirror !== "direct" && mirrors.length === 1 && mirrors[0] === "");
+  // hosts 优选 IP：只在用户**显式**选了 ip-direct 时才接管解析。
+  // 不要因为 hosts 看着像 127.0.0.1 就自动接管 —— 那个地址很可能是 Watt Toolkit /
+  // Steam++ 等加速器的本地代理监听端口，绕过它等于把本来能用的链路掐断。
+  // 真正"连不通"的判定应该走真实 HTTP 探测（gh-proxy 失败 ⇒ 链已穷尽 ⇒ 让用户
+  // 自己来 ip-direct 档重试），不要替用户做"看 hosts 接管解析"的预判。
+  const wantPinned = mirror === IP_DIRECT;
   let pinnedIp = null;
   if (wantPinned) {
     try {
@@ -1433,7 +1514,7 @@ function uninstall() {
   if (preinstalledDir()) {
     return { ok: false, error: "环境拟真浏览器由镜像内置预装，无法在容器内删除；如需更替请重建镜像" };
   }
-  for (const d of [installDir(), downloadDir()]) {
+  for (const d of [installDir(), stagingDir(), downloadDir()]) {
     try {
       fs.rmSync(d, { recursive: true, force: true });
     } catch (e) {
@@ -1441,6 +1522,126 @@ function uninstall() {
     }
   }
   return { ok: true };
+}
+
+/**
+ * 后台静默下载并解压到 stagingDir（不动 installDir，避免打断正在跑的旧内核）。
+ *
+ * 与 install() 的差别只有两条：
+ *   1. 解压目标是 stagingDir 而不是 installDir —— 旧内核的目录锁、文件句柄
+ *      不会被破坏，正在用旧内核跑的任务全程不受影响。
+ *   2. 跳过「同版本跳过」的早返回：stagedVersion 与 installedVersion 不绑，
+ *      即便用户已经手动装了新版本，再次进入本函数也会按需重下 —— 反正 staging
+ *      总是临时目录，被覆盖没副作用。
+ *
+ * @param {{mirror?: string, signal?: AbortSignal, onProgress?: Function}} [opts]
+ * @returns {Promise<{ok: boolean, version?: string, executable?: string,
+ *   error?: string, canceled?: boolean}>}
+ */
+async function installStaged(opts) {
+  const o = opts || {};
+  const signal = o.signal;
+  const version = PINNED_VERSION;
+  const report = (p) => {
+    const payload = { stage: "fingerprint-staged", ...p };
+    logger.log("依赖", `[${payload.stage}] ${p.message || ""}`.trim());
+    if (o.onProgress) o.onProgress(payload);
+  };
+  throwIfAborted(signal);
+  if (!isSupported()) return { ok: false, error: `当前平台（${process.platform}）暂不支持环境拟真浏览器` };
+  if (preinstalledDir()) return { ok: false, error: "环境拟真浏览器已由镜像内置预装，无需后台下载" };
+
+  const dir = stagingDir();
+  try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+  fs.mkdirSync(dir, { recursive: true });
+
+  const mirrorKey = String(o.mirror == null ? "" : o.mirror).trim() || DEFAULT_MIRROR;
+  report({ message: `后台静默下载环境拟真浏览器 ${version}…`, pct: 0 });
+  let file;
+  try {
+    const dl = await downloadAsset(version, (p) => report(p), mirrorKey, signal);
+    file = dl.file;
+    report({ message: `下载完成（${fmtSize(dl.size)}，来源 ${dl.mirror}），后台解压中…`, pct: 100 });
+  } catch (e) {
+    const canceled = !!(e && e.canceled);
+    report({ message: canceled ? "后台下载已取消" : `后台下载失败: ${e.message}` });
+    // 失败时清掉 staging 残骸，避免下次 commitStagedInstall 误把半截当成品
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+    return { ok: false, canceled, error: canceled ? "后台下载已取消" : e.message };
+  }
+
+  try {
+    const method = await extractArchive(file, dir);
+    fs.writeFileSync(stagingVersionFile(), version, "utf8");
+    try { fs.rmSync(file, { force: true }); } catch {}
+    const exe = findExecutable(dir);
+    if (!exe) {
+      return { ok: false, error: `staging 解压目录里没有浏览器主程序（解压方式: ${method}）` };
+    }
+    report({ message: `后台解压完成: ${exe}`, pct: 100 });
+    return { ok: true, version, executable: exe };
+  } catch (e) {
+    try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * 把 staging 切换为新的 active 安装（闲时执行）。
+ *
+ * 触发条件（全部满足才执行）：
+ *   1. stagedVersion === PINNED_VERSION —— staging 里有完整的新版本；
+ *   2. fpContextActive() === 0 —— 当前没有正在跑的指纹浏览器上下文
+ *      （旧内核可能被某个任务持着，贸然切换会断它的文件句柄）；
+ *   3. opts.isIdle !== false —— 调用方明确说"现在没有账户任务在跑"。
+ *      选 false 之外的"留空 = 默认允许"是因为：commitStagedInstall 通常由
+ *      后台循环调用，那时"没人跑"是常态，不需要每次都说"是的没人在跑"。
+ *
+ * 切换步骤（按顺序）：
+ *   1. 清掉上一次失败留下的 installDir.old（旧 exe 还在跑时它的文件锁可能
+ *      让 rmSync 失败，所以这里尽力清不抛错）；
+ *   2. installDir → installDir.old（同上尽力清；剩下会被压缩进下一步）；
+ *   3. stagingDir → installDir（重命名）；
+ *   4. 写 installDir/version.txt = staged；
+ *   5. 尽力清理 installDir.old —— 若旧 exe 还在跑会留到下次。
+ *
+ * 已是 pinned 版本时，直接清掉 staging 收工（防止后台把刚装好的 installDir
+ * 误重装一遍）。
+ *
+ * @param {{isIdle?: boolean}} [opts]
+ * @returns {{ok: boolean, reason?: string, swapped?: boolean, cleaned?: boolean}}
+ */
+function commitStagedInstall(opts) {
+  const o = opts || {};
+  if (preinstalledDir()) return { ok: false, reason: "镜像内置预装" };
+  const staged = stagedVersion();
+  if (staged !== PINNED_VERSION) return { ok: false, reason: "staging 没有新版本" };
+  if (fpContextActive() > 0) return { ok: false, reason: `仍有 ${fpContextActive()} 个指纹浏览器上下文在运行` };
+  if (o.isIdle === false) return { ok: false, reason: "账户任务正在运行" };
+
+  const active = installDir();
+  const staging = stagingDir();
+
+  // 已是 pinned 版本 → 后台把 staging 当垃圾清理掉
+  if (installedVersion() === PINNED_VERSION) {
+    try { fs.rmSync(staging, { recursive: true, force: true }); } catch {}
+    return { ok: true, swapped: false, cleaned: true };
+  }
+
+  const oldDir = active + ".old";
+  // 先清掉上一次失败留下的 .old（若旧 exe 仍在跑会失败，留着等下次）
+  try { fs.rmSync(oldDir, { recursive: true, force: true }); } catch {}
+  // 旧 active 目录：旧 exe 可能还在跑，rmSync 会失败也无所谓（重命名能挪走目录）
+  try { fs.rmSync(active, { recursive: true, force: true }); } catch {}
+  // staging → active：原子（同一父目录下的 renameSync）
+  try {
+    fs.renameSync(staging, active);
+  } catch (e) {
+    return { ok: false, reason: `staging 切换失败: ${e.message}` };
+  }
+  fs.writeFileSync(versionFile(), staged, "utf8");
+  logger.info(`指纹内核 ${staged} 已切换为活动版本`);
+  return { ok: true, swapped: true, oldKept: fs.existsSync(oldDir) };
 }
 
 /**
@@ -1550,10 +1751,19 @@ module.exports = {
   MIRROR_OPTIONS,
   MIRROR_KEYS,
   IP_DIRECT,
-  PARALLEL_CONNECTIONS,
   PART_SUFFIX,
+  MIN_PARALLEL_CONNECTIONS,
+  MAX_PARALLEL_CONNECTIONS,
+  pickConnections,
   DEFAULT_MIRROR,
   resolveMirrors,
   sha256File,
   mirrorLatency,
+  stagingDir,
+  stagingVersionFile,
+  stagedVersion,
+  installStaged,
+  commitStagedInstall,
+  fpContextActive,
+  notifyFpContext,
 };

@@ -79,7 +79,10 @@ async function checkAppUpdate(currentVersion) {
       .filter((r) => r && !r.draft && !r.prerelease && parseVersionTag(r.tag_name))
       .sort((a, b) => compareVersionTagForSort(b.tag_name, a.tag_name));
     const latest = stable[0];
-    const latestVersion = latest ? String(latest.tag_name || "").trim() : "";
+    // ⚠️ 必须**剥掉前缀 v**：tag_name 形如 "v0.13.15"，UI 又会加一个 "v" 当版本号
+    // 装饰，剥不掉就拼出 "VV0.13.15"（双 V，2026-10-03 用户反馈的 bug）。剥在这里
+    // 而不是 UI，因为这里只有一个口径，UI 有多处（更新弹窗 / Sidebar / Mock）。
+    const latestVersion = latest ? String(latest.tag_name || "").trim().replace(/^v/i, "") : "";
     if (!latestVersion) {
       return { ok: false, error: "未找到可用的正式版发布信息" };
     }

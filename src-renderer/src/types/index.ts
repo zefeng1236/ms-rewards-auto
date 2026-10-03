@@ -399,6 +399,12 @@ export interface FingerprintStatus {
    *  界面据此把按钮切成「取消下载」并持续显示进度条 —— 否则用户点「立即下载」
    *  会被主进程以「正在下载，请稍候」拒绝，表现为进度条闪一下就消失。 */
   downloading?: boolean;
+  /** 0.14：后台 staging 信息 —— 新版本下载到临时目录后等待闲时切换。
+   *  ready=false：还没下载完 / 下载失败；ready=true：可以尝试切换了；
+   *  committed=true：已是钉死版本（staging 是上次清扫的产物，不用切）。 */
+  staged?: { version: string | null; ready: boolean; committed: boolean };
+  /** 0.14：当前活跃指纹浏览器上下文数；UI 用来告诉用户"还有几个旧内核在跑" */
+  fpContextCount?: number;
 }
 
 /** 「检查更新」的查询结果（只查不下载，0.9.4.18 起与安装动作分离） */

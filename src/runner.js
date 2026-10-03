@@ -755,14 +755,19 @@ function startDaemon(opts = {}) {
         const delay = pickStartDelay(ctx.config.get());
         if (delay.seconds > 0) {
           cancel.setActiveScope(null);
+          const scheduledAt = new Date();
           logger.info(
-            `账户「${acc.name}」随机延迟 ${delay.seconds} 秒后开始（规避固定时刻特征）…`
+            `账户「${acc.name}」命中随机启动延迟 ${delay.seconds} 秒（计划于 ${scheduledAt.toISOString()} 起算），规避固定时刻特征…`
           );
           try {
             await cancel.sleep(delay.ms);
           } catch (e) {
             if (e && e.isAbort) break; // 全局停止：结束本轮巡检
           }
+          const startedAt = new Date();
+          logger.info(
+            `账户「${acc.name}」延迟结束，实际开始执行（${startedAt.toISOString()}，实际等了 ${Math.round((startedAt - scheduledAt) / 1000)} 秒）`
+          );
           // 延迟窗口最长达 5 分钟，期间用户可能已经手动开跑，别再插一脚
           if (typeof opts.isBusy === "function" && opts.isBusy()) {
             logger.info("检测到手动任务已在运行，本轮定时触发跳过。");
