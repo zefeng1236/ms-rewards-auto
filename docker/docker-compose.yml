@@ -22,7 +22,7 @@
 #
 # 自动更新：compose 已内置 Watchtower，会定期检查并拉取 latest 镜像自动重启升级，
 #   无需手动操作。想锁定某个版本（关闭自动更新）时，把 image: 的 latest 改成具体
-#   版本号（如 0.14.2），并删掉下方 watchtower 服务即可。
+#   版本号（如 0.14.3），并删掉下方 watchtower 服务即可。
 # ===========================================================================
 
 services:
@@ -40,7 +40,7 @@ services:
     # 镜像名与 Dockerfile 里预装的内容一一对应：
     #   - 直接拉取（推荐，无需源码）：docker compose pull && docker compose up -d
     #   - 本地构建：docker compose up -d --build
-    # 用 latest 让 Watchtower 能自动升级；锁定版本改成具体 tag（如 0.14.2）。
+    # 用 latest 让 Watchtower 能自动升级；锁定版本改成具体 tag（如 0.14.3）。
     # ghcr 国内加速：把下面的镜像地址换成 ghcr.1ms.run/zefeng1236/ms-rewards-auto:latest
     image: ghcr.io/zefeng1236/ms-rewards-auto:latest
     container_name: ms-rewards

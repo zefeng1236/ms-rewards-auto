@@ -1839,6 +1839,64 @@ checkTrue(
   !/\*\/\s*"\s*\}/.test(sidebarSrcSw),
   'Sidebar.tsx 里出现 */"} —— 会把 "}" 渲染成文本'
 );
+
+// —— 主导航分组顺序（2026-10-03 用户调整）——
+//   工作台：仪表盘 → 账户详情 → 任务全局设置 → 成就与统计（成就移到设置下面）
+//   其它  ：软件设置 → 关于（软件设置移到其它、且在关于上面）
+const navGroupsM = sidebarSrcSw.match(/const NAV_GROUPS[\s\S]*?\n\];/);
+const navSrc = navGroupsM ? navGroupsM[0] : "";
+const navOrder = [...navSrc.matchAll(/key:\s*"([a-z]+)"/g)].map((m) => m[1]);
+checkTrue(
+  "主导航顺序：仪表盘 → 账户详情 → 任务全局设置 → 成就与统计 → 软件设置 → 关于",
+  JSON.stringify(navOrder) ===
+    JSON.stringify(["dashboard", "account", "settings", "achievements", "software", "about"]),
+  `实际顺序 ${navOrder.join(" → ")}`
+);
+// 成就必须排在任务全局设置之后；软件设置必须在「其它」组、且先于关于
+const iSettings = navOrder.indexOf("settings");
+const iAchv = navOrder.indexOf("achievements");
+const iSoftware = navOrder.indexOf("software");
+const iAbout = navOrder.indexOf("about");
+checkTrue(
+  "成就与统计排在任务全局设置之后",
+  iSettings >= 0 && iAchv > iSettings,
+  `settings=${iSettings} achievements=${iAchv}（要求 achievements 在后）`
+);
+checkTrue(
+  "软件设置排在关于之前（同属「其它」组）",
+  iSoftware >= 0 && iAbout >= 0 && iSoftware < iAbout,
+  `software=${iSoftware} about=${iAbout}（要求 software 在前）`
+);
+
+// —— 深浅模式：固定深色（2026-10-03 用户要求，浅色不生效且不好看）——
+const themeSrc21 = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "hooks", "useTheme.ts"),
+  "utf8"
+);
+checkTrue(
+  "useTheme 强制返回 dark（不再解析 mode / autoTheme）",
+  /const resolved:\s*"dark"\s*\|\s*"light"\s*=\s*"dark"/.test(themeSrc21) &&
+    /setAttribute\(\s*["']data-theme["']/.test(themeSrc21),
+  "useTheme 仍会解析出浅色 → 与「统一深色」冲突"
+);
+// 解析函数签名已改成忽略参数（下划线前缀），防止有人又接回 mode
+checkTrue(
+  "useTheme 参数改为忽略（_mode/_autoTheme），避免误接回浅色",
+  /_mode:\s*ThemeMode\s*\|\s*undefined/.test(themeSrc21) &&
+    /_autoTheme:\s*boolean/.test(themeSrc21),
+  "useTheme 仍在使用 mode/autoTheme 参数"
+);
+// 界面上不能再有深浅模式切换（Personalize 已移除该 block）
+const personalizeSrc21 = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "views", "Personalize.tsx"),
+  "utf8"
+);
+checkTrue(
+  "外观设置页不再渲染深浅模式切换与「跟随壁纸自动反色」",
+  !/aria-label="深浅模式"/.test(personalizeSrc21) &&
+    !/aria-label="跟随壁纸自动反色"/.test(personalizeSrc21),
+  "Personalize.tsx 仍有深浅模式控件（用户要求隐藏）"
+);
 checkTrue(
   "前端类型补齐 FingerprintStatus / InstallFingerprintResult",
   /interface FingerprintStatus/.test(typesSrcFp) && /interface InstallFingerprintResult/.test(typesSrcFp)
@@ -2488,6 +2546,22 @@ const useBgSrc21 = fs.readFileSync(
   "utf8"
 );
 
+// —— 壁纸轮换：后台自动暂停（2026-10-03 用户要求）——
+// 判定用 visibilitychange 而非 blur：blur 在点 DevTools 时也触发，会误判后台。
+checkTrue(
+  "壁纸轮换监听 visibilitychange（切后台自动暂停，不用 blur 误判）",
+  /addEventListener\(\s*["']visibilitychange["']/.test(useBgSrc21) &&
+    /visibilityState\s*!==\s*["']hidden["']/.test(useBgSrc21) &&
+    !/addEventListener\(\s*["']blur["']/.test(useBgSrc21),
+  "useBackground.ts 未监听 visibilitychange，或用 blur 判定（会误判后台）"
+);
+checkTrue(
+  "壁纸轮换定时器受 pageVisible 门控且进入依赖数组",
+  /if\s*\(\s*!pageVisible\s*\)\s*return/.test(useBgSrc21) &&
+    /\[\s*bgType\s*,\s*bgRotate\s*,\s*pageVisible\s*\]/.test(useBgSrc21),
+  "后台仍然装定时器（配额白白消耗），或 pageVisible 没进依赖数组（状态变了不重建定时器）"
+);
+
 // ① UAPI 随机图源彻底移除：客户端函数没了、白名单没了、解析入口不再分发
 checkTrue(
   "UAPI 随机图源已移除（uapi.js 只剩必应每日客户端）",
@@ -2700,6 +2774,45 @@ check("IPv4-mapped IPv6 归一化到同一来源", wl.normalizeIp("::ffff:1.2.3.
 check("回环统一归一到本机 key", [wl.normalizeIp("::1"), wl.normalizeIp("127.0.0.1")], [wl.LOCAL_KEY, wl.LOCAL_KEY]);
 check("XFF 取第一跳", wl.ipFromRequest({ headers: { "x-forwarded-for": "1.2.3.4, 10.0.0.1" }, socket: { remoteAddress: "6.6.6.6" } }), "1.2.3.4");
 check("无代理头回落 socket 地址", wl.ipFromRequest({ headers: {}, socket: { remoteAddress: "6.6.6.6" } }), "6.6.6.6");
+
+// —— 壁纸限流档位：每 IP 每分钟 30 次（2026-10-03 用户指定，原 60）——
+check("壁纸限流档位为每 IP 每分钟 30 次", wl.MAX_PER_MIN, 30);
+
+// —— 壁纸自动轮换间隔必须是正整数、0=关闭（2026-10-03 用户指定）——
+const appMod = require(path.join(ROOT, "src", "appearance.js"));
+const rotCases = [
+  ["0", 0],
+  [0, 0],
+  [60, 60],
+  ["300", 300],
+  // 小数一律向下取整（12.9 → 12），不接受小数秒
+  [12.9, 12],
+  // 非法输入回落 0（关闭），而不是保留旧值或穿出负数
+  [-5, 0],
+  ["abc", 0],
+  ["", 0],
+  [null, 0],
+  [undefined, 0],
+  [NaN, 0],
+];
+// clampRotate 未导出，通过 set() 侧面验证：set 会走一遍 clampRotate
+const rotBad = rotCases
+  .map(([input, want]) => {
+    const got = appMod.set({ bgRotate: input }).bgRotate;
+    return got === want ? null : `输入 ${JSON.stringify(input)} → ${got}，期望 ${want}`;
+  })
+  .filter(Boolean);
+checkTrue(
+  "壁纸轮换间隔：0=关闭、正整数生效、小数取整、非法回落 0",
+  rotBad.length === 0,
+  rotBad.join("；")
+);
+// 上限 24 小时
+checkTrue(
+  "壁纸轮换间隔上限 86400 秒（24 小时）",
+  appMod.set({ bgRotate: 999999 }).bgRotate === 86400,
+  `实际 ${appMod.set({ bgRotate: 999999 }).bgRotate}`
+);
 wl.reset();
 
 // —— 目标勋章图标 ——
@@ -3243,6 +3356,7 @@ console.log("\n【Q】区域锁定加固、拦截推送、每天开始时间、�
 const rmodQ = require(path.join(ROOT, "src", "rewards.js"));
 const tlQ = require(path.join(ROOT, "src", "task-limit.js"));
 const runnerSrcQ = fs.readFileSync(path.join(ROOT, "src", "runner.js"), "utf8");
+const notifySrcQ = fs.readFileSync(path.join(ROOT, "src", "notify.js"), "utf8");
 const rewardsSrcQ = fs.readFileSync(path.join(ROOT, "src", "rewards.js"), "utf8");
 const formSrcQ = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "components", "SettingsForm.tsx"), "utf8");
 const typesSrcQ = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "types", "index.ts"), "utf8");
@@ -3329,6 +3443,37 @@ checkTrue(
 checkTrue(
   "拦截原因透传 env.reason（带判定来源），不再写死文案",
   /result\.reason = env\.reason \|\| "IP 非中国大陆，任务已停止"/.test(runnerSrcQ)
+);
+// —— 拦截推送版式（2026-10-03 用户指定）——
+//   ⚠️ 检测到…   /   当前 IP：x    🔴 geo   /   下次执行时间：MM-DD HH:mm
+// 三条硬要求：首行 ⚠️；IP 与归属地之间是红点 + 4 空格（不套括号）；归属地在红点后
+checkTrue(
+  "拦截推送首行带 ⚠️ 警示符",
+  /`⚠️ \$\{env\.reason \|\|/.test(runnerSrcQ),
+  "首行没有 ⚠️ —— 中止类通知要一眼看出事态"
+);
+checkTrue(
+  "拦截推送：IP 后为红点 emoji + 4 空格 + 归属地，且不再套全角括号",
+  /当前 IP：\$\{ip\}    �?[^\s]*? \$\{geo\}/.test(runnerSrcQ) ||
+    /当前 IP：\$\{ip\}\s{4}🔴 \$\{geo\}/.test(runnerSrcQ),
+  "IP 行版式不符（要求：IP + 4 空格 + 🔴 + 归属地，去掉「（）」）"
+);
+checkTrue(
+  "拦截推送不再用全角括号包归属地（用户要求删除前后括号）",
+  !/当前 IP：\$\{ip\}（\$\{geo\}）/.test(runnerSrcQ),
+  "仍是「当前 IP：x（geo）」旧版式"
+);
+// 用户名行补运行环境（PC / Docker）
+checkTrue(
+  "推送用户名行带运行环境标识 (PC)/(Docker)",
+  /function runtimeTag\(\)/.test(notifySrcQ) &&
+    /process\.versions && process\.versions\.electron/.test(notifySrcQ) &&
+    /v\$\{ver\}\(\$\{runtimeTag\(\)\}\)/.test(notifySrcQ),
+  "notify.js 未加运行环境标识 → 多端推送分不清来自哪一端"
+);
+checkTrue(
+  "notify 导出 runtimeTag（验收脚本复用，避免判定逻辑两处漂移）",
+  /module\.exports = \{[\s\S]*?runtimeTag/.test(notifySrcQ)
 );
 checkTrue(
   "推送失败只 warn，绝不反过来影响拦截本身",

@@ -14,9 +14,19 @@ function pad2(n) {
 }
 
 /**
- * 区域拦截推送：告知当前 IP + 国家/地区（Tokyo/JP(东京/日本) 格式）、
- * 取消说明（含「检测到非xx区域」，预留后期按国家/地区锁区）与下次执行时间。
+ * 区域拦截推送：告知当前 IP + 国家/地区、取消说明与下次执行时间。
  * 推送失败只 warn —— 绝不能反过来影响拦截本身。
+ *
+ * 版式（2026-10-03 用户指定，逐条对应）：
+ *   ⚠️ 检测到非中国大陆区域（由 bing 判定），本次任务已取消执行
+ *   当前 IP：43.198.88.83    ● Hong Kong/HK(香港/中国香港)
+ *   下次执行时间：10-03 13:49
+ *
+ * 三条硬要求，改版式时别丢：
+ *   ① 首行带 ⚠️ 警示符（拦截是中止类通知，要一眼看出事态）
+ *   ② IP 与归属地之间：红色点 ● + 4 个空格，**不套括号**
+ *      （原来是「当前 IP：x（geo）」，用户要求去掉前后括号）
+ *   ③ 归属地本身保留 Hong Kong/HK(香港/中国香港) 这种「英文/代码(中文)」格式
  */
 async function pushRegionBlocked(ctx, env) {
   try {
@@ -27,8 +37,10 @@ async function pushRegionBlocked(ctx, env) {
     const ip = env.ip || "未知";
     const geo = env.geo || env.ipcc || "未知";
     const lines = [
-      env.reason || `检测到非中国大陆区域，本次任务已取消执行`,
-      `当前 IP：${ip}（${geo}）`,
+      `⚠️ ${env.reason || "检测到非中国大陆区域，本次任务已取消执行"}`,
+      // 红点：推送渠道走 msgtype=text（钉钉/企微），**不支持颜色与富文本**，
+      // 所以只能用红色圆形 emoji 🔴 表达「红色状态点」，别改回 <font color=…>（不生效）。
+      `当前 IP：${ip}    🔴 ${geo}`,
       `下次执行时间：${nextText}`,
     ];
     await notify.sendText(ctx, "MS积分任务-区域拦截", lines.join("\n"));

@@ -84,7 +84,9 @@ const body = (i) => JSON.parse(pushes[i].body).text.content;
   );
 
   const ver = displayVersion();
-  const head = `用户名：测试账号　　v${ver}`;
+  // 运行环境后缀（PC / Docker）由 notify.runtimeTag() 判定，这里直接复用，
+  // 避免脚本里再写一份判定逻辑导致两处漂移（2026-10-03 新增端标识）。
+  const head = `用户名：测试账号　　v${ver}(${notify.runtimeTag()})`;
   const bad = [];
   const l1 = body(0).split("\n");
 

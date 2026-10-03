@@ -5,7 +5,7 @@ import { CommitSlider } from "../components/CommitSlider";
 import { api } from "../api/ipc";
 import { useAppState } from "../hooks/useAppState";
 import { DisclaimerModal } from "../components/DisclaimerModal";
-import type { AppearancePreset, BgCategory, BgType, ThemeMode } from "../types";
+import type { AppearancePreset, BgCategory, BgType } from "../types";
 
 /** 外观预设：液态玻璃（半透明面板）/ 不透明（实心面板），均为纯 CSS 热切换 */
 const PRESETS: { key: AppearancePreset; label: string; desc: string }[] = [
@@ -240,36 +240,13 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
         </AppCard>
       </div>
 
-      {/* ---- 深浅模式 ---- */}
-      <div className="block">
-        <div className="block-head">
-          <div>
-            <div className="block-title">深浅模式</div>
-            <div className="block-sub">跟随系统会随操作系统外观自动切换</div>
-          </div>
-        </div>
-        <GlassSegmentedControl
-          value={appearance.mode} items={[
-            { label: "深色", value: "dark" },
-            { label: "浅色", value: "light" },
-            { label: "跟随系统", value: "system" },
-          ]} onValueChange={(v) => void patchAppearance({ mode: v as ThemeMode })}
-          aria-label="深浅模式"
-        />
-        <div className="field-row" style={{ marginTop: 12 }}>
-          <div>
-            <div>跟随壁纸自动反色</div>
-            <div className="hint">
-              按壁纸与两套主题色合成后的文字对比度自动选深/浅主题，花色壁纸也能保证文字清晰
-            </div>
-          </div>
-          <GlassSwitch
-            checked={appearance.autoTheme === true}
-            onCheckedChange={(v) => void patchAppearance({ autoTheme: v })}
-            aria-label="跟随壁纸自动反色"
-          />
-        </div>
-      </div>
+      {/* ---- 深浅模式（已移除）----
+          2026-10-03 用户反馈：浅色主题不生效且观感不佳，改为固定深色。
+          原「深浅模式」分段控件（深色/浅色/跟随系统）与「跟随壁纸自动反色」
+          开关一并移除 —— 后者会在深浅两套里自动选，留着会破坏「统一深色」。
+          解析端同样强制：src-renderer/src/hooks/useTheme.ts 恒定返回 "dark"。
+          要恢复时：从 git 历史取回本段 JSX，并把 useTheme 换回按
+          mode / autoTheme 解析（对比度选主题的辅助函数仍在 useTheme.ts 里，已导出）。 */}
 
       {/* ---- 背景图片（主界面壁纸） ---- */}
       <div className="block">
@@ -421,16 +398,21 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
                   size="sm"
                   type="number"
                   min={0}
-                  step={10}
+                  // step=1 + 正整数：轮换间隔只接受整秒（小数秒对定时器没有意义）
+                  step={1}
                   value={String(appearance.bgRotate || 0)}
                   onChange={(e) =>
-                    void patchAppearance({ bgRotate: Math.max(0, Number(e.target.value) || 0) })
+                    void patchAppearance({
+                      bgRotate: Number.isFinite(Number(e.target.value))
+                        ? Math.max(0, Math.floor(Math.abs(Number(e.target.value))))
+                        : 0,
+                    })
                   }
                   style={{ width: 90 }}
                 />
                 <span className="rng-val">秒</span>
                 <span className="bg-note" style={{ margin: 0 }}>
-                  0=不轮换；随机图源最低 60 秒，自定义链接不限
+                  0=不轮换（默认）；须为正整数秒；随机图源最低 60 秒，自定义链接不限；切到后台自动暂停
                 </span>
               </div>
             )}

@@ -109,10 +109,26 @@ function clampDim(v) {
   if (!Number.isFinite(n)) return DEFAULTS.bgDim;
   return Math.min(0.85, Math.max(0, n));
 }
+/**
+ * 归一化「背景自动轮换间隔（秒）」。
+ *
+ * 三条硬约束（2026-10-03 用户指定）：
+ *   ① 0 = 关闭自动轮换（默认值，不启用）
+ *   ② 启用时必须是**正整数** —— 不接受小数（12.5 秒没有意义，
+ *      定时器精度也不保证），不接受负数
+ *   ③ 上限 86400（24 小时），避免填出一个永远等不到的间隔
+ *
+ * 非法输入（小数 / 负数 / 非数字 / 空串）统一回落到 0（关闭）而不是保留旧值：
+ * 「用户填了个看不懂的数」比「静默沿用上次的值」安全，且 UI 上能看到变回 0。
+ */
 function clampRotate(v) {
   const n = Number(v);
-  if (!Number.isFinite(n) || n < 0) return DEFAULTS.bgRotate;
-  return Math.min(86400, Math.round(n));
+  // 空串 Number("") === 0，单独拦掉：用户清空输入框应该是「关闭」而不是意外 0（也是关闭，但语义要明确）
+  if (v === "" || v === null || v === undefined) return 0;
+  if (!Number.isFinite(n) || n < 0) return 0;
+  const int = Math.floor(n);
+  if (int <= 0) return 0;
+  return Math.min(86400, int);
 }
 
 /**

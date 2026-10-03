@@ -271,6 +271,18 @@ async function fire(req, { verbose = false } = {}) {
  * 版本号统一复用 src/version.js 的 displayVersion()，不在这里手工拼字符串——
  * 否则每次发版都会漏改一处，推送里出现的版本与实际运行版本不一致。
  */
+/**
+ * 运行环境标签：PC（Electron 桌面版）还是 Docker（Web 服务端）。
+ *
+ * 判定依据：Electron 主进程才有 process.versions.electron；
+ * Docker / Web 版跑的是 src/server.js，没有这个字段。
+ * 多实例/多端看同一批推送时，光有版本号分不清这条来自哪一端。
+ */
+function runtimeTag() {
+  const hasElectron = !!(process.versions && process.versions.electron);
+  return hasElectron ? "PC" : "Docker";
+}
+
 function accountHeaderLine(ctx) {
   // 无账户上下文（如推送测试）时不生成用户名行，避免冒出「用户名：未知账号」
   if (!ctx) return "";
@@ -281,7 +293,9 @@ function accountHeaderLine(ctx) {
   } catch {
     ver = "";
   }
-  return ver ? `用户名：${name}　　v${ver}` : `用户名：${name}`;
+  // 版本号后补运行环境，形如 v0.13.14(PC) —— 用户 2026-10-03 要求区分端
+  const tail = ver ? `v${ver}(${runtimeTag()})` : `(${runtimeTag()})`;
+  return `用户名：${name}　　${tail}`;
 }
 
 /**
@@ -450,6 +464,8 @@ module.exports = {
   withAccountHeader,
   accountHeaderLine,
   quoteLine,
+  // 运行环境标识（PC / Docker）：验收脚本与 UI 都从这里取，避免各写一份判定
+  runtimeTag,
   describeTarget,
   buildRequests,
   ensureKeyword,

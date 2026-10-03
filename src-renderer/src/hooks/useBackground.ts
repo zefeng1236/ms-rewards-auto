@@ -70,14 +70,31 @@ export function useBackground() {
   }, [bgType, bgUrl, bgFile, bgCategory, nonce]);
 
   // ---- 自动轮换 ----
+  // 「后台暂停」用 document.visibilityState 判定（2026-10-03 用户要求）：
+  // 窗口最小化 / 切到别的虚拟桌面 / 锁屏时浏览器都会置 hidden，
+  // 这时继续每 N 秒打一次第三方壁纸接口纯属浪费配额（还有每 IP 30 次/分的限流）。
+  // 用 visibilitychange 而不是 blur：blur 在点击 DevTools 等场景也会触发，
+  // 会把「用户还在看但窗口失焦」误判成后台。
+  const [pageVisible, setPageVisible] = useState(
+    () => typeof document === "undefined" || document.visibilityState !== "hidden"
+  );
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const onVis = () => setPageVisible(document.visibilityState !== "hidden");
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, []);
+
   useEffect(() => {
     // bing 按天缓存、本地文件固定，都不参与轮换
     if (!bgRotate || bgType === "none" || bgType === "bing" || bgType === "file") return;
+    // 后台：不装定时器（等于暂停）。回到前台会重新挂载定时器、从头计时。
+    if (!pageVisible) return;
     const isRandom = RANDOM_SOURCES.includes(bgType);
     const sec = isRandom ? Math.max(MIN_ROTATE_SEC, bgRotate) : bgRotate;
     const timer = window.setInterval(() => setNonce((n) => n + 1), sec * 1000);
     return () => window.clearInterval(timer);
-  }, [bgType, bgRotate]);
+  }, [bgType, bgRotate, pageVisible]);
 
   // ---- 从壁纸取样环境色 ----
   const ambient = useAmbientFromImage(src || null, { strategy: "edge" });

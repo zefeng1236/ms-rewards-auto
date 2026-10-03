@@ -102,18 +102,29 @@ const ICONS: Record<string, React.ReactNode> = {
 };
 
 type NavEntry = { key: ViewKey; label: string; icon: React.ReactNode };
+/**
+ * 主导航分组（2026-10-03 用户调整了顺序与归属）：
+ *   - 「成就与统计」移到「任务全局设置」**下面**（原来在仪表盘下面）
+ *   - 「软件设置」移到「其它」分组，且放在「关于」**上面**
+ * 顺序是有语义的：工作台里放「日常操作」，其它里放「低频 / 关于本软件」。
+ */
 const NAV_GROUPS: { label: string; items: NavEntry[] }[] = [
   {
     label: "工作台",
     items: [
       { key: "dashboard", label: "仪表盘", icon: ICONS.dashboard },
-      { key: "achievements", label: "成就与统计", icon: ICONS.achievements },
       { key: "account", label: "账户详情", icon: ICONS.account },
       { key: "settings", label: "任务全局设置", icon: ICONS.settings },
-      { key: "software", label: "软件设置", icon: ICONS.software },
+      { key: "achievements", label: "成就与统计", icon: ICONS.achievements },
     ],
   },
-  { label: "其它", items: [{ key: "about", label: "关于", icon: ICONS.about }] },
+  {
+    label: "其它",
+    items: [
+      { key: "software", label: "软件设置", icon: ICONS.software },
+      { key: "about", label: "关于", icon: ICONS.about },
+    ],
+  },
 ];
 
 /**
