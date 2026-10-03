@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 版本号 bump 工具 —— 把「发版时容易漏改的七处版本号」收敛成一条命令。
+ * 版本号 bump 工具 —— 把「发版时容易漏改的六处版本号」收敛成一条命令。
  *
  * 用法：
  *   node scripts/bump-version.js 0.13.10          # 只改主版本（buildNumber 保持不变）
@@ -8,15 +8,17 @@
  *   node scripts/bump-version.js --dry 0.13.10     # 预演，不落盘
  *   node scripts/bump-version.js --check           # 只校验一致性，不改任何文件
  *
- * 同步的七处（selfcheck【12】【15】会逐一比对，漏一处门禁变红）：
+ * 同步的六处（selfcheck【12】会逐一比对，漏一处门禁变红）：
  *   1. package.json            version / buildNumber（buildNumber 是唯一真源）
  *   2. package-lock.json       根 version + packages[""].version（两处）
  *   3. src-renderer/src/version.ts                 APP_VERSION / BUILD_NUMBER
  *   4. src-renderer/src/views/About.tsx            APP_VERSION
  *   5. src-renderer/src/api/mock.ts                currentVersion
- *   6. docker/docker-compose.yml                   镜像 tag（共 3 处：注释 2 + image 1）
- *   7. README.md                                   顶部「当前版本：Vx.y.z」
+ *   6. README.md                                   顶部「当前版本：Vx.y.z」
  *   （另：CHANGELOG.md 若缺 ## 新版本 章节则自动补一个待填骨架，否则门禁会红）
+ *
+ * ⚠️ docker-compose.yml 的 image 已改为 :latest（配合 Watchtower 自动更新），
+ *    不再随版本号同步 —— 版本 tag 由 CI 在推送 ghcr 时按 package.json 动态生成。
  *
  * ⚠️ 注意：CHANGELOG.md 里旧版本章节的镜像 tag 属于历史记录，不能改。
  *    所以这里只在新版本号「不存在」时插入骨架，不做全局替换。
@@ -129,14 +131,6 @@ if (checkOnly) {
   const mockV = (mockSrc.match(/currentVersion:\s*"([^"]+)"/) || [])[1];
   add("mock.ts currentVersion", mockV === expected, `${mockV} vs ${expected}`);
 
-  const composeSrc = fs.readFileSync(path.join(ROOT, "docker", "docker-compose.yml"), "utf8");
-  const tags = [...composeSrc.matchAll(/ms-rewards-auto:([^\s"']+)/g)].map((m) => m[1]);
-  add(
-    "docker-compose.yml 镜像 tag（3 处）",
-    tags.length === 3 && tags.every((t) => t === expected),
-    `实际 ${JSON.stringify(tags)}`
-  );
-
   const readmeSrc = fs.readFileSync(path.join(ROOT, "README.md"), "utf8");
   const readmeOk = readmeSrc.includes(`当前版本：V${expected}`);
   add(
@@ -235,13 +229,7 @@ rep("src-renderer/src/api/mock.ts", "currentVersion", oldVersion, targetVersion,
   return out === s ? null : out;
 });
 
-/* 6. docker-compose.yml —— 镜像 tag（注释 2 处 + image 1 处） */
-rep("docker/docker-compose.yml", "镜像 tag ×3", oldVersion, targetVersion, (s) => {
-  const out = swapAll(s, `ms-rewards-auto:${oldVersion}`, `ms-rewards-auto:${targetVersion}`);
-  return out === null ? null : out;
-});
-
-/* 7. README.md —— 顶部版本横幅 */
+/* 6. README.md —— 顶部版本横幅 */
 rep("README.md", "版本横幅", oldVersion, targetVersion, (s) => {
   const out = swapAll(s, `当前版本：V${oldVersion}`, `当前版本：V${targetVersion}`);
   return out === null ? null : out;
@@ -258,7 +246,7 @@ rep("README.md", "版本横幅", oldVersion, targetVersion, (s) => {
     const today = new Date().toISOString().slice(0, 10);
     const stub =
       `## ${targetVersion}\n\n` +
-      `发布日期：${today} · Docker 版镜像 \`ghcr.io/zefeng1236/ms-rewards-auto:${targetVersion}\`\n\n` +
+      `发布日期：${today} · Windows 安装包 \`MS-Rewards-Auto-Setup-${targetVersion}.exe\`\n\n` +
       `<!-- TODO: 补写本版变更说明（至少一段概述 + 变更列表），否则发版说明不完整 -->\n\n`;
     // 插到第一个 "## " 章节之前（保持时间倒序）
     const idx = src.search(/^## /m);

@@ -1787,9 +1787,17 @@ checkTrue(
   /onProgress: \(p\) => emit\("install-progress", p\)/.test(webApiSrcFp)
 );
 checkTrue(
-  "compose 镜像 tag 与 package.json 版本一致，且指向 ghcr（用户可直接 docker pull）",
-  new RegExp(`image: ghcr\\.io/[^:\\s]+:${String(pkgRaw.version).replace(/\./g, "\\.")}(\\s|$)`).test(composeSrc),
-  "镜像 tag 与版本号漂移 → 用户 pull 到的镜像与本次发布对不上；或路径退回本地裸名 → 无法直接拉取"
+  "compose 镜像用 ghcr latest 且带 watchtower.enable 标签（配合 Watchtower 自动更新）",
+  /image:\s*ghcr\.io\/zefeng1236\/ms-rewards-auto:latest/.test(composeSrc) &&
+    /com\.centurylinklabs\.watchtower\.enable:\s*"true"/.test(composeSrc),
+  "镜像退回固定版本 tag 或丢了 watchtower 标签 → Watchtower 无法自动更新，用户停在旧版不自知"
+);
+checkTrue(
+  "compose 有 watchtower 服务（label-enable 只更新 ms-rewards，不误伤同宿主其他容器）",
+  /^  watchtower:/m.test(composeSrc) &&
+    /containrrr\/watchtower/.test(composeSrc) &&
+    /WATCHTOWER_LABEL_ENABLE:\s*"true"/.test(composeSrc),
+  "缺 watchtower 服务 → Docker 版失去自动更新能力"
 );
 // 虚拟桌面尺寸：换了 KasmVNC 之后瓶颈 3（noVNC 纯 JS 解码器）没了，
 // 可以放心提回 1920x1080。KasmVNC 自带 WebP/QOI 编码 + 浏览器原生解码，
@@ -2323,13 +2331,12 @@ checkTrue(
   "两处版本号漂移 → 镜像里预装的版本与状态接口自报的「钉死版本」对不上，界面永远提示「需重建镜像对齐」"
 );
 checkTrue(
-  "compose 指向 ghcr 预构建镜像、且不再传已废弃的 Chromium 兜底环境变量",
-  // ⚠️ 版本号必须从 package.json 取，不能写死 —— 0.13.8 时这里写的是
-  // /:0\.13\.8/，bump 到 0.13.9 当场变红，属于「守卫自身没跟上版本」的假失败。
-  new RegExp(`image: ghcr\\.io/[^:\\s]+:${String(pkgRaw.version).replace(/\./g, "\\.")}`).test(composeSrc) &&
+  "compose 指向 ghcr 预构建镜像（latest）、且不再传已废弃的 Chromium 兜底环境变量",
+  // image 已改为 :latest 配合 Watchtower 自动更新，不再是版本 tag。
+  /image:\s*ghcr\.io\/[^:\s]+:latest/.test(composeSrc) &&
     !/MS_REWARDS_CHROMIUM_FALLBACK/.test(composeSrc) &&
     !/PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH/.test(composeSrc),
-  "compose 仍留兜底变量 → 容器会优先用兜底 Chromium，环境拟真浏览器永远轮不到"
+  "image 不是 ghcr latest（破坏自动更新），或 compose 仍留兜底变量 → 容器会优先用兜底 Chromium，环境拟真浏览器永远轮不到"
 );
 checkTrue(
   "向导 Web 版删掉环境拟真浏览器页（5 步），桌面版保留（6 步）",

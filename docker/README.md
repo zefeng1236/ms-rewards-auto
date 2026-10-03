@@ -133,18 +133,31 @@ storage/
 - **时区**：compose 已设 `TZ=Asia/Shanghai`，改部署地区时记得同步改，否则每日定时会错。
 - **不要以 root 跑**：镜像内已切到 `node` 用户，因此 Chromium 必须带 `--no-sandbox`（已在 compose 配好）。
 - **不要设 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`**：那是「运维强指定，永远最高优先级」的口子，
-  设了以后环境拟真浏览器**装了也不会被用**。容器需要兜底浏览器，请用 `MS_REWARDS_CHROMIUM_FALLBACK`
-  （语义是「环境拟真浏览器不可用时才用」，compose 已配好）。优先级见 `src/browser.js` 的 `resolveBrowserSource`。
+  设了以后环境拟真浏览器**装了也不会被用**。本版 Docker 已改为「环境拟真浏览器独占 + 镜像预装」，
+  compose 不再传 `MS_REWARDS_CHROMIUM_FALLBACK`（该兜底变量已废弃）。优先级见 `src/browser.js` 的 `resolveBrowserSource`。
 - **账号数量**：建议单 IP ≤ 5 个账户，沿用桌面版的串行执行与账号间 20–60 秒随机间隔。
 - **宿主断电容灾**：`restart: unless-stopped` 已配置，Docker 随系统启动后容器会自动拉起。
   保险库若未配置环境变量解锁，重启后需在页面上登录一次（可点一键登录）。
 - **「启动与托盘」页面在 Web 版已隐藏**：开机自启 / 驻留托盘是桌面端语义，
   容器场景由 `restart: unless-stopped` 负责。
 
-## 八、重新构建前端
+## 八、更新
 
-前端产物在镜像内构建，改了 `src-renderer/` 后重新执行一次 `up -d --build` 即可。
-想在宿主机单独出产物（例如排查构建问题）：
+**自动更新（推荐）**：compose 已内置 Watchtower（`containrrr/watchtower`），每 6 小时检查一次
+ghcr 上的 `latest` 镜像，有新版本会自动拉取并重启 `ms-rewards` 容器，全程无需手动操作。
+它用 label-enable 模式，只更新打了 `com.centurylinklabs.watchtower.enable=true` 标签的容器
+（就是 `ms-rewards`），不会误伤同宿主上的其他容器。
+
+```bash
+# 手动触发一次检查（不想等 6 小时轮询时）
+docker exec ms-rewards-watchtower /watchtower --run-once
+```
+
+**锁定版本（关闭自动更新）**：把 `docker-compose.yml` 里 `ms-rewards` 的
+`image: ...:latest` 改成具体版本号（如 `:0.13.16`），并删掉下方 `watchtower` 服务。
+
+**本地改源码重新构建**：前端产物在镜像内构建，改了 `src-renderer/` 后重新执行一次
+`up -d --build` 即可。想在宿主机单独出产物（例如排查构建问题）：
 
 ```bash
 npm run build:web:docker     # 产物输出到 src/web/dist
