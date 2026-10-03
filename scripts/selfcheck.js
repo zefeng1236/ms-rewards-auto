@@ -2488,6 +2488,19 @@ checkTrue(
   })(),
   "两处版本号漂移 → 镜像里预装的版本与状态接口自报的「钉死版本」对不上，界面永远提示「需重建镜像对齐」"
 );
+// THIRD_PARTY_NOTICES.md 里 fingerprint-chromium 的版本标题必须跟 PINNED_VERSION 同步。
+// 这份声明随安装包分发，且 README/关于页都指向它；停在旧版本会误导用户以为是旧内核。
+checkTrue(
+  "THIRD_PARTY_NOTICES.md 的 fingerprint-chromium 版本 == PINNED_VERSION",
+  (() => {
+    const m = /PINNED_VERSION\s*=\s*"([^"]+)"/.exec(fpbSrc);
+    const t = /### fingerprint-chromium — ([\d.]+)/.exec(
+      fs.readFileSync(noticesPath, "utf8")
+    );
+    return !!m && !!t && m[1] === t[1];
+  })(),
+  "第三方声明的内核版本停在旧版 → 升级 PINNED_VERSION 时漏改了 THIRD_PARTY_NOTICES.md"
+);
 // docker 文档里的「锁定版本」示例必须等于当前版本号。
 // 这几处是用户会照抄的操作指引，示例停在历史版本会让人以为最新版只能回退。
 // 形如「（如 0.13.16）」「如 `:0.13.16`」——注意「如」与版本号之间可能隔着
