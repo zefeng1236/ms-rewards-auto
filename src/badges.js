@@ -142,14 +142,20 @@ function festivalsOfYear(year) {
   return out.sort((a, b) => a.date.localeCompare(b.date));
 }
 
-/** 连续签到勋章：连续完整完成 N 天 */
+/** 连续签到勋章：连续完整完成 N 天
+ *
+ * 命名原则：**直白说人话**。勋章名一眼能看出是几天，
+ * 不用「三日之约 / 旬日如初」这类需要琢磨的文言表述——
+ * 名字是给人看的，不是给人猜的（2026-10-03 用户反馈「不好」）。
+ * 描述也补上「连续」二字，与日历里的连续签到天数呼应。
+ */
 const STREAK_BADGES = [
-  { id: "streak3", name: "三日之约", desc: "连续 3 天全部完成", iconKey: "streak3", days: 3, tone: "cyan" },
-  { id: "streak7", name: "七日成习", desc: "连续 7 天全部完成", iconKey: "streak7", days: 7, tone: "teal" },
-  { id: "streak10", name: "旬日如初", desc: "连续 10 天全部完成", iconKey: "streak10", days: 10, tone: "green" },
-  { id: "streak14", name: "双周之契", desc: "连续 14 天全部完成", iconKey: "streak14", days: 14, tone: "amber" },
-  { id: "streak20", name: "廿日长明", desc: "连续 20 天全部完成", iconKey: "streak20", days: 20, tone: "orange" },
-  { id: "streak28", name: "廿八星宿", desc: "连续 28 天全部完成", iconKey: "streak28", days: 28, tone: "violet" },
+  { id: "streak3", name: "连续 3 天", desc: "连续 3 天全部完成", iconKey: "streak3", days: 3, tone: "cyan" },
+  { id: "streak7", name: "连续 7 天", desc: "连续 7 天全部完成", iconKey: "streak7", days: 7, tone: "teal" },
+  { id: "streak10", name: "连续 10 天", desc: "连续 10 天全部完成", iconKey: "streak10", days: 10, tone: "green" },
+  { id: "streak14", name: "连续 14 天", desc: "连续 14 天全部完成", iconKey: "streak14", days: 14, tone: "amber" },
+  { id: "streak20", name: "连续 20 天", desc: "连续 20 天全部完成", iconKey: "streak20", days: 20, tone: "orange" },
+  { id: "streak28", name: "连续 28 天", desc: "连续 28 天全部完成", iconKey: "streak28", days: 28, tone: "violet" },
 ];
 
 /** 月全勤勋章 */

@@ -2928,6 +2928,31 @@ const jsTriples = badgesMod.allBadges().map((b) => `${b.id}|${b.name}|${b.iconKe
 check("勋章元数据：前端与主进程 id/名称/图形一一对应", metaTriples, jsTriples);
 check("勋章总数：6 连续 + 1 全勤 + 20 节日 = 27", badgesMod.allBadges().length, 27);
 
+// 勋章命名必须是「直白说天数」，不能是文言名。
+// 0.14.1 用了「三日之约/ 七日成习 / 旬日如初 / 双周之契 / 廿日长明 / 廿八星宿」，
+// 用户反馈「不好」——名字是给人看的，不是给人猜的。0.14.2 起全部改回「连续 N 天」。
+const streakNames = badgesMod.STREAK_BADGES.map((b) => b.name);
+checkTrue(
+  "连续签到勋章名为「连续 N 天」直白说法（不再是文言名）",
+  streakNames.length === 6 &&
+    streakNames.every((n, i) => n === `连续 ${badgesMod.STREAK_BADGES[i].days} 天`),
+  streakNames.join(" / ")
+);
+// 防文艺措辞回流：这几个词一个都不该再出现在勋章名里
+checkTrue(
+  "勋章名不含文艺措辞（三日之约 / 旬日如初 等一律不得复活）",
+  !/三日之约|七日成习|旬日如初|双周之契|廿日长明|廿八星宿/.test(metaSrc),
+  "badgeMeta.ts 里又出现文艺勋章名了（用户明确要求改简单）"
+);
+// 描述也必须带「连续」，与日历里的连续签到天数呼应
+checkTrue(
+  "每枚连续签到勋章的描述都点明「连续 N 天全部完成」",
+  badgesMod.STREAK_BADGES.every(
+    (b) => b.desc === `连续 ${b.days} 天全部完成`
+  ),
+  badgesMod.STREAK_BADGES.map((b) => b.desc).join(" / ")
+);
+
 // —— 历史与勋章结算（真实读写临时目录） ——
 const tmpHist = fs.mkdtempSync(path.join(osMod.tmpdir(), "msr-hist-"));
 try {
@@ -3016,16 +3041,15 @@ checkTrue("下载链路：类型声明含 downloadUpdate 与进度", /downloadUp
 const calSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "views", "CalendarPanel.tsx"), "utf8");
 const calCss = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "styles", "global.css"), "utf8");
 checkTrue("日历：四态 class 由 status 驱动", /cal-\$\{d\.status\}/.test(calSrc));
-// 文案随用户要求改得更文艺（与勋章命名"三日之约/七日成习"同调性），
-// 但硬性要求：必须保留「连续」和「天」两个实词，否则用户读不出这是连续签到。
-// 0 天时走另一句（"今日启程"），不能出现「连续 0 天，一日不断」这种自相矛盾。
+// 文案与勋章命名都改回平实直白（用户反馈 0.14.1 那套「三日之约」「一日不断」
+// 文艺风「不好」）。守卫随之回退到断言原始文案。
 checkTrue(
-  "日历：连续签到文案完整（保留「连续」「天」实词 + streak=0 分支）",
-  /连续\s*\{streak\}\s*天|连续 <b>\{streak\}<\/b> 天/.test(calSrc) &&
-    /一日不断/.test(calSrc) &&
-    /今日启程/.test(calSrc) &&
-    /streak\s*>\s*0\s*\?/.test(calSrc),
-  "新文案缺「连续/天」实词、缺「一日不断」，或缺 streak=0 分支"
+  "日历：连续签到文案为平实说法（不含文艺措辞）",
+  /您已使用本软件连续签到/.test(calSrc) &&
+    /继续努力/.test(calSrc) &&
+    !/一日不断/.test(calSrc) &&
+    !/今日启程/.test(calSrc),
+  "连续签到文案又变回文艺版了（用户明确要求改回直白说法）"
 );
 checkTrue("日历：账号下拉切换（只显示一个账号）", /<Select[\s\S]{0,200}onChange=\{\(v\) => setId\(v\)\}/.test(calSrc));
 checkTrue("日历：可上下翻月", /shift\(-1\)/.test(calSrc) && /shift\(1\)/.test(calSrc));

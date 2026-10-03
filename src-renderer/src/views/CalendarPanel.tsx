@@ -150,17 +150,11 @@ export function CalendarPanel({ accounts }: { accounts: Account[] }) {
         </div>
 
         {/* ---- 连续签到文案（天数用 <b> 着色，不再另起一个大号数字）----
-            文案与勋章命名同一调性（"三日之约""七日成习"），但保留"连续""天"
-            这两个实词，别文艺到读不懂算什么。 */}
+            保持平实直白：0.14.1 曾改成文艺版（勋章名也跟着改了），
+            但用户反馈那套「不好」，勋章名与此处文案一并改回原来说法。 */}
         <div className="cal-streak">
           <span className="cal-streak-txt">
-            {streak > 0 ? (
-              <>
-                连续 <b>{streak}</b> 天，一日不断
-              </>
-            ) : (
-              <>今日启程，从第一天开始</>
-            )}
+            您已使用本软件连续签到 <b>{streak}</b> 天，继续努力
           </span>
         </div>
 

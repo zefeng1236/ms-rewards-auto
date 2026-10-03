@@ -21,12 +21,12 @@ export interface BadgeMeta {
 
 export const BADGE_META: BadgeMeta[] = [
   /* ---- 连续签到 ---- */
-  { id: "streak3", name: "三日之约", desc: "连续 3 天全部完成", iconKey: "streak3", tone: "cyan", days: 3, group: "streak" },
-  { id: "streak7", name: "七日成习", desc: "连续 7 天全部完成", iconKey: "streak7", tone: "teal", days: 7, group: "streak" },
-  { id: "streak10", name: "旬日如初", desc: "连续 10 天全部完成", iconKey: "streak10", tone: "green", days: 10, group: "streak" },
-  { id: "streak14", name: "双周之契", desc: "连续 14 天全部完成", iconKey: "streak14", tone: "amber", days: 14, group: "streak" },
-  { id: "streak20", name: "廿日长明", desc: "连续 20 天全部完成", iconKey: "streak20", tone: "orange", days: 20, group: "streak" },
-  { id: "streak28", name: "廿八星宿", desc: "连续 28 天全部完成", iconKey: "streak28", tone: "violet", days: 28, group: "streak" },
+  { id: "streak3", name: "连续 3 天", desc: "连续 3 天全部完成", iconKey: "streak3", tone: "cyan", days: 3, group: "streak" },
+  { id: "streak7", name: "连续 7 天", desc: "连续 7 天全部完成", iconKey: "streak7", tone: "teal", days: 7, group: "streak" },
+  { id: "streak10", name: "连续 10 天", desc: "连续 10 天全部完成", iconKey: "streak10", tone: "green", days: 10, group: "streak" },
+  { id: "streak14", name: "连续 14 天", desc: "连续 14 天全部完成", iconKey: "streak14", tone: "amber", days: 14, group: "streak" },
+  { id: "streak20", name: "连续 20 天", desc: "连续 20 天全部完成", iconKey: "streak20", tone: "orange", days: 20, group: "streak" },
+  { id: "streak28", name: "连续 28 天", desc: "连续 28 天全部完成", iconKey: "streak28", tone: "violet", days: 28, group: "streak" },
 
   /* ---- 月全勤 ---- */
   { id: "perfectMonth", name: "满月全勤", desc: "一整个月，天天都没落下", iconKey: "perfectMonth", tone: "gold", group: "perfect" },
