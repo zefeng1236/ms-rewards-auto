@@ -1831,6 +1831,14 @@ checkTrue(
   "侧边栏左下角版本号走 version.ts 的 DISPLAY_VERSION",
   /DISPLAY_VERSION/.test(sidebarSrcSw)
 );
+// JSX 注释闭合写成 */}"（多一个引号）会把 "}" 当成文本节点渲染到界面上，
+// 而tsc / vite 都不报错——实测2026-10-03 侧边栏底部多出一坨「。。」。
+// 这类"编译期静默、运行期可见"的错误只能靠正则拦。
+checkTrue(
+  "JSX 注释闭合后没有多余引号（否则多出 '\"}' 文本节点，tsc 查不出）",
+  !/\*\/\s*"\s*\}/.test(sidebarSrcSw),
+  'Sidebar.tsx 里出现 */"} —— 会把 "}" 渲染成文本'
+);
 checkTrue(
   "前端类型补齐 FingerprintStatus / InstallFingerprintResult",
   /interface FingerprintStatus/.test(typesSrcFp) && /interface InstallFingerprintResult/.test(typesSrcFp)
@@ -3008,7 +3016,17 @@ checkTrue("下载链路：类型声明含 downloadUpdate 与进度", /downloadUp
 const calSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "views", "CalendarPanel.tsx"), "utf8");
 const calCss = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "styles", "global.css"), "utf8");
 checkTrue("日历：四态 class 由 status 驱动", /cal-\$\{d\.status\}/.test(calSrc));
-checkTrue("日历：连续签到文案完整", /您已使用本软件连续签到/.test(calSrc) && /继续努力/.test(calSrc));
+// 文案随用户要求改得更文艺（与勋章命名"三日之约/七日成习"同调性），
+// 但硬性要求：必须保留「连续」和「天」两个实词，否则用户读不出这是连续签到。
+// 0 天时走另一句（"今日启程"），不能出现「连续 0 天，一日不断」这种自相矛盾。
+checkTrue(
+  "日历：连续签到文案完整（保留「连续」「天」实词 + streak=0 分支）",
+  /连续\s*\{streak\}\s*天|连续 <b>\{streak\}<\/b> 天/.test(calSrc) &&
+    /一日不断/.test(calSrc) &&
+    /今日启程/.test(calSrc) &&
+    /streak\s*>\s*0\s*\?/.test(calSrc),
+  "新文案缺「连续/天」实词、缺「一日不断」，或缺 streak=0 分支"
+);
 checkTrue("日历：账号下拉切换（只显示一个账号）", /<Select[\s\S]{0,200}onChange=\{\(v\) => setId\(v\)\}/.test(calSrc));
 checkTrue("日历：可上下翻月", /shift\(-1\)/.test(calSrc) && /shift\(1\)/.test(calSrc));
 checkTrue("日历：一次只取一个月", /api\s*\.getHistory\(id, year, month\)/.test(calSrc.replace(/\s+/g, " ")) || /getHistory\(id, year, month\)/.test(calSrc));

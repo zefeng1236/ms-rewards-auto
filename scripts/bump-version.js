@@ -236,8 +236,16 @@ rep("src-renderer/src/views/About.tsx", "APP_VERSION", oldVersion, targetVersion
   return out === s ? null : out;
 });
 
-/* 5. mock.ts —— currentVersion */
+/* 5. mock.ts —— currentVersion
+ * 0.14 起强制单源：currentVersion 走 DISPLAY_VERSION（由 version.ts 的
+ * APP_VERSION/BUILD_NUMBER 派生），不再写死字面量。所以这里两种形态都要认：
+ *   ① `currentVersion: DISPLAY_VERSION` → 已自动跟随，什么都不用改
+ *   ② `currentVersion: "x.y.z"` → 旧写法，替换成新字面量
+ */
 rep("src-renderer/src/api/mock.ts", "currentVersion", oldVersion, targetVersion, (s) => {
+  if (/currentVersion:\s*DISPLAY_VERSION\b/.test(s) && !/currentVersion:\s*"[^"]+"/.test(s)) {
+    return s; // 已是单源形态，返回原文 → rep 记SAME（不是"未命中"）
+  }
   const out = s.replace(/(currentVersion:\s*)"[^"]+"/, `$1"${targetVersion}"`);
   return out === s ? null : out;
 });
