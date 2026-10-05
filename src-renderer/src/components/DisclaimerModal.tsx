@@ -57,7 +57,7 @@ export function DisclaimerModal({
         </p>
         <ul>
           <li>
-            图片由第三方接口（<b>Upx8</b>、<b>98qy</b>、<b>Unsplash</b>）实时随机返回，
+            图片由第三方接口（<b>Upx8</b>、<b>98qy</b>、<b>Unsplash</b>、<b>Pexels</b>）实时随机返回，
             <span className="hl">均来源于公共互联网</span>
             ，本应用不托管、不存储、不加工这些图片。
           </li>

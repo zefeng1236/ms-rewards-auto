@@ -36,7 +36,7 @@ async function copyText(text: string): Promise<boolean> {
   }
 }
 
-const APP_VERSION = "0.14.3";
+const APP_VERSION = "0.14.4";
 
 /** 直接依赖（package.json 中声明的运行时依赖） */
 const DIRECT_DEPS: { name: string; version: string; license: string; desc: string; url: string }[] = [
@@ -79,8 +79,8 @@ const DIRECT_DEPS: { name: string; version: string; license: string; desc: strin
     name: "fingerprint-chromium",
     version: "148.0.7778.215",
     license: "BSD-3-Clause",
-    desc: "可选环境拟真增强浏览器（adryfish，基于 Ungoogled Chromium），运行时按需下载",
-    url: "https://github.com/adryfish/fingerprint-chromium",
+    desc: "可选环境拟真增强浏览器（Chromix，基于 Ungoogled Chromium），运行时按需下载",
+    url: "https://github.com/xiaozhou26/Chromix",
   },
 ];
 

@@ -2,6 +2,78 @@
 
 本文件记录各版本的重要变更。版本格式为主版本.次版本.修订号，带 `-beta` 后缀的为测试版本。带「.N」四位小版本的为内部交付号（安装包文件名与 exe FileVersion 使用），主版本段仍为 0.9.4。
 
+## 0.14.4
+
+发布日期：2026-10-05 · Windows 安装包 `MS-Rewards-Auto-Setup-0.14.4.exe`
+
+本版三件事：环境拟真浏览器**换内核**（Chromix 154 取代 fingerprint-chromium 150）、
+新增 Pexels 图源并放开壁纸自动轮换、修掉交互登录的三处体验问题。
+
+### 【重要】环境拟真浏览器换内核：adryfish/fingerprint-chromium 150 → xiaozhou26/Chromix 154
+
+这不是常规升级，是**换上游**。原因是有实测证据的缺陷：
+
+fingerprint-chromium **150.0.7871.186** 在**开启 canvas 伪装**时，页面调用
+`getImageData()` 或 WebGL `readPixels()` 读回像素，会让渲染进程 **SIGSEGV**
+（上游 issue #94，2026-10-03 报出，至今未修）。而本项目每天必访的
+`login.live.com` / `rewards.bing.com` **正好落在触发路径上** —— 对照实测：
+
+| 域 | fp-chromium 150 | **Chromix 154** |
+|---|---|---|
+| `login.live.com` | ❌ 崩溃 | ✅ |
+| `rewards.bing.com` | ❌ 崩溃 | ✅ |
+| `rewards.bing.com/earn` | ❌ 崩溃 | ✅ |
+| `www.bing.com` / `cn.bing.com` | ✅ | ✅ |
+
+（崩溃有随机性，同一份脚本第一轮过第二轮崩，判定必须每域跑多次。）
+150 之后上游再无新版本，等下去也不会好。
+
+**换内核带来的三处用户可见变化**：
+
+1. **升级后会重新下载一次浏览器**（约 200MB）。这是**预期行为**——程序现在会
+   校验已装版本，发现是旧的 150 就判定「不可用」并引导重装，而不是继续用那个
+   有崩溃缺陷的内核。目录名仍叫 `fingerprint-chromium`（没跟着上游改名），
+   就是为了让老用户能被正确识别出「需要更新」而不是当成全新安装。
+2. **Docker 用户必须重建镜像**才能用上 154。旧镜像里的 150 会被判为
+   「预装版本不符 → 不可用」，这是预期行为。
+3. **启动参数全套改名**（少改一个不会报错，只是被静默忽略 → 时区/语言露馅且无察觉）：
+   `--timezone=` → `--fingerprint-timezone=`，`--accept-lang=` / `--lang=` →
+   `--fingerprint-locale=`；`--fingerprint` / `-platform` / `-brand` /
+   `-brand-version` / `-hardware-concurrency` 保持同名。
+
+**Chromix 154 实测结论**（GUI 模式、项目真实运行参数）：
+
+- **creepjs：0 lie / 0 fail**，UA / Client Hints / 时区 / 语言全部自洽。
+- **canvas `getImageData` 正常返回** —— 正是 150 必崩的那一步，这是换内核的直接价值。
+- **WebRTC 零泄露**：站方 9 个 STUN 服务器逐个显示「未检测到 WebRTC IP 泄露」，
+  本机 API 侧 ICE 候选 0 条。**Chromix 默认就关闭了 WebRTC 的 IP 暴露通道，
+  项目没有加任何额外 flag。**
+- **Cloudflare Turnstile 非交互自动通过**（≈500ms）。
+- 已知限制：`--window-size` 在 Chromix 下**不生效**（窗口几何由种子接管）。
+
+### 壁纸：新增 Pexels 图源 + 轮换放开到所有非 Bing 源
+
+- **新增 Pexels 图源**（个性化页可填 API Key）。随机档走 `/v1/curated`，
+  分类档走 `/v1/search`，只取横图。Key 走裸 `Authorization` 头，存在
+  `appearance.bgPexelsKey`，凭据清理（`wipe.js` / 免责声明弹窗）已同步。
+- **自动轮换放开到除 Bing 每日外的所有图源**。此前只有部分源能轮换，
+  现在条件收敛为「不是 none、也不是 bing」。
+- 换源后可**交叉比对**同一台机器在不同图源下的观感。
+
+### 交互登录三处修复
+
+1. **登录被「莫名手动停止」**：`account:login` / `account:sync` 两个入口
+   在进入与 `finally` 都补了 `cancel.reset()`，并把**真正的用户中止**与
+   普通错误分开判定（之前中止被当成登录失败）。**停一次之后仍能再登录。**
+2. **条款页出现后浏览器闪退**：新增 `isTermsGatePage(url, html)`。
+   条款页不再被 `checkLoggedIn` 误判为已登录；超时后额外给约 2 分钟宽限，
+   避免 `closeContext` 提前把浏览器关掉。
+3. **Bing 搜索页缺登录提示**：新增 `bing-login` 提示态，**明确告诉用户点右上角「登录」**。
+   Bing 是 SPA 晚渲染，提示补了短周期重试（命中即停）。
+   提示由页内 `MutationObserver` 自闭环更新（DOM 一变就重算），
+   **零新增 CDP 通道**——没有用 `exposeBinding` / `addInitScript`，
+   避免给检测面加料。状态未变就不改 DOM，防止自激循环。
+
 ## 0.14.3
 
 发布日期：2026-10-03 · Windows 安装包 `MS-Rewards-Auto-Setup-0.14.3.exe`

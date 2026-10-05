@@ -27,10 +27,11 @@
 - **仓库**：https://github.com/microsoft/playwright
 - **用途**：驱动 Chromium 浏览器执行自动任务；Chromium 内核按需下载，其许可随 Playwright / Chromium 分发（见 `playwright-core` 包内 `LICENSE` 与 `NOTICE`）。
 
-### fingerprint-chromium — 150.0.7871.186
-- **许可**：BSD 3-Clause（基于 Ungoogled Chromium；Copyright (c) The ungoogled-chromium Authors 及 patch 原作者 adryfish）
-- **仓库**：https://github.com/adryfish/fingerprint-chromium （上游：https://github.com/ungoogled-software/ungoogled-chromium ）
-- **用途**：可选的「环境拟真增强浏览器」，运行时按需下载（约 181MB，解压后 400MB+，不随安装包分发）。它对 UA / userAgentData / Client Hints 三者做源码层的同源生成，并支持 `--fingerprint=<seed>` 种子化环境特征，用于把应用层改不动的那部分环境一致性在源码层补齐。本软件未修改其二进制，仅下载、解压并以命令行为其传入启动参数。
+### fingerprint-chromium — 154.0.8037.57
+- **许可**：BSD 3-Clause（基于 Ungoogled Chromium；Copyright (c) The ungoogled-chromium Authors 及 patch 原作者 xiaozhou26）
+- **仓库**：https://github.com/xiaozhou26/Chromix （上游：https://github.com/ungoogled-software/ungoogled-chromium ）
+- **更换说明**：2026-10-05 从 adryfish/fingerprint-chromium 150.0.7871.186 换为 Chromix。原上游 150 存在未修复缺陷（issue #94：开启 canvas 伪装时页面读取像素会导致渲染进程崩溃），且之后无新版本发布。两者同为基于 Ungoogled Chromium 的 BSD-3 定制发行版，本软件的许可状况不变。
+- **用途**：可选的「环境拟真增强浏览器」，运行时按需下载（约 212MB，解压后 536MB+，不随安装包分发）。它对 UA / userAgentData / Client Hints 三者做源码层的同源生成，并支持 `--fingerprint=<seed>` 种子化环境特征，用于把应用层改不动的那部分环境一致性在源码层补齐。本软件未修改其二进制，仅下载、解压并以命令行为其传入启动参数。
 - **许可文本（BSD 3-Clause）**：
   ```
   Redistribution and use in source and binary forms, with or without

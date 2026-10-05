@@ -28,7 +28,7 @@ const logger = require("./logger");
  *   - launch.json                开机自启、托盘、启动延迟
  *   - global-config.json         推送渠道、搜索设置等业务配置
  *
- * 例外：壁纸 API 密钥（appearance.json 的 bgUnsplashKey）属于第三方凭据，
+ * 例外：壁纸 API 密钥（appearance.json 的 bgUnsplashKey / bgPexelsKey）属于第三方凭据，
  *       按要求一并清除（其余壁纸配置如类型、直链、旋转间隔都保留）。
  *
  * 重置向导状态的原因：账号与保险库都被删了，此时桌面版/Web 版都应回到
@@ -102,8 +102,8 @@ function wipeAccountData() {
 
     // 6. 保留个性化数据，但清掉其中的第三方凭据（壁纸 API 密钥）
     const ap = appearance.get();
-    if (ap.bgUnsplashKey) {
-      appearance.set({ bgUnsplashKey: "" });
+    if (ap.bgUnsplashKey || ap.bgPexelsKey) {
+      appearance.set({ bgUnsplashKey: "", bgPexelsKey: "" });
       out.wallpaperKey = true;
     }
 

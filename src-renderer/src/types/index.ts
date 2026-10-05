@@ -294,7 +294,7 @@ export type ThemeMode = "dark" | "light" | "system";
  * UAPI 的随机壁纸来源已移除（只保留其必应每日壁纸）；
  * flow 不属于主界面壁纸（那是登录页/向导的 authBg），故不在本联合内。
  */
-export type BgType = "none" | "bing" | "upx8" | "qy98" | "unsplash" | "url" | "file";
+export type BgType = "none" | "bing" | "upx8" | "qy98" | "unsplash" | "pexels" | "url" | "file";
 
 /**
  * 登录页 / 初始化向导的背景（独立于主界面的 bgType）：
@@ -334,8 +334,22 @@ export type UnsplashCategory =
   | "food"
   | "flowers";
 
-/** 壁纸二级分类（仅 upx8/qy98/unsplash 主分类生效），与后端 wallpapers.SOURCES 对齐 */
-export type BgCategory = Upx8Category | Qy98Category | UnsplashCategory;
+/** Pexels 的二级分类（映射为官方 API 的 query 关键词，random = 走 /curated 精选流） */
+export type PexelsCategory =
+  | "random"
+  | "nature"
+  | "animals"
+  | "architecture"
+  | "travel"
+  | "city"
+  | "ocean"
+  | "space"
+  | "food"
+  | "flowers"
+  | "abstract";
+
+/** 壁纸二级分类（仅 upx8/qy98/unsplash/pexels 主分类生效），与后端 wallpapers.SOURCES 对齐 */
+export type BgCategory = Upx8Category | Qy98Category | UnsplashCategory | PexelsCategory;
 
 export interface Appearance {
   preset: AppearancePreset;
@@ -351,6 +365,7 @@ export interface Appearance {
   bgFile: string;
   bgCategory: BgCategory;
   bgUnsplashKey: string;
+  bgPexelsKey: string;
   /** 轮换间隔秒数，0 = 不轮换 */
   bgRotate: number;
   /** 背景模糊 0–40 */

@@ -1,12 +1,13 @@
 const { httpRequest } = require("./http");
 
 /**
- * 第三方壁纸源客户端（upx8 / 98qy / Unsplash）
+ * 第三方壁纸源客户端（upx8 / 98qy / Unsplash / Pexels）
  *
  * 统一操作模型（0.13.10 起）：主分类（bgType）→ 二级分类（bgCategory）。
  *   - upx8     = 壁纸 API v2.0（wp.upx8.com），302 直链，默认请求 4K 分辨率
  *   - qy98     = 98情缘随机壁纸（www.98qy.com/sjbz），302 直链
  *   - unsplash = Unsplash 官方 API（需 Access Key），返回图片直链
+ *   - pexels   = Pexels 官方 API（需 API Key），返回图片直链，随机档走 /v1/curated
  * UAPI 的随机图源（acg/furry/…）已按用户要求移除，UAPI 只保留必应每日壁纸，
  * 见 ./uapi.js。分类目录（SOURCES）是前端 chips 与 appearance 校验的唯一真源。
  */
@@ -15,11 +16,12 @@ const { httpRequest } = require("./http");
 
 const Upx8_BASE = "https://wp.upx8.com/api.php";
 const QY98_BASE = "https://www.98qy.com/sjbz/api.php";
+const PEXELS_BASE = "https://api.pexels.com/v1";
 
 /**
  * 壁纸源分类目录：主分类 key → { label, categories: [{ key, label }] }。
- * key 即请求参数原值（upx8 的 category / 98qy 的 lx / unsplash 的 query），
- * "random" 是统一的「随机（不限分类）」伪分类：请求时不带分类参数。
+ * key 即请求参数原值（upx8 的 category / 98qy 的 lx / unsplash 的 query /
+ * pexels 的 query），"random" 是统一的「随机（不限分类）」伪分类：请求时不带分类参数。
  */
 const SOURCES = {
   upx8: {
@@ -61,6 +63,23 @@ const SOURCES = {
       { key: "space", label: "太空" },
       { key: "food", label: "美食" },
       { key: "flowers", label: "花卉" },
+    ],
+  },
+  pexels: {
+    label: "Pexels 摄影",
+    // pexels 的分类 key 直接用作 /v1/search 的 query 关键词
+    categories: [
+      { key: "random", label: "随机" },
+      { key: "nature", label: "自然" },
+      { key: "animals", label: "动物" },
+      { key: "architecture", label: "建筑" },
+      { key: "travel", label: "旅行" },
+      { key: "city", label: "城市" },
+      { key: "ocean", label: "海洋" },
+      { key: "space", label: "太空" },
+      { key: "food", label: "美食" },
+      { key: "flowers", label: "花卉" },
+      { key: "abstract", label: "抽象" },
     ],
   },
 };
@@ -155,6 +174,64 @@ async function unsplashRandom(accessKey, category) {
   return src;
 }
 
+/**
+ * Pexels 随机摄影（官方 API，必须 API Key；服务端请求，key 不进渲染层）。
+ * 文档：https://www.pexels.com/api/documentation/#photos-search
+ *
+ * 与 Unsplash 的两处结构性差异（踩过就记住）：
+ *  1. **「随机」必须走 /v1/curated**，不能用 /v1/search —— search 强制要求 query，
+ *     缺 query 直接 400。所以 random 分类下换端点，其余分类用 search + query=分类key。
+ *  2. 返回的是 **photos 数组**（搜索/精选都是），不是单张对象；
+ *     横屏图用 src.large（1200px 宽，正是壁纸常用档），src.original 常是 4K+ 巨图。
+ *
+ * 鉴权头是 `Authorization: <KEY>`，**不带 Bearer 前缀**（与 Unsplash 的
+ * `Client-ID <KEY>` 不同，照抄会 401）。
+ * 限额每小时 200 次 / 每月 20000 次，比 Unsplash 紧，所以失败时回落到 bing 兜底。
+ * @param {string} apiKey Pexels API Key
+ * @param {string} [category] 二级分类 key（random/省略 = 走 curated 精选流）
+ * @returns {Promise<string>} 可直接使用的横屏图片地址
+ */
+async function pexelsRandom(apiKey, category) {
+  const key = String(apiKey || "").trim();
+  if (!key) throw new Error("未配置 Pexels API Key");
+  const cat = normalizeCategory("pexels", category);
+  const isRandom = !cat || cat === "random";
+  // 壁纸一律横屏：curated 端点不支持 orientation 参数，只能多取一些自己挑横图
+  const params = new URLSearchParams({ per_page: isRandom ? "20" : "1" });
+  let url;
+  if (isRandom) {
+    url = `${PEXELS_BASE}/curated?${params.toString()}`;
+  } else {
+    params.set("query", cat);
+    params.set("orientation", "landscape");
+    params.set("size", "large");
+    url = `${PEXELS_BASE}/search?${params.toString()}`;
+  }
+  const r = await httpRequest({
+    url,
+    headers: { Authorization: key },
+    timeout: 12000,
+  });
+  if (r.status === 401) throw new Error("Pexels API Key 无效（401）");
+  if (r.status === 403) throw new Error("Pexels 拒绝请求（403）");
+  if (r.status === 429) throw new Error("Pexels 超出速率限制（每小时 200 次）");
+  if (r.error) throw new Error(r.error);
+  if (r.status !== 200) {
+    let msg = `HTTP ${r.status}`;
+    try { const j = JSON.parse(r.body); if (j && j.error) msg = String(j.error); } catch {}
+    throw new Error(msg);
+  }
+  const j = JSON.parse(r.body);
+  const photos = Array.isArray(j.photos) ? j.photos : [];
+  if (!photos.length) throw new Error("Pexels 未返回图片（该分类可能无结果）");
+  // curated 混排竖图，壁纸用横屏更合适：优先 src.large，退 src.original
+  const pick =
+    photos.find((p) => p && p.src && p.src.large && p.width >= p.height) ||
+    photos.find((p) => p && p.src && (p.src.large || p.src.original));
+  if (!pick) throw new Error("Pexels 响应缺少图片地址");
+  return pick.src.large || pick.src.original;
+}
+
 module.exports = {
   SOURCES,
   categoryKeys,
@@ -163,4 +240,5 @@ module.exports = {
   upx8Url,
   qy98Url,
   unsplashRandom,
+  pexelsRandom,
 };

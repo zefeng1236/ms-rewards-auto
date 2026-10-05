@@ -98,6 +98,10 @@ async function rawBackgroundSrc(cfg) {
       const key = (process.env.UNSPLASH_ACCESS_KEY || cfg.bgUnsplashKey || "").trim();
       return wallpapers.unsplashRandom(key, cfg.bgCategory);
     }
+    case "pexels": {
+      const key = (process.env.PEXELS_API_KEY || cfg.bgPexelsKey || "").trim();
+      return wallpapers.pexelsRandom(key, cfg.bgCategory);
+    }
     default:
       return appearance.backgroundSrc();
   }

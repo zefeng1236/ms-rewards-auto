@@ -36,7 +36,7 @@ const DEFAULTS = {
   // 自定义背景（主界面软件壁纸），主分类（一级）：
   //   none | bing（必应每日一图）| upx8（壁纸 API v2.0，配 bgCategory）
   //   | qy98（98qy 壁纸，配 bgCategory）| unsplash（Unsplash 摄影，配 bgCategory）
-  //   | url（图片直链/API）| file（本地图片）
+  //   | pexels（Pexels 摄影，配 bgCategory）| url（图片直链/API）| file（本地图片）
   // 两级结构：主分类被选中时展示其壁纸类别（二级分类 bgCategory）。
   // UAPI 的随机壁纸来源已按用户要求移除，UAPI 只保留必应每日壁纸。
   // 默认必应每日一图：主界面壁纸氛围，随日期自动更新。
@@ -47,11 +47,13 @@ const DEFAULTS = {
   authBg: "flow",
   bgUrl: "",
   bgFile: "",
-  // 壁纸二级分类（仅 upx8/qy98/unsplash 三个主分类生效），按主分类分源校验，
+  // 壁纸二级分类（仅 upx8/qy98/unsplash/pexels 四个主分类生效），按主分类分源校验，
   // 取值见 wallpapers.SOURCES；"random" = 不限分类随机。
   bgCategory: "random",
   // Unsplash 官方 API Access Key（也可用环境变量 UNSPLASH_ACCESS_KEY）
   bgUnsplashKey: "",
+  // Pexels 官方 API Key（也可用环境变量 PEXELS_API_KEY）
+  bgPexelsKey: "",
   // 背景自动轮换间隔（秒）。0=不启用；随机图源最低 60s，自定义链接不受此限
   bgRotate: 0,
   // 背景高斯模糊像素（0–40）与暗化比例（0–0.85）
@@ -75,7 +77,7 @@ const DEFAULTS = {
 // 流场只属于登录页/向导背景（authBg），主界面不渲染 → 已移除。
 // 0.13.10 移除 UAPI 随机图（uapi），新增 upx8（壁纸 API v2.0）。
 // 旧配置里存了 flow/uapi 的会被规范化拒绝、回退到默认值，无需迁移脚本。
-const BG_TYPES = ["none", "bing", "upx8", "qy98", "unsplash", "url", "file"];
+const BG_TYPES = ["none", "bing", "upx8", "qy98", "unsplash", "pexels", "url", "file"];
 
 /** 登录页/向导背景白名单 */
 const AUTH_BG_TYPES = ["flow", "bing"];
@@ -191,6 +193,7 @@ function get() {
     bgFile,
     bgCategory: normalizeBgCategory(bgType, raw.bgCategory === undefined ? DEFAULTS.bgCategory : raw.bgCategory),
     bgUnsplashKey: String(raw.bgUnsplashKey || "").trim(),
+    bgPexelsKey: String(raw.bgPexelsKey || "").trim(),
     bgRotate: clampRotate(raw.bgRotate === undefined ? DEFAULTS.bgRotate : raw.bgRotate),
     bgBlur: clampBlur(raw.bgBlur === undefined ? DEFAULTS.bgBlur : raw.bgBlur),
     bgDim: clampDim(raw.bgDim === undefined ? DEFAULTS.bgDim : raw.bgDim),
@@ -227,6 +230,7 @@ function set(patch) {
       next.bgCategory === undefined ? cur.bgCategory : next.bgCategory
     ),
     bgUnsplashKey: String(next.bgUnsplashKey || "").trim(),
+    bgPexelsKey: String(next.bgPexelsKey || "").trim(),
     bgRotate: clampRotate(next.bgRotate),
     bgBlur: clampBlur(next.bgBlur),
     bgDim: clampDim(next.bgDim),

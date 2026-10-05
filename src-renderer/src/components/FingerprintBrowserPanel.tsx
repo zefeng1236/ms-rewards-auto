@@ -201,7 +201,7 @@ export function FingerprintBrowserPanel() {
         ) : (
           <>
             <SwitchField
-              label="启用环境拟真浏览器（adryfish/fingerprint-chromium）"
+              label="启用环境拟真浏览器（xiaozhou26/Chromix）"
               hint={
                 st?.preinstalled
                   ? "Docker 版镜像内置，且容器里只有环境拟真浏览器可用，因此始终启用（不可关闭）"

@@ -654,6 +654,29 @@ async function syncCookies(ctx) {
  * 并同步 rewards.bing.com 的 Cookie。
  * @returns {Promise<{code: string|null, loggedIn: boolean}>}
  */
+/**
+ * 页面是否停在「微软条款更新 / 隐私政策确认」这类必须用户手动点的中间态。
+ *
+ * 为什么必须有这个判断（2026-10-04 用户反馈「条款页闪一下浏览器就关了」）：
+ * checkLoggedIn 靠 html 里的 pointsCounters / balance 特征判已登录，而条款页是从
+ * rewards 页跳过去的，DOM 里仍可能残留这些特征 → 误判已登录 → 立刻 return →
+ * finally 里 closeContext 关掉浏览器，用户根本没机会点「下一步」。
+ * 而且真正的票据（_U/WLSSC）要等用户点完条款才下发。
+ */
+function isTermsGatePage(url, html) {
+  try {
+    if (/account\.live\.com|login\.live\.com.*(tou|consent|acquire)/i.test(String(url || ""))) return true;
+  } catch {}
+  const text = String(html || "").slice(0, 4000);
+  // 模块级 require：isTermsGatePage 在 openContext 之外被调用，不能用那边的局部变量
+  return require("./page-guide").TERMS_KEYWORDS.some((kw) => text.includes(kw));
+}
+
+/**
+ * 交互式登录：弹出浏览器（该账户独立 profile），用户登录后自动捕获 OAuth code，
+ * 并同步 rewards.bing.com 的 Cookie。
+ * @returns {Promise<{code: string|null, loggedIn: boolean}>}
+ */
 async function waitForRewardsSession(page, context) {
   const targets = ["https://cn.bing.com/", "https://www.bing.com/", "https://rewards.bing.com/earn"];
   const deadline = Date.now() + 90 * 1000;
@@ -682,6 +705,14 @@ async function waitForRewardsSession(page, context) {
       try {
         html = await page.content();
       } catch {}
+      // 条款页优先判断：此时即使 html 里有点数特征也不能收工 —— 用户还没点「下一步」，
+      // 继续等下一轮；提前 return 会让 finally 关掉浏览器，用户没机会操作。
+      if (isTermsGatePage(url, html)) {
+        logger.info("停在微软条款/隐私政策确认页，等待用户点击「下一步」后继续…");
+        // 停在条款页时继续轮询，而不是往下走：下一轮重新导航能等到用户点完。
+        await cancel.sleep(2000);
+        continue;
+      }
       const cookies = await context.cookies();
       const loggedIn = checkLoggedIn(url, cookies, html);
       last = { loggedIn, cookies, url, html };
@@ -694,20 +725,55 @@ async function waitForRewardsSession(page, context) {
       ssoTried = true;
       logger.info("MS账号已授权，正在静默 SSO 补登 Bing…");
       const sso = await ensureBingSSO(page, context);
-      const loggedIn = checkLoggedIn(sso.url, sso.cookies, sso.html);
-      last = { loggedIn, cookies: sso.cookies, url: sso.url, html: sso.html };
-      if (loggedIn) return last;
+      // SSO 过程中可能又跳到条款页 —— 同样不能当成完成，否则浏览器会被立刻关掉
+      if (!isTermsGatePage(sso.url, sso.html)) {
+        const loggedIn = checkLoggedIn(sso.url, sso.cookies, sso.html);
+        last = { loggedIn, cookies: sso.cookies, url: sso.url, html: sso.html };
+        if (loggedIn) return last;
+      }
 
       // 静默 SSO 没成，回退到模拟点登录按钮 + 自动确认隐私政策/账户
-      if (!hasBingAuthCookies(sso.cookies)) {
+      if (!hasBingAuthCookies(last.cookies)) {
         logger.info("静默 SSO 未成，回退到模拟点 Bing 登录按钮…");
         const byClick = await ensureBingLoginByClick(page, context);
-        const loggedIn2 = checkLoggedIn(byClick.url, byClick.cookies, byClick.html);
-        last = { loggedIn: loggedIn2, cookies: byClick.cookies, url: byClick.url, html: byClick.html };
-        if (loggedIn2) return last;
+        if (!isTermsGatePage(byClick.url, byClick.html)) {
+          const loggedIn2 = checkLoggedIn(byClick.url, byClick.cookies, byClick.html);
+          last = { loggedIn: loggedIn2, cookies: byClick.cookies, url: byClick.url, html: byClick.html };
+          if (loggedIn2) return last;
+        }
       }
     }
     logger.info("尚未抓齐 Bing / Rewards 登录信息，等待用户确认隐私政策或页面继续跳转…");
+  }
+  // 主超时到了，但如果还停在条款页（用户没点「下一步」），再给一段宽限时间：
+  // 直接返回会触发 finally 关掉浏览器，用户就永远点不上了（2026-10-04 反馈）。
+  if (isTermsGatePage(last.url, last.html)) {
+    const grace = Date.now() + 120 * 1000;
+    logger.info("仍在条款确认页，额外等待 2 分钟，请点击页面上的「下一步 / 是」按钮");
+    while (Date.now() < grace) {
+      try {
+        cancel.throwIfAborted();
+      } catch (e) {
+        if (e && e.isAbort) throw e;
+        throw e;
+      }
+      // 用户手动关掉浏览器就不再等
+      if (context.pages().length === 0) break;
+      let html = "";
+      try {
+        html = await page.content();
+      } catch {
+        break;
+      }
+      const url = page.url();
+      if (!isTermsGatePage(url, html)) {
+        const cookies = await context.cookies();
+        const loggedIn = checkLoggedIn(url, cookies, html);
+        last = { loggedIn, cookies, url, html };
+        if (loggedIn) return last;
+      }
+      await cancel.sleep(2000);
+    }
   }
   return last;
 }

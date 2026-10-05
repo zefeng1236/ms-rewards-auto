@@ -64,6 +64,23 @@ const BG_SOURCES: { type: BgType; label: string; cats: { key: BgCategory; label:
       { key: "flowers", label: "花卉" },
     ],
   },
+  {
+    type: "pexels",
+    label: "Pexels 摄影",
+    cats: [
+      { key: "random", label: "随机" },
+      { key: "nature", label: "自然" },
+      { key: "animals", label: "动物" },
+      { key: "architecture", label: "建筑" },
+      { key: "travel", label: "旅行" },
+      { key: "city", label: "城市" },
+      { key: "ocean", label: "海洋" },
+      { key: "space", label: "太空" },
+      { key: "food", label: "美食" },
+      { key: "flowers", label: "花卉" },
+      { key: "abstract", label: "抽象" },
+    ],
+  },
 ];
 
 /** 带二级分类的随机图源主分类 key */
@@ -87,7 +104,7 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
 
   const isRandom = BG_SOURCE_TYPES.includes(appearance.bgType);
   // 主界面壁纸分组（流场不属于这里——它是登录页/向导的 authBg）。
-  // 带二级分类的三个 API 源各自独立成组：被选中时展示壁纸类别（二级分类）。
+  // 带二级分类的 API 源各自独立成组：被选中时展示壁纸类别（二级分类）。
   const derivedGroup =
     appearance.bgType === "none"
       ? "none"
@@ -168,6 +185,7 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
       bgFile: "",
       bgCategory: "random",
       bgUnsplashKey: "",
+      bgPexelsKey: "",
       bgRotate: 0,
       bgBlur: 4,
       bgDim: 0.25,
@@ -266,6 +284,7 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
             { label: "Upx8 壁纸", value: "upx8" },
             { label: "98qy 壁纸", value: "qy98" },
             { label: "Unsplash", value: "unsplash" },
+            { label: "Pexels", value: "pexels" },
             { label: "自定义", value: "custom" },
           ]} onValueChange={onBgGroup}
           aria-label="背景图来源"
@@ -332,6 +351,33 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
                 />
               </div>
             )}
+
+            {s.type === "pexels" && (
+              <div className="field-block" style={{ marginTop: 12 }}>
+                <span className="field-label">
+                  Pexels API Key（官方 API 必需；也可用环境变量 PEXELS_API_KEY）
+                  <a
+                    href="https://www.pexels.com/api/"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="field-link"
+                  >
+                    去官网获取 →
+                  </a>
+                </span>
+                <Input
+                  size="sm"
+                  type="password"
+                  placeholder="粘贴你的 API Key，应用内仅本地保存"
+                  value={appearance.bgPexelsKey}
+                  onChange={(e) => void patchAppearance({ bgPexelsKey: e.target.value })}
+                />
+                <p className="bg-note" style={{ marginTop: 6 }}>
+                  「随机」档走 Pexels 官方精选流（/curated），其余分类按关键词搜索横屏大图。
+                  官方限额每小时 200 次、每月 20000 次，超出会回落到必应每日一图。
+                </p>
+              </div>
+            )}
           </div>
         ))}
 
@@ -391,7 +437,7 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
               </div>
             </div>
 
-            {(bgGroup === "random" || bgGroup === "custom") && (
+            {(bgGroup !== "none" && bgGroup !== "bing") && (
               <div className="range-field" style={{ marginTop: 12 }}>
                 <span>自动轮换</span>
                 <Input
@@ -412,7 +458,8 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
                 />
                 <span className="rng-val">秒</span>
                 <span className="bg-note" style={{ margin: 0 }}>
-                  0=不轮换（默认）；须为正整数秒；随机图源最低 60 秒，自定义链接不限；切到后台自动暂停
+                  0=不轮换（默认）；须为正整数秒；随机图源最低 60 秒，自定义链接不限；切到后台自动暂停。
+                  Bing 每日按天固定，不参与轮换。
                 </span>
               </div>
             )}

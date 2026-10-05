@@ -88,6 +88,7 @@ const DEFAULT_APPEARANCE: Appearance = {
   bgFile: "",
   bgCategory: "random",
   bgUnsplashKey: "",
+  bgPexelsKey: "",
   bgRotate: 0,
   bgBlur: 4,
   bgDim: 0.25,

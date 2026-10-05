@@ -1,8 +1,8 @@
 /**
  * 环境拟真浏览器（可选增强）
  *
- * 用的是 fingerprint-chromium（adryfish，基于 Ungoogled Chromium 的 patch 版，BSD-3）：
- *   https://github.com/adryfish/fingerprint-chromium
+ * 用的是 Chromix（xiaozhou26，基于 Ungoogled Chromium 的 216-patch 定制版，BSD-3）：
+ *   https://github.com/xiaozhou26/Chromix
  *
  * 为什么需要它 —— 上一轮实测得出的硬结论：
  *   用 Playwright 驱动普通 Chromium 时，`sec-ch-ua`（Client Hints）请求头**改不动**。
@@ -41,9 +41,22 @@ const sp = require("./storage-path");
 const httpGet = require("./http-get");
 const fastHosts = require("./fast-hosts");
 
-const REPO = "adryfish/fingerprint-chromium";
-/** 固定版本：环境拟真浏览器的发布节奏与本项目不同步，钉死避免用户环境出现不可预期变化 */
-const PINNED_VERSION = "150.0.7871.186";
+const REPO = "xiaozhou26/Chromix";
+/**
+ * 固定版本：环境拟真浏览器的发布节奏与本项目不同步，钉死避免用户环境出现不可预期变化。
+ *
+ * 为什么从 adryfish/fingerprint-chromium 换到 Chromix（2026-10-05）：
+ *   fingerprint-chromium 150.0.7871.186 有上游 issue #94 —— 开启 canvas 伪装时，
+ *   页面调 getImageData / WebGL readPixels 读回像素会让渲染进程 SIGSEGV
+ *   （PC 固定在 chromium+0xf2da5fb，fault addr 是 tagged V8 heap 指针）。
+ *   实测项目每天真会访问的三个域里 login.live.com / rewards.bing.com /
+ *   rewards.bing.com/earn **随机崩**（崩溃有概率性，单次测试不作数）。
+ *   缓解只有 --disable-spoofing=canvas（等于放弃 canvas 伪装，会被环境一致性
+ *   检测站把 WebGL 判红）；而上游 150 之后**没有任何新版本**，issue 报出后
+ *   一直未修，等下去也不会好。
+ *   Chromix 154（216 patches，仍在活跃维护）实测同三个域零崩溃。
+ */
+const PINNED_VERSION = "154.0.8037.57";
 
 /**
  * 镜像前缀链：按顺序尝试，"" 表示直连。
@@ -278,13 +291,16 @@ function platformName() {
 
 /**
  * 当前平台对应的 release 资产文件名。
- * macOS 是 .dmg（挂载镜像 + 拷贝 App 的流程在 Electron 里做太重），暂不支持。
+ * macOS 包未签名未 notarize，本项目暂不支持（Chromix 上游有提供）。
+ *
+ * 资产名与上游 release 一一对应（用 gh api 核对，别照抄旧项目的命名）：
+ *   v154.0.8037.57 → chromix-win-x64.zip / chromix-linux-x64.zip
+ * 同一 tag 下不同平台可能对应不同源码 SHA 与构建任务，这是上游的既定做法。
  * @returns {string|null} null 表示该平台不提供
  */
 function assetName(version) {
-  const v = version || PINNED_VERSION;
-  if (process.platform === "win32") return `ungoogled-chromium_${v}-1.1_windows_x64.zip`;
-  if (process.platform === "linux") return `ungoogled-chromium-${v}-1-x86_64_linux.tar.xz`;
+  if (process.platform === "win32") return "chromix-win-x64.zip";
+  if (process.platform === "linux") return "chromix-linux-x64.zip";
   return null;
 }
 
@@ -292,14 +308,26 @@ function isSupported() {
   return assetName() !== null;
 }
 
+/**
+ * release 下载地址。
+ * Chromix 的 tag 带 `v` 前缀（v154.0.8037.57），且资产名不带版本号 ——
+ * 与旧上游（tag 无前缀、资产名内嵌版本）相反，两处都别照抄旧实现。
+ */
 function releaseUrl(version) {
   const asset = assetName(version);
   if (!asset) return null;
-  return `https://github.com/${REPO}/releases/download/${version || PINNED_VERSION}/${asset}`;
+  const tag = version || PINNED_VERSION;
+  return `https://github.com/${REPO}/releases/download/v${tag}/${asset}`;
 }
 
 /* ---------------- 安装位置 ---------------- */
 
+/**
+ * 安装目录。**故意仍叫 fingerprint-chromium**（没跟上游改名）——
+ * 目录名同时是「已装版本」的判定依据（version.txt + 目录内二进制），
+ * 一改名就会让所有存量用户的已装环境被判为「不可用」而重新下载 500MB+。
+ * 里面的东西是 Chromix，只是目录名沿用历史。
+ */
 function installDir() {
   return sp.resolve("fingerprint-chromium");
 }
@@ -508,14 +536,78 @@ function hasChromeExe(root) {
   return false;
 }
 
+/**
+ * 已安装且版本与 PINNED_VERSION 一致的可执行文件路径；不一致返回 null。
+ *
+ * ⚠️ **版本必须校验**（2026-10-05 加）：原先只看「exe 存在」就算就绪，于是
+ * 换上游（fingerprint-chromium 150 → Chromix 154）之后，装着旧内核的用户
+ * 会被判为「可用」而继续用 —— 而 150 恰恰是有 issue #94 崩溃缺陷的那个版本。
+ * 存量用户升级本软件后会被引导重新下载，这是期望行为。
+ *
+ * Docker 预装路径同样校验：镜像里写 version.txt 的是构建时的版本，
+ * 镜像没重建就不该用（selfcheck 也有守卫钉 Dockerfile 与本常量一致）。
+ */
 function executablePath() {
+  /** 读目录里的 version.txt；读不到（缺文件/空）返回 null */
+  const readVer = (dir) => {
+    try {
+      if (dir === preinstalledDir()) return fs.readFileSync(preinstalledVersionFile(), "utf8").trim() || null;
+      return fs.readFileSync(versionFile(), "utf8").trim() || null;
+    } catch {
+      return null;
+    }
+  };
   // 镜像预装优先：Docker 场景运行时不需要下载，直接用它。
   const pre = preinstalledDir();
   if (pre) {
     const exe = findExecutable(pre);
-    if (exe) return exe;
+    if (exe) {
+      const v = readVer(pre);
+      if (v && v !== PINNED_VERSION) {
+        logger.warn(
+          `镜像预装环境拟真浏览器版本为 ${v}，与钉死的 ${PINNED_VERSION} 不符，已忽略（需重建镜像）`
+        );
+      } else {
+        return exe;
+      }
+    }
   }
-  return findExecutable(installDir());
+  const dir = installDir();
+  const exe = findExecutable(dir);
+  if (!exe) return null;
+  const v = readVer(dir);
+  if (v && v !== PINNED_VERSION) {
+    logger.warn(
+      `已安装的环境拟真浏览器为 ${v}，与钉死的 ${PINNED_VERSION} 不符，判为不可用` +
+        `（可在设置页点「重新下载」升级）`
+    );
+    return null;
+  }
+  // 只信 version.txt 不够：解压中断/换包会留下「多个版本目录并存」，而
+  // findExecutable 是广度优先、先撞到哪个算哪个 —— 于是 version.txt 写着新版、
+  // 实际返回旧目录里的 exe（实测踩过：拷进 Chromix 后仍返回 fp150 的 exe）。
+  //
+  // 但不能无条件要求「exe 路径含版本号」：本项目 install() 解压出来的形态是
+  // `chromix/chrome.exe`（Chromix 的 zip 内层目录固定叫 chromix，不含版本号）。
+  // 所以只在**确实存在多个候选目录**时才用「路径含版本号」当第二道判据。
+  const dirs = (() => {
+    try {
+      return fs
+        .readdirSync(dir, { withFileTypes: true })
+        .filter((e) => e.isDirectory())
+        .map((e) => path.join(dir, e.name));
+    } catch {
+      return [];
+    }
+  })().filter((d) => !!findExecutable(d));
+  if (dirs.length > 1 && !dirs.some((d) => d.includes(PINNED_VERSION) && findExecutable(d) === exe)) {
+    logger.warn(
+      `安装目录里存在多个版本（${dirs.length} 个候选），实际找到的可执行文件不在 ${PINNED_VERSION} 目录内` +
+        `（${exe}），判为不可用（建议清理安装目录后重新下载）`
+    );
+    return null;
+  }
+  return exe;
 }
 
 function isReady() {
@@ -1694,11 +1786,21 @@ async function checkUpdate() {
 /* ---------------- 启动参数 ---------------- */
 
 /**
- * 环境拟真浏览器的启动参数。
+ * 环境拟真浏览器的启动参数（Chromix 154）。
  *
  * 注意**不要**在这里设 UA：UA 必须由 --fingerprint 的种子统一生成，
  * 再叠加一层我们自己的 UA 就会退化成「应用层硬改」那条死路（CH 对不上）。
- * GPU 环境特征上游只支持 Linux，Windows 上仍由 stealth.js 的 WebGL 补丁兜底。
+ *
+ * ⚠️ flag 命名与旧的 adryfish/fingerprint-chromium **不同**，迁过来时踩过的坑：
+ *   旧上游                        Chromix
+ *   --timezone=                  →  --fingerprint-timezone=
+ *   --accept-lang= / --lang=     →  --fingerprint-locale=（已含 Accept-Language 归一化，
+ *                                   Chromix 没有单独的 --lang / --accept-lang）
+ *   --fingerprint=<seed> / --fingerprint-platform= / --fingerprint-brand= /
+ *   --fingerprint-brand-version= / --fingerprint-hardware-concurrency=  → 同名，保留
+ *
+ * 完整 flag 契约见 https://github.com/xiaozhou26/Chromix/blob/main/docs/fingerprint-flags.md
+ * 用 `--key=value` 形式，不要拆成两个参数。
  */
 function buildArgs(o) {
   const opts = o || {};
@@ -1711,9 +1813,8 @@ function buildArgs(o) {
   const cores = Number(opts.hardwareConcurrency) || 0;
   if (cores > 0) args.push(`--fingerprint-hardware-concurrency=${cores}`);
   // 与区域锁定（中国大陆）保持一致，避免 IP 在东八区而浏览器报 UTC
-  if (opts.timezone !== false) args.push(`--timezone=${opts.timezone || "Asia/Shanghai"}`);
-  if (opts.acceptLang !== false) args.push(`--accept-lang=${opts.acceptLang || "zh-CN,zh"}`);
-  if (opts.lang !== false) args.push(`--lang=${opts.lang || "zh-CN"}`);
+  if (opts.timezone !== false) args.push(`--fingerprint-timezone=${opts.timezone || "Asia/Shanghai"}`);
+  if (opts.acceptLang !== false) args.push(`--fingerprint-locale=${opts.acceptLang || "zh-CN"}`);
   return args;
 }
 

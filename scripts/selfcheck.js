@@ -1266,8 +1266,11 @@ checkTrue(
   /PINNED_VERSION\s*=\s*"\d+\.\d+\.\d+\.\d+"/.test(fpSrc)
 );
 checkTrue(
-  "资产名按平台区分（Windows zip / Linux tar.xz），macOS 明确不支持",
-  fpSrc.includes("_windows_x64.zip") && fpSrc.includes("_linux.tar.xz") && /return null;/.test(fpSrc)
+  "资产名按平台区分（Chromix：Windows/Linux 都是 zip，内层目录固定叫 chromix），macOS 明确不支持",
+  fpSrc.includes('return "chromix-win-x64.zip"') &&
+    fpSrc.includes('return "chromix-linux-x64.zip"') &&
+    /return null;/.test(fpSrc),
+  "资产名错 → release 下载 404，用户装不上（2026-10-05 换 Chromix，资产名不再内嵌版本号）"
 );
 checkTrue(
   "下载做完整性校验（中断/长度不符要报错，不能静默产出坏文件）",
@@ -2434,10 +2437,32 @@ checkTrue(
   "环境拟真浏览器支持镜像预装目录（MS_REWARDS_FINGERPRINT_PREINSTALLED），且优先于运行时下载目录",
   /function preinstalledDir\(\)/.test(fpbSrc) &&
     /MS_REWARDS_FINGERPRINT_PREINSTALLED/.test(fpbSrc) &&
-    /const pre = preinstalledDir\(\);\s*\n\s*if \(pre\) \{[\s\S]{0,200}?return exe;[\s\S]{0,80}?\n\s*return findExecutable\(installDir\(\)\);/.test(
-      fpbSrc
-    ),
-  "预装目录不被优先使用 → Docker 容器明明预装了却报「未安装」，还会去发起 134MB 运行时下载"
+    // 只断言「先判预装、预装可用就 return」这两个语义要点，不锚定整个函数骨架
+    // （2026-10-05 给 executablePath 加了版本校验，骨架匹配会误报）。
+    /const pre = preinstalledDir\(\)/.test(fpbSrc) &&
+    new RegExp(
+      "const pre = preinstalledDir\\(\\);[\\s\\S]{0,600}?if \\(pre\\) \\{[\\s\\S]{0,600}?return exe;"
+    ).test(fpbSrc),
+  "预装目录不被优先使用 → Docker 容器明明预装了却报「未安装」，还会去发起 500MB 运行时下载"
+);
+// 换上游时最容易漏的一类：只信 version.txt / 只信 exe 存在，都会被「多版本目录并存」骗。
+// 2026-10-05 实测：拷进新版后 version.txt 是新的，executablePath 却仍返回旧目录的 exe。
+//
+// ⚠️ 必须锚定**运行时安装目录**那一段（不是预装那一段）：只断言 `v !== PINNED_VERSION`
+// 会被「预装路径还在校验、运行时路径已删干净」骗成假绿（实测踩过）。
+checkTrue(
+  "executablePath 对运行时安装目录也校验版本（换上游后不静默沿用旧内核）",
+  (() => {
+    const fn = /function executablePath\(\) \{[\s\S]*?\n\}/.exec(fpbSrc);
+    if (!fn) return false;
+    const body = fn[0];
+    // 运行时分支：installDir() 取到 exe 之后必须有版本比对 + 判为不可用的早退
+    const runtimeBranch = /const dir = installDir\(\);[\s\S]*?readVer\(dir\)[\s\S]*?!== PINNED_VERSION[\s\S]*?return null;/.test(
+      body
+    );
+    return runtimeBranch;
+  })(),
+  "运行时目录不校验版本 → 用户换上游后仍跑旧内核，而旧内核（fp150）恰是有崩溃缺陷的那个"
 );
 checkTrue(
   "状态接口暴露 preinstalled，且预装时跳过镜像测速探测",
@@ -2474,10 +2499,23 @@ checkTrue(
 checkTrue(
   "Dockerfile 预装环境拟真浏览器并用 ldd 自检（缺库直接构建失败）+ 写 version.txt",
   /MS_REWARDS_FINGERPRINT_PREINSTALLED=\/opt\/fingerprint-chromium/.test(dockerfileSrc) &&
-    /tar -xf \/tmp\/fpcb\.tar\.xz -C \/opt\/fingerprint-chromium/.test(dockerfileSrc) &&
+    // 2026-10-05 换 Chromix 后 Linux 资产是 zip，解压命令从 tar -xf 改成 unzip
+    /unzip -q \/tmp\/fpcb\.zip -d \/opt\/fingerprint-chromium/.test(dockerfileSrc) &&
     /ldd "\$CHROME_BIN" \| grep -q "not found"/.test(dockerfileSrc) &&
     /version\.txt/.test(dockerfileSrc),
-  "预装/自检缺失 → 运行时要重新下 134MB，或缺库问题拖到用户现场才暴露"
+  "预装/自检缺失 → 运行时要重新下 500MB，或缺库问题拖到用户现场才暴露"
+);
+// zip 资产必须有 unzip，否则镜像构建阶段就 exit 127（Chromix 的 Linux 资产不是 tar.xz）
+checkTrue(
+  "Dockerfile apt 清单含 unzip（Chromix 的 Linux 资产是 zip，解压依赖它）",
+  /apt-get install -y --no-install-recommends[\s\S]{0,200}?\bunzip\b/.test(dockerfileSrc),
+  "缺 unzip → 预装段 `unzip -q` 直接 not found，镜像构建失败"
+);
+// 资产名与 tag 前缀是 Chromix 特有形态：资产名不含版本号、tag 带 v —— 照抄旧上游会 404
+checkTrue(
+  "Dockerfile 预装 URL 用 Chromix 的资产名与 v 前缀 tag（chromix-linux-x64.zip + /download/v${FPCB_VERSION}/）",
+  /xiaozhou26\/Chromix\/releases\/download\/v\$\{FPCB_VERSION\}\/chromix-linux-x64\.zip/.test(dockerfileSrc),
+  "tag 无 v 前缀或沿用 ungoogled-chromium-*.tar.xz 资产名 → 上游 404，镜像构建失败"
 );
 checkTrue(
   "预装版本号与 src/fingerprint-browser.js 的 PINNED_VERSION 跨文件一致",
@@ -2556,6 +2594,12 @@ const emBgSrc21 = fs.readFileSync(path.join(ROOT, "src", "electron-main.js"), "u
 const waBgSrc21 = fs.readFileSync(path.join(ROOT, "src", "web-api.js"), "utf8");
 const useBgSrc21 = fs.readFileSync(
   path.join(ROOT, "src-renderer", "src", "hooks", "useBackground.ts"),
+  "utf8"
+);
+const appearSrc21 = fs.readFileSync(path.join(ROOT, "src", "appearance.js"), "utf8");
+const wipeSrc21 = fs.readFileSync(path.join(ROOT, "src", "wipe.js"), "utf8");
+const mockBgSrc21 = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "api", "mock.ts"),
   "utf8"
 );
 
@@ -2637,15 +2681,15 @@ checkTrue(
   wallpapersMod21.qy98Url("dongman")
 );
 
-// ③ 两级分类目录：三源各带壁纸类别，非法值回落该源默认
+// ③ 两级分类目录：四源各带壁纸类别，非法值回落该源默认
 const srcCats21 = (t) =>
   wallpapersMod21.SOURCES[t] ? wallpapersMod21.SOURCES[t].categories.map((c) => c.key) : [];
+/** 全部随机图源（唯一真源在 wallpapers.SOURCES，新增源这里自动纳入校验） */
+const ALL_RANDOM_SRC = ["upx8", "qy98", "unsplash", "pexels"];
 checkTrue(
-  "三个 API 源都带壁纸类别（upx8/qy98/unsplash 各 ≥3 个二级分类）",
-  srcCats21("upx8").length >= 3 &&
-    srcCats21("qy98").length >= 3 &&
-    srcCats21("unsplash").length >= 3,
-  `实际 ${srcCats21("upx8").length}/${srcCats21("qy98").length}/${srcCats21("unsplash").length}`
+  "四个 API 源都带壁纸类别（upx8/qy98/unsplash/pexels 各 ≥3 个二级分类）",
+  ALL_RANDOM_SRC.every((t) => srcCats21(t).length >= 3),
+  `实际 ${ALL_RANDOM_SRC.map((t) => `${t}=${srcCats21(t).length}`).join("/")}`
 );
 checkTrue(
   "非法二级分类回落该源默认（列表首个），无分类主分类恒返回空",
@@ -2661,18 +2705,69 @@ checkTrue(
   "unsplashRandom 不传 query → Unsplash 二级分类形同虚设"
 );
 
+// ③-2 Pexels 端到端：端点选择 / 鉴权头 / 数组取值 / 分类路由（改任一环都要同步）
+// 只取 Pexels 函数体，避免误命中 Unsplash 的 Client-ID 头 —— 同文件两个源各有一套鉴权格式
+const pexelsFnSrc21 = (wallpapersSrc.match(/async function pexelsRandom[\s\S]*?\n}/) || [""])[0];
+checkTrue(
+  "Pexels「随机」走 /v1/curated（search 缺 query 会 400），其余分类走 /v1/search + query",
+  /curated/.test(pexelsFnSrc21) &&
+    /\/search/.test(pexelsFnSrc21) &&
+    /params\.set\("query", cat\)/.test(pexelsFnSrc21) &&
+    /orientation/.test(pexelsFnSrc21),
+  "Pexels 端点路由缺失 → 随机档必然 400"
+);
+checkTrue(
+  "Pexels 鉴权头是裸 API Key（Authorization 不带 Bearer/Client-ID 前缀）",
+  /headers: \{ Authorization: key \}/.test(pexelsFnSrc21) &&
+    !/Authorization: [`'](Bearer|Client-ID)/.test(pexelsFnSrc21),
+  "鉴权头格式错 → 401"
+);
+checkTrue(
+  "Pexels 取 photos 数组里的横屏图（响应是数组不是单对象，curated 混排竖图）",
+  /Array\.isArray\(j\.photos\)/.test(pexelsFnSrc21) &&
+    /p\.width >= p\.height/.test(pexelsFnSrc21),
+  "只读单对象 → 拿不到图；不筛横屏 → 竖图被当壁纸拉伸"
+);
+checkTrue(
+  "Pexels key 有完整落盘链路（appearance 默认/归一化 ×2 + types + mock + UI 输入框 + wipe 清理）",
+  /bgPexelsKey: ""/.test(appearSrc21) &&
+    (appearSrc21.match(/bgPexelsKey: String\(/g) || []).length >= 2 &&
+    /bgPexelsKey/.test(typesBgSrc) &&
+    /bgPexelsKey/.test(mockBgSrc21) &&
+    /bgPexelsKey/.test(persBgSrc) &&
+    // 只认可执行代码里的赋值：注释里出现字段名不算（踩过假绿）
+    /appearance\.set\(\{[^}]*bgPexelsKey: ""/.test(wipeSrc21),
+  "任一环缺字段 → 保存后被规范化吃掉 / 界面存不下 / 重置后残留凭据"
+);
+checkTrue(
+  "Pexels 在两处主进程入口都已接线（electron-main + web-api）",
+  /case "pexels"/.test(emBgSrc21) &&
+    /case "pexels"/.test(waBgSrc21) &&
+    /PEXELS_API_KEY/.test(emBgSrc21) &&
+    /PEXELS_API_KEY/.test(waBgSrc21),
+  "只接一处 → 桌面端或 Docker 端壁纸拉不到"
+);
+checkTrue(
+  "「自动轮换」对除 Bing/关闭外的所有图源可见（此前 upx8 下找不到该控件）",
+  /bgGroup !== "none" && bgGroup !== "bing"/.test(persBgSrc) &&
+    !/bgGroup === "random" \|\| bgGroup === "custom"/.test(persBgSrc),
+  "轮换入口仍只在部分图源下可见 → 用户找不到该功能"
+);
+
 // ④ 前后端分类表逐 key 对齐（改一处漏一处 → 点了没反应或写盘被规范化吃掉）
 const bgSourcesBlock21 = (persBgSrc.match(/const BG_SOURCES[\s\S]*?const BG_SOURCE_TYPES/) || [""])[0];
 const feCats21 = {};
-for (const m of bgSourcesBlock21.matchAll(/type: "(upx8|qy98|unsplash)",[\s\S]*?cats: \[([\s\S]*?)\]/g)) {
+for (const m of bgSourcesBlock21.matchAll(
+  new RegExp(`type: "(${ALL_RANDOM_SRC.join("|")})",[\\s\\S]*?cats: \\[([\\s\\S]*?)\\]`, "g")
+)) {
   feCats21[m[1]] = [...m[2].matchAll(/key: "([a-z_]+)"/g)].map((x) => x[1]);
 }
 checkTrue(
   "前端 BG_SOURCES 与后端 wallpapers.SOURCES 分类 key 逐源一致",
-  ["upx8", "qy98", "unsplash"].every(
+  ALL_RANDOM_SRC.every(
     (t) => JSON.stringify(feCats21[t] || []) === JSON.stringify(srcCats21(t))
   ),
-  `前端 ${JSON.stringify(feCats21)} vs 后端 upx8=${JSON.stringify(srcCats21("upx8"))} qy98=${JSON.stringify(srcCats21("qy98"))} unsplash=${JSON.stringify(srcCats21("unsplash"))}`
+  `前端 ${JSON.stringify(feCats21)} vs 后端 ${ALL_RANDOM_SRC.map((t) => `${t}=${JSON.stringify(srcCats21(t))}`).join(" ")}`
 );
 
 // ⑤ 两级 UI 结构：主分类分段 + 选中时展开壁纸类别 chips
@@ -2688,8 +2783,12 @@ checkTrue(
 );
 checkTrue(
   "BgType 类型与随机源列表同步（upx8 替代 uapi，BgType 不再含 uapi/flow）",
-  /const RANDOM_SOURCES: BgType\[\] = \["upx8", "qy98", "unsplash"\]/.test(useBgSrc21) &&
+  // 锚定数组字面量的完整内容：漏一个源会导致它不受 60s 下限保护、直接按用户输入打 API
+  /const RANDOM_SOURCES: BgType\[\] = \[[^\]]*"upx8"[^\]]*"qy98"[^\]]*"unsplash"[^\]]*"pexels"[^\]]*\]/.test(
+    useBgSrc21
+  ) &&
     /"upx8"/.test(typesBgSrc) &&
+    /"pexels"/.test(typesBgSrc) &&
     !/"uapi"/.test(typesBgSrc) &&
     // 行首锚定 export type BgType：裸写 BgType = 会误命中 AuthBgType = "flow"（假红踩过）
     !/export type BgType = [^\n]*"flow"/.test(typesBgSrc) &&
@@ -3692,11 +3791,14 @@ checkTrue(
  * ============================================================ */
 console.log("\n【R】0.14.0 新功能（内核升级 + 后台 staging + 停止立即生效 + Bing 引导）");
 
-// 内核版本升级到 150
-const fpSrcR = fs.readFileSync(path.join(ROOT, "src", "fingerprint-browser.js"), "utf8");
+// 内核版本：2026-10-05 从 adryfish/fingerprint-chromium 150 换成 xiaozhou26/Chromix 154。
+// 守卫改成「断言具体版本」而不是「断言等于某个可变量」——升级时故意让它变红，
+// 逼着同步 Dockerfile / THIRD_PARTY_NOTICES / UI 文案（这四处漂移会 404 或误导用户）。
+const fpSrcR = fpbSrc; // 同一份源码，前面 2426 行已读
 checkTrue(
-  "指纹内核升级到 150.0.7871.186（PINNED_VERSION 落在最新版）",
-  /PINNED_VERSION\s*=\s*"150\.0\.7871\.186"/.test(fpSrcR),
+  "指纹内核为 Chromix 154.0.8037.57（2026-10-05 从 fp-chromium 150 换，理由见 fingerprint-browser.js 注释）",
+  /PINNED_VERSION\s*=\s*"154\.0\.8037\.57"/.test(fpSrcR) &&
+    /REPO\s*=\s*"xiaozhou26\/Chromix"/.test(fpSrcR),
   fpSrcR.match(/PINNED_VERSION\s*=\s*"([^"]+)"/)?.[1] || "(未匹配)"
 );
 
@@ -3904,10 +4006,146 @@ checkTrue(
 // 设置文案
 const fpPanelR = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "components", "FingerprintBrowserPanel.tsx"), "utf8");
 checkTrue(
-  "设置项「启用环境拟真浏览器」追加了 (adryfish/fingerprint-chromium)",
-  /label="启用环境拟真浏览器（adryfish\/fingerprint-chromium）"/.test(fpPanelR),
-  "文案未追加项目地址"
+  "设置项「启用环境拟真浏览器」追加了 (xiaozhou26/Chromix)",
+  /label="启用环境拟真浏览器（xiaozhou26\/Chromix）"/.test(fpPanelR),
+  "文案未追加项目地址（2026-10-05 上游换成 Chromix，这条跟着同步）"
 );
+// 上游换 Chromix 时最容易漏的一类：flag 命名整套变了（--timezone → --fingerprint-timezone、
+// --accept-lang/--lang → --fingerprint-locale）。少改一个 → 参数被静默忽略
+// （Chromix 不认旧名字，不会报错，只是没生效 → 时区/语言露馅且无从察觉）。
+//
+// ⚠️ 必须剥注释再断言：buildArgs 的文档注释里为了说明迁移写了旧 flag 名原文，
+// 直接正则匹配会命中注释而假红（同类坑今天在 wipe.js / page-guide.js 已各踩一次）。
+const fpbCodeOnly = fpbSrc
+  .split("\n")
+  .filter((l) => !/^\s*(\*|\/\/|\/\*)/.test(l))
+  .join("\n");
+checkTrue(
+  "buildArgs 用 Chromix 的 flag 命名（--fingerprint-timezone / --fingerprint-locale）",
+  /--fingerprint-timezone=/.test(fpbCodeOnly) &&
+    /--fingerprint-locale=/.test(fpbCodeOnly) &&
+    // 旧上游的三个名字必须都已消失
+    !/`--timezone=/.test(fpbCodeOnly) &&
+    !/--accept-lang=/.test(fpbCodeOnly) &&
+    !/`--lang=/.test(fpbCodeOnly),
+  "沿用旧上游 flag 名 → Chromix 静默忽略，时区/Accept-Language 露馅"
+);
+checkTrue(
+  "buildArgs 的 repo/资产名/URL 全部指向 Chromix（tag 带 v 前缀、资产名不含版本号）",
+  /REPO = "xiaozhou26\/Chromix"/.test(fpbSrc) &&
+    /return "chromix-win-x64\.zip"/.test(fpbSrc) &&
+    /releases\/download\/v\$\{tag\}\//.test(fpbSrc),
+  "资产名或 tag 前缀照抄旧上游 → release 下载 404，用户装不上"
+);
+
+/* ============ 0.14.4 登录链路三个 bug 的回归守卫（2026-10-04 用户日志实测暴露）============
+   三个都是「代码看着对、真实操作才炸」的一类，必须钉死：
+   ① 授权登录/刷新状态 两条独立入口漏 cancel.reset() → 停一次之后每次都被判「已停止」
+   ② 条款页 checkLoggedIn 误判已登录 → finally 关浏览器，用户没机会点「下一步」
+   ③ Bing 搜索页未登录无提示（SPA 晚渲染，domcontentloaded/load 已过） */
+const mainAbortR = fs.readFileSync(path.join(ROOT, "src", "electron-main.js"), "utf8");
+// 只取两个 handler 的函数体，避免误命中别处的 cancel.reset()
+const loginHandlerR = (mainAbortR.match(/ipcMain\.handle\("account:login"[\s\S]*?\n  \}\);/) || [""])[0];
+const syncHandlerR = (mainAbortR.match(/ipcMain\.handle\("account:sync"[\s\S]*?\n  \}\);/) || [""])[0];
+checkTrue(
+  "授权登录入口 account:login 入口/出口都 cancel.reset()（停一次后仍能再登录）",
+  /cancel\.reset\(\)/.test(loginHandlerR) &&
+    // reset 必须出现 2 次：进入前清残留 + finally 复位，否则下次一进去又被打断
+    (loginHandlerR.match(/cancel\.reset\(\)/g) || []).length >= 2,
+  "缺入口或出口 reset → 用户点过一次停止后，之后每次点授权登录都被秒断"
+);
+checkTrue(
+  "刷新状态入口 account:sync 同样在进入前 cancel.reset()",
+  /cancel\.reset\(\)/.test(syncHandlerR),
+  "漏 reset → 用户停止后刷新状态永远报「已被手动停止」"
+);
+checkTrue(
+  "两个入口都把 isAbort 与真实错误分开（中止不被当成登录失败/状态 error）",
+  /isAbort/.test(loginHandlerR) &&
+    /aborted:\s*true/.test(loginHandlerR) &&
+    /isAbort/.test(syncHandlerR) &&
+    /aborted:\s*true/.test(syncHandlerR),
+  "中止被混进普通错误分支 → 用户看到「登录失败」而不是自己点的停止"
+);
+const termsFnR = (brSrcR.match(/function\s+isTermsGatePage[\s\S]*?\n\}/) || [""])[0];
+checkTrue(
+  "条款页未被误判为已登录：waitForRewardsSession 在 checkLoggedIn 之前先判条款页",
+  // 必须断言函数体真有检测逻辑：只数调用次数的话，把函数体改成 return false 照样过（假绿踩过）
+  /TERMS_KEYWORDS/.test(termsFnR) &&
+    /account\\?\.live\\?\.com|login\\?\.live\\?\.com/.test(termsFnR) &&
+    /return\s+[^;]*some\(/.test(termsFnR) &&
+    !/return\s+false\s*;\s*\}/.test(termsFnR) &&
+    // 目标页循环里必须先 isTermsGatePage → continue，且 SSO/点登录两条回退路径同样判
+    (brSrcR.match(/isTermsGatePage\(/g) || []).length >= 5,
+  "少一处判断/检测逻辑被掏空 → 条款页提前 return，finally 关掉浏览器，用户点不了「下一步」"
+);
+checkTrue(
+  "条款页有额外宽限等待（超时后仍停在条款页再等 2 分钟，不直接关浏览器）",
+  /仍在条款确认页，额外等待/.test(brSrcR) && /grace/.test(brSrcR),
+  "无宽限 → 90 秒一到就关浏览器，用户慢一步就点不上了"
+);
+checkTrue(
+  "Bing 未登录有明确提示态（bing-login）且优先级低于条款页",
+  /probeBingLoginState/.test(pgSrcR) &&
+    /GUIDE_BING_LOGIN_TITLE/.test(pgSrcR) &&
+    /isBing && needBingLogin/.test(pgSrcR) &&
+    // 条款判断写在 bing-login 之前
+    guideTermsFirst(pgSrcR),
+  "缺 Bing 登录提示或被条款页盖住 → 用户看不到该点右上角登录"
+);
+checkTrue(
+  "Bing 是 SPA 晚渲染，page-guide 补了短周期重试（只在需要提示时跑，命中即停）",
+  /setInterval\(/.test(pgSrcR) &&
+    /probeRounds/.test(pgSrcR) &&
+    /clearInterval\(timer\)/.test(pgSrcR),
+  "只挂 domcontentloaded/load → 登录入口渲染晚于事件触发，永远探不到"
+);
+// ⚠️ 断言前必须先剥注释：文件里为了记录教训留了反例字符串原文，
+// 直接正则会命中注释而假红（2026-10-04 同类坑踩过两次：wipe.js 的 bgPexelsKey、
+// page-guide 的 !page.isClosed）。声明位置必须在所有用到它的守卫之前（TDZ）。
+const pgCodeOnlyR = pgSrcR
+  .split("\n")
+  .filter((l) => !/^\s*(\*|\/\/|\/\*)/.test(l))
+  .join("\n");
+
+// 页内自闭环：提示元素由页内 MutationObserver 自己更新，不新增 CDP 通道
+checkTrue(
+  "提示由页内 MutationObserver 自闭环更新（DOM 变化即重算，零新增 CDP 通道）",
+  // 必须断言「真的会挂」：只匹配标志名的话，把条件改成 if (false) 照样过（假绿踩过）
+  /if\s*\(!window\.__msraGuideObserver\)\s*\{/.test(pgCodeOnlyR) &&
+    /new\s+MutationObserver\(/.test(pgCodeOnlyR) &&
+    /window\.__msraGuideApply\s*=\s*applyState/.test(pgCodeOnlyR) &&
+    // 观察范围必须覆盖 head（title 在 head，只观察 body 会漏掉条款页标题变化）
+    /mo\.observe\(document\.documentElement/.test(pgCodeOnlyR) &&
+    /characterData:\s*true/.test(pgCodeOnlyR),
+  "Observer 没真挂上/观察范围不足 → SPA 晚渲染的登录入口仍然探不到"
+);
+checkTrue(
+  "页内自闭环不会自激循环（状态未变就不改 DOM，避免改→触发→再改）",
+  /data-state/.test(pgSrcR) &&
+    /const prev = body\.getAttribute\("data-state"\)/.test(pgSrcR),
+  "缺状态比较 → 自己插入提示元素触发 Observer，无限递归刷爆页面"
+);
+checkTrue(
+  "页内自己能算 Bing 登录态（不依赖主进程传值，否则 Observer 触发时算不出新状态）",
+  /let needBingLogin = false/.test(pgSrcR) &&
+    /applyState/.test(pgSrcR),
+  "页内只信主进程传值 → MutationObserver 触发时拿不到最新登录态"
+);
+// 这条守卫钉的是我 2026-10-04 自己写反的条件（!page.isClosed() 使轮询完全失效）。
+checkTrue(
+  "主进程轮询的终止条件正确（page.isClosed() 而非 !page.isClosed()）",
+  /if \(page\.isClosed\(\)\) \{/.test(pgCodeOnlyR) &&
+    !/!page\.isClosed\(\)/.test(pgCodeOnlyR),
+  "写成 !page.isClosed() → 页面正常时每轮都 return，轮询一次都不执行"
+);
+
+/** terms 分支必须排在 bing-login 之前（条款点了才有 _U 票据） */
+function guideTermsFirst(src) {
+  const iTerms = src.indexOf('if (isTerms) {');
+  const iLogin = src.indexOf("if (isBing && needBingLogin) {");
+  return iTerms !== -1 && iLogin !== -1 && iTerms < iLogin;
+}
 
 /* ============ 汇总 ============ */
 console.log(`\n${"=".repeat(46)}`);

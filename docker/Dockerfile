@@ -97,9 +97,12 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 #    变成 `<镜像>/debian-security`——这是安全更新包的来源，只换主仓不换 security 是
 #    常见的半吊子换源，务必一起换。
 #
-#    xz-utils 是给**环境拟真浏览器预装**用的：Linux 版资产是 .tar.xz，而 GNU tar 解 xz
-#    必须调用外部 `xz` 程序（不链接 liblzma）。实测不装它时 `tar -xf` 直接
-#    exit 127「xz: not found」。体积只有几百 KB。
+#    unzip 是给**环境拟真浏览器预装**用的：2026-10-05 换成 Chromix 后 Linux 版资产
+#    是 .zip（不是 .tar.xz），需要 unzip 解压。
+#    （原先用 xz-utils 是因为旧上游 fingerprint-chromium 发的是 .tar.xz，
+#      GNU tar 解 xz 必须调用外部 `xz` 程序、不链接 liblzma，实测不装会 exit 127。
+#      Chromix 改用 zip 后不再需要 xz-utils，但保留它 —— 运行时若有用户自定义
+#      MS_REWARDS_FINGERPRINT_PREINSTALLED 指向 tar.xz 包仍能解开。）
 #
 #    后半段的 libnss3 / libgtk-3-0 等是 **Chromium 运行时依赖**：这些库原本是
 #    `apt install chromium` 顺带拉进来的。既然 Docker 版已改为「不装 apt chromium」，
@@ -119,6 +122,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     #   取代原先的 xvfb + x11vnc + websockify + novnc + fluxbox。
     #   （保留 fluxbox 作 KasmVNC 会话的常驻 WM 兜底）
     apt-get install -y --no-install-recommends \
+        unzip \
         xz-utils \
         openssl \
         tzdata \
@@ -195,27 +199,34 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     echo $TZ > /etc/timezone; \
     xz --version | head -1
 
-# Ⓟ 预装环境拟真浏览器（fingerprint-chromium，Docker 版默认且唯一浏览器）
-#   - 下载 Linux tar.xz（约 134.7MB）解压到 MS_REWARDS_FINGERPRINT_PREINSTALLED。
+# Ⓟ 预装环境拟真浏览器（Chromix，Docker 版默认且唯一浏览器）
+#   - 下载 Linux zip（约 ?MB）解压到 MS_REWARDS_FINGERPRINT_PREINSTALLED。
 #   - 镜像内固定路径、不进 /data 挂载点，容器起来即就绪，运行时不再下载。
 #   - 下载源用 gh-proxy 镜像链；上游固定版本与 src/fingerprint-browser.js 的
 #     PINNED_VERSION 保持一致（改版本必须两处同步）。
+#     ⚠️ 2026-10-05 从 adryfish/fingerprint-chromium 换成 xiaozhou26/Chromix：
+#        旧上游 150.0.7871.186 有 issue #94（canvas 伪装 + getImageData/readPixels
+#        → 渲染进程 SIGSEGV，实测 login.live.com / rewards.bing.com 随机崩），
+#        且上游 150 之后无新版本、issue 长期未修。
+#     ⚠️ Chromix 的资产名不带版本号、tag 带 v 前缀、Linux 包是 **zip 不是 tar.xz**
+#        （所以不再需要 xz，但需要 unzip —— 见上面的 apt 清单）。
+#     ⚠️ 解压后是 chromix/ 一层目录，主程序 chromix/chrome（与 win 包的 chromix/chrome.exe 同构）。
 # 解压后找 chrome/chromium/headless_shell 主程序；与桌面版同款「广度优先找主程序」
 #     逻辑（见 src/fingerprint-browser.js findExecutable），这里只做一次存在性校验。
 #   - 写 version.txt：让 src/fingerprint-browser.js 的 installedVersion() 能报出版本号
 #     （与桌面版运行时下载安装的产物同构，状态接口不用为 Docker 单独开分支）。
 #   - ldd 自检：缺运行库直接让构建失败，而不是等用户在容器里看到浏览器起不来。
-ARG FPCB_VERSION=150.0.7871.186
-ARG FPCB_URL=https://github.com/adryfish/fingerprint-chromium/releases/download/${FPCB_VERSION}/ungoogled-chromium-${FPCB_VERSION}-1-x86_64_linux.tar.xz
+ARG FPCB_VERSION=154.0.8037.57
+ARG FPCB_URL=https://github.com/xiaozhou26/Chromix/releases/download/v${FPCB_VERSION}/chromix-linux-x64.zip
 ARG FPCB_PROXY=https://gh-proxy.com/
 RUN set -eux; \
     mkdir -p /opt/fingerprint-chromium; \
-    if ! curl --connect-timeout 10 --max-time 600 -fsSL -o /tmp/fpcb.tar.xz "$FPCB_URL"; then \
-      rm -f /tmp/fpcb.tar.xz; \
-      curl --connect-timeout 10 --max-time 900 -fsSL -o /tmp/fpcb.tar.xz "${FPCB_PROXY}${FPCB_URL}"; \
+    if ! curl --connect-timeout 10 --max-time 600 -fsSL -o /tmp/fpcb.zip "$FPCB_URL"; then \
+      rm -f /tmp/fpcb.zip; \
+      curl --connect-timeout 10 --max-time 900 -fsSL -o /tmp/fpcb.zip "${FPCB_PROXY}${FPCB_URL}"; \
     fi; \
-    tar -xf /tmp/fpcb.tar.xz -C /opt/fingerprint-chromium; \
-    rm -f /tmp/fpcb.tar.xz; \
+    unzip -q /tmp/fpcb.zip -d /opt/fingerprint-chromium; \
+    rm -f /tmp/fpcb.zip; \
     CHROME_BIN="$(find /opt/fingerprint-chromium -type f \( -name chrome -o -name chromium -o -name headless_shell \) -print -quit)"; \
     test -n "$CHROME_BIN"; \
     chmod +x "$CHROME_BIN"; \

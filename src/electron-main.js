@@ -181,6 +181,10 @@ async function rawBackgroundSrc(cfg) {
       const key = (process.env.UNSPLASH_ACCESS_KEY || cfg.bgUnsplashKey || "").trim();
       return wallpapers.unsplashRandom(key, cfg.bgCategory); // 无 key / 失败时抛错，由 IPC 兜底为 ""
     }
+    case "pexels": {
+      const key = (process.env.PEXELS_API_KEY || cfg.bgPexelsKey || "").trim();
+      return wallpapers.pexelsRandom(key, cfg.bgCategory);
+    }
     default:
       return appearance.backgroundSrc();
   }
@@ -1096,6 +1100,11 @@ function registerIpc() {
     setRunning(true);
     // 授权登录的日志同样归属到该账号（详情页「运行日志」可见）
     logger.setContext(id, acc.name);
+    // 登录是独立入口（不走 runIds 的批处理），进入前必须清一次中止标志：
+    // 上一轮任务/刷新被「停止」后 globalAborted 与 activeScope 会残留，
+    // 不清的话 loginInteractive 首次循环检查就误判成「登录已被手动停止」，
+    // 用户只点过一次停止，之后每次点授权登录都会被秒断（2026-10-04 用户反馈）。
+    cancel.reset();
     logger.info(`开始为「${acc.name}」授权登录（弹出独立干净浏览器）...`);
     try {
       const { code, loggedIn } = await browser.loginInteractive(accounts.context(id));
@@ -1113,11 +1122,19 @@ function registerIpc() {
       }
       return { ok: false, loggedIn, message: "未捕获授权码" };
     } catch (e) {
+      // 中止必须与真实错误分开：混在一起会被当成「登录失败」，
+      // 用户看到的是莫名其妙的中止提示而不是自己刚点的停止。
+      if (e && e.isAbort) {
+        logger.warn("登录已被手动停止");
+        return { ok: false, aborted: true, error: "登录已被手动停止" };
+      }
       logger.error(`登录失败: ${e.message}`);
       return { ok: false, error: e.message };
     } finally {
       logger.clearContext();
       setRunning(false);
+      // 复位中止标志，否则下一次登录/刷新一进去就会被 throwIfAborted 打断。
+      cancel.reset();
     }
   });
 
@@ -1130,6 +1147,9 @@ function registerIpc() {
     if (!acc) return { ok: false, error: "账户不存在" };
     setRunning(true);
     setAccountStatus(id, "running");
+    // 同 account:login：刷新也是独立入口，进入前清掉上一轮残留的中止标志，
+    // 否则用户停止过一次后，之后每次点刷新都会被判成「已被手动停止」。
+    cancel.reset();
     // 设置账号日志上下文：刷新过程的日志归属到该账号，
     // 详情页「运行日志」才会显示（环形缓冲 + account-log 实时推送）
     logger.setContext(id, acc.name);
@@ -1193,6 +1213,12 @@ function registerIpc() {
         message: r.loggedIn ? "登录状态已同步：已登录" : "未检测到登录态，请点「授权登录」重新登录",
       };
     } catch (e) {
+      // 中止与真实错误分开：用户点停止后看到的是「刷新状态失败: 任务已被手动停止」，
+      // 但这不该把账号状态标成 error（那是故障态，用户会以为登录坏了）。
+      if (e && e.isAbort) {
+        logger.warn("刷新状态已被手动停止");
+        return { ok: false, aborted: true, error: "刷新已被手动停止" };
+      }
       logger.error(`刷新状态失败: ${e.message}`);
       setAccountStatus(id, "error", e.message || "刷新状态失败");
       return { ok: false, error: e.message };
@@ -1201,6 +1227,7 @@ function registerIpc() {
       if (s && s.status === "running") setAccountStatus(id, "idle");
       logger.clearContext();
       setRunning(false);
+      cancel.reset();
     }
   });
 

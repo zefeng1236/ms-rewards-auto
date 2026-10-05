@@ -5,7 +5,7 @@ import { useAppState } from "./useAppState";
 import type { BgType } from "../types";
 
 /** 随机图源：轮换间隔有下限，避免把第三方接口打爆 */
-const RANDOM_SOURCES: BgType[] = ["upx8", "qy98", "unsplash"];
+const RANDOM_SOURCES: BgType[] = ["upx8", "qy98", "unsplash", "pexels"];
 const MIN_ROTATE_SEC = 60;
 
 /**

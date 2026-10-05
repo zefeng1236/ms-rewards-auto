@@ -154,7 +154,7 @@ docker exec ms-rewards-watchtower /watchtower --run-once
 ```
 
 **锁定版本（关闭自动更新）**：把 `docker-compose.yml` 里 `ms-rewards` 的
-`image: ...:latest` 改成具体版本号（如 `:0.14.3`），并删掉下方 `watchtower` 服务。
+`image: ...:latest` 改成具体版本号（如 `:0.14.4`），并删掉下方 `watchtower` 服务。
 
 **本地改源码重新构建**：前端产物在镜像内构建，改了 `src-renderer/` 后重新执行一次
 `up -d --build` 即可。想在宿主机单独出产物（例如排查构建问题）：
