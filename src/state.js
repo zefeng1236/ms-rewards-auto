@@ -33,7 +33,8 @@ const DEFAULT_STATE = {
   dailyPoint: 0,    // 每日活动（dashboard dailySet）今日累计积分
   promosPoint: 0,
   searchPoint: 0,              // 搜索任务今日累计得分
-  lastClaimDate: 0,            // 上次「领取积分」的日期（YYYYMMDD），用于 7 天节流
+  lastClaimDate: 0,            // 上次「领取积分」的日期（YYYYMMDD），用于节流
+  lastClaimAt: 0,              // 上次「领取积分」的时间戳（毫秒），daily 模式判「今天这个点还没跑」
   pc: { progress: 0, max: 0 },  // PC 搜索进度
   m: { progress: 0, max: 0 },   // 移动搜索进度
   todayPoints: 0,

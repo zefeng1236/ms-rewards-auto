@@ -47,20 +47,27 @@ function NameIndicator({ status }: { status: AccountRunStatus | null }) {
   return null;
 }
 
-/** 名字下方的问题徽标：橙色「需要注意」/ 红色「发生错误」，空闲不渲染 */
+/** 名字下方的问题徽标：橙色「需要注意」/ 红色「发生错误」，空闲不渲染
+ *
+ *  reason 直接显示出来，不再只挂在 title 上：
+ *  「需要注意」四个字不告诉用户到底缺了什么，必须一眼看到具体是哪一项。
+ */
 function IssueBadge({ status }: { status: AccountRunStatus | null }) {
   if (!status) return null;
+  const reason = (status.reason || "").trim();
   if (status.status === "warning") {
     return (
-      <div className="acc-issue acc-issue-warn" title={status.reason || "需要注意"}>
+      <div className="acc-issue acc-issue-warn" title={reason || "需要注意"}>
         <span className="acc-issue-icon">!</span>需要注意
+        {reason ? <span className="acc-issue-reason">{reason}</span> : null}
       </div>
     );
   }
   if (status.status === "error") {
     return (
-      <div className="acc-issue acc-issue-err" title={status.reason || "发生错误"}>
+      <div className="acc-issue acc-issue-err" title={reason || "发生错误"}>
         <span className="acc-issue-icon">✕</span>发生错误
+        {reason ? <span className="acc-issue-reason">{reason}</span> : null}
       </div>
     );
   }

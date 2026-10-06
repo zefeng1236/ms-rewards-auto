@@ -63,6 +63,62 @@ const TERMS_KEYWORDS = [
 ];
 
 /**
+ * 判断这个 evaluate 错误是不是「页面正在导航」造成的预期内失败。
+ *
+ * 这些错误**不代表任何故障** —— 旧文档的执行上下文在导航开始时就被销毁，
+ * 此时任何 evaluate 都会抛。下一次 domcontentloaded / load 会自然重试。
+ *
+ * 判定用**子串匹配**而不是精确等值：Playwright / Chromium 的错误文案会随版本变
+ * （「Execution context was destroyed」「Execution context is not available」
+ * 「Target closed」「frame was detached」都见过），穷举等值等于给自己埋一个
+ * 「升级 Playwright 后又开始刷 WARN」的坑。
+ *
+ * ⚠️ 反过来别把范围写太宽 —— 「Target closed」也可能是浏览器被用户关掉了，
+ * 那时提示「导航中」是误导。所以这里只认「上下文/帧不可用」这一类，
+ * 页面已关闭的情况交给上面的 page.isClosed() 判断。
+ */
+function isNavigationRaceError(msg) {
+  return (
+    /execution context was destroyed/i.test(msg) ||
+    /execution context is not available/i.test(msg) ||
+    /cannot find context with specified id/i.test(msg) ||
+    /frame was detached/i.test(msg) ||
+    /frame got detached/i.test(msg) ||
+    /navigating and changing the content/i.test(msg) ||
+    /most likely because of a navigation/i.test(msg) ||
+    /context is not available/i.test(msg)
+  );
+}
+
+/** 导航竞态的节流状态：同一类错误 60 秒内只记一条（模块级，跨 page 共享）。 */
+const NAV_RACE_LOG = { lastAt: 0, timer: null, lastKey: "" };
+
+/**
+ * 记一条导航竞态日志（带节流）。
+ *
+ * 节流而不是完全静默：偶尔一条能让人知道「page-guide 确实在跑」，
+ * 但绝不能让正常导航刷出一屏 WARN 干扰排查真正的警告。
+ * 60 秒窗口是权衡 —— 一次真实导航风暴会在几秒内触发十几次，60 秒足够合并掉，
+ * 又不会让「隔很久又出现一次」的情况被永久吞掉。
+ */
+function noteNavigationRace(msg) {
+  const now = Date.now();
+  const key = msg.slice(0, 80);
+  if (NAV_RACE_LOG.lastKey === key && now - NAV_RACE_LOG.lastAt < 60_000) return;
+  NAV_RACE_LOG.lastKey = key;
+  NAV_RACE_LOG.lastAt = now;
+  logger.info(`[page-guide] 页面导航中，本轮跳过（下次 load 自动重试）`);
+  // 定时清窗口，避免「很久之后又出现同样错误」被同一条 key 意外合并掉
+  if (NAV_RACE_LOG.timer) clearTimeout(NAV_RACE_LOG.timer);
+  NAV_RACE_LOG.timer = setTimeout(() => {
+    NAV_RACE_LOG.timer = null;
+    NAV_RACE_LOG.lastAt = 0;
+    NAV_RACE_LOG.lastKey = "";
+  }, 60_000);
+  if (typeof NAV_RACE_LOG.timer.unref === "function") NAV_RACE_LOG.timer.unref();
+}
+
+/**
  * 给一个 page 装上引导提示（同一页面只装一次）。
  *
  * @param {import("playwright").Page} page
@@ -119,8 +175,23 @@ function attachPageGuide(page, opts = {}) {
         lastUrl = url;
       }
     } catch (e) {
-      // 页面可能在导航中 evaluate 失败 —— 下次 load 会再试
-      if (!opts.silent) logger.warn(`[page-guide] 评估失败: ${e.message}`);
+      // ⚠️ 这里绝大多数失败是**预期内**的，不该刷 WARN（2026-10-06）。
+      //
+      // refresh 挂了 3 个高频事件（domcontentloaded / load / framenavigated）再加
+      // 轮询，导航瞬间会并发触发多次；此时旧文档的 execution context 已被销毁，
+      // evaluate 必然抛错。用户日志里那条
+      //   [WARN] [page-guide] 评估失败: page.evaluate: Execution context was destroyed...
+      // 就是这个 —— 它不代表任何故障，下次 load 会自然重试。
+      //
+      // 所以：① 导航类错误降为 info；② 加节流，避免同一个错误刷一串。
+      // 只在「非导航类」错误（真正的脚本错误）时才 WARN。
+      if (opts.silent) return;
+      const msg = String((e && e.message) || e);
+      if (isNavigationRaceError(msg)) {
+        noteNavigationRace(msg);
+      } else {
+        logger.warn(`[page-guide] 评估失败: ${msg}`);
+      }
     }
   };
 

@@ -41,22 +41,99 @@ const sp = require("./storage-path");
 const httpGet = require("./http-get");
 const fastHosts = require("./fast-hosts");
 
-const REPO = "xiaozhou26/Chromix";
 /**
- * 固定版本：环境拟真浏览器的发布节奏与本项目不同步，钉死避免用户环境出现不可预期变化。
+ * ============================================================================
+ * 内核注册表（2026-10-06）
+ * ============================================================================
  *
- * 为什么从 adryfish/fingerprint-chromium 换到 Chromix（2026-10-05）：
- *   fingerprint-chromium 150.0.7871.186 有上游 issue #94 —— 开启 canvas 伪装时，
- *   页面调 getImageData / WebGL readPixels 读回像素会让渲染进程 SIGSEGV
- *   （PC 固定在 chromium+0xf2da5fb，fault addr 是 tagged V8 heap 指针）。
- *   实测项目每天真会访问的三个域里 login.live.com / rewards.bing.com /
- *   rewards.bing.com/earn **随机崩**（崩溃有概率性，单次测试不作数）。
- *   缓解只有 --disable-spoofing=canvas（等于放弃 canvas 伪装，会被环境一致性
- *   检测站把 WebGL 判红）；而上游 150 之后**没有任何新版本**，issue 报出后
- *   一直未修，等下去也不会好。
- *   Chromix 154（216 patches，仍在活跃维护）实测同三个域零崩溃。
+ * 为什么要多内核：Chromix 154 换掉 fingerprint-chromium 150 是因为 150 有上游
+ * issue #94（canvas 读像素 SIGSEGV）。但**换掉不等于删掉** —— 上游随时可能修好，
+ * 用户也可能出于某些原因想要旧的。所以两个内核的完整能力都要留着，让用户自选。
+ *
+ * 架构上刻意做成「**注册表 + 按 engine 取值**」而不是到处 `if (engine === ...)`：
+ * 两个上游的差异点有五处（repo / tag 前缀 / 资产名 / 平台映射 / 启动 flag），
+ * 散在 if 里必然漏一处 —— 而漏掉 tag 前缀只会静默下载 404，漏掉 flag 名会让
+ * 时区/语言**被静默忽略**（不报错，只是露馅，最难查）。
+ *
+ * ⚠️ 150 的已知缺陷就在 available:false 的 reason 里，UI 必须原样展示给用户，
+ *    别自己编措辞（那是实测结论，见 MEMORY-反检测与指纹.md）。
  */
-const PINNED_VERSION = "154.0.8037.57";
+const ENGINES = {
+  /**
+   * Chromix 154 —— 默认内核。216 patches，活跃维护，实测三个目标域零崩溃。
+   */
+  chromix: {
+    key: "chromix",
+    label: "Chromix 154",
+    repo: "xiaozhou26/Chromix",
+    version: "154.0.8037.57",
+    available: true,
+    // Chromix 的 tag 带 v 前缀，且资产名**不含**版本号
+    tag: (v) => `v${v}`,
+    asset: (platform) =>
+      platform === "win32"
+        ? "chromix-win-x64.zip"
+        : platform === "linux"
+        ? "chromix-linux-x64.zip"
+        : null,
+    notes: "默认内核。canvas / WebGL / 时区语言伪装完整，实测零崩溃。",
+  },
+
+  /**
+   * adryfish/fingerprint-chromium 150 —— 备用内核，**当前不可选**。
+   *
+   * 保留它的全部代码路径（下载 / 解压 / 启动 / 版本校验），只把 available 置 false
+   * 让 UI 禁用。上游 issue #94 修好后把 available 改 true 即可，无需其他改动。
+   */
+  fp150: {
+    key: "fp150",
+    label: "fingerprint-chromium 150",
+    repo: "adryfish/fingerprint-chromium",
+    version: "150.0.7871.186",
+    available: false,
+    // 已知缺陷（上游 issue #94，2026-10-03 报出未修）：开启 canvas 伪装时，
+    // 页面调 getImageData / WebGL readPixels 读回像素会让渲染进程 SIGSEGV
+    // （PC 固定在 chromium+0xf2da5fb，fault addr 是 tagged V8 heap 指针）。
+    // 崩溃有概率性，单次测试不作数 —— 项目每天真会访问的 login.live.com /
+    // rewards.bing.com / rewards.bing.com/earn 实测随机崩。
+    unavailableReason:
+      "存在已知崩溃缺陷：开启 canvas 伪装时，页面读取像素（getImageData / WebGL readPixels）" +
+      "会导致浏览器渲染进程崩溃（上游 issue #94，暂无补丁）。项目每天访问的登录与 Bing 页面" +
+      "正落在触发路径上，可能出现随机闪退。",
+    // 旧上游：tag 无 v 前缀，资产名**内嵌**版本号且带 build 编号后缀
+    tag: (v) => `${v}`,
+    asset: (platform, v) =>
+      platform === "win32"
+        ? `ungoogled-chromium_${v}-1.1_windows_x64.zip`
+        : platform === "linux"
+        ? `ungoogled-chromium-${v}-1-x86_64_linux.tar.xz`
+        : null,
+    notes: "旧内核，备用保留。等上游修好 canvas 崩溃后开放选择。",
+  },
+};
+
+/** 默认内核 key（写进配置层的 engine 缺省值） */
+const DEFAULT_ENGINE = "chromix";
+
+/** 校验 engine key 合法；非法/缺失回落默认内核。配置层与守卫都依赖它。 */
+function normalizeEngine(key) {
+  const k = String(key == null ? "" : key).trim();
+  return Object.prototype.hasOwnProperty.call(ENGINES, k) ? k : DEFAULT_ENGINE;
+}
+
+/** 取内核定义（未知 key 回落默认，不抛 —— 配置文件可能来自旧版本） */
+function engine(key) {
+  return ENGINES[normalizeEngine(key)];
+}
+
+/** 当前内核的钉死版本（保持旧导出名兼容：模块里大量地方用 PINNED_VERSION） */
+function pinnedVersion(key) {
+  return engine(key).version;
+}
+
+/** 默认内核的钉死版本 —— 兼容旧调用点（无 engine 参数时一律用默认内核） */
+const PINNED_VERSION = ENGINES[DEFAULT_ENGINE].version;
+
 
 /**
  * 镜像前缀链：按顺序尝试，"" 表示直连。
@@ -298,38 +375,50 @@ function platformName() {
  * 同一 tag 下不同平台可能对应不同源码 SHA 与构建任务，这是上游的既定做法。
  * @returns {string|null} null 表示该平台不提供
  */
-function assetName(version) {
-  if (process.platform === "win32") return "chromix-win-x64.zip";
-  if (process.platform === "linux") return "chromix-linux-x64.zip";
-  return null;
+function assetName(version, engineKey) {
+  const e = engine(engineKey);
+  return e.asset(process.platform, version || e.version);
 }
 
-function isSupported() {
-  return assetName() !== null;
+function isSupported(engineKey) {
+  return assetName(null, engineKey) !== null;
 }
 
 /**
  * release 下载地址。
- * Chromix 的 tag 带 `v` 前缀（v154.0.8037.57），且资产名不带版本号 ——
- * 与旧上游（tag 无前缀、资产名内嵌版本）相反，两处都别照抄旧实现。
+ * ⚠️ tag 前缀与资产名规则**两个上游相反**（Chromix: v前缀/名不含版本；
+ *    fp150: 无前缀/名内嵌版本+build编号），都封装在 ENGINES 的 tag()/asset() 里，
+ *    这里只做拼接 —— 别在这里写死任何一条规则。
  */
-function releaseUrl(version) {
-  const asset = assetName(version);
+function releaseUrl(version, engineKey) {
+  const e = engine(engineKey);
+  const v = version || e.version;
+  const asset = e.asset(process.platform, v);
   if (!asset) return null;
-  const tag = version || PINNED_VERSION;
-  return `https://github.com/${REPO}/releases/download/v${tag}/${asset}`;
+  return `https://github.com/${e.repo}/releases/download/${e.tag(v)}/${asset}`;
 }
 
 /* ---------------- 安装位置 ---------------- */
 
 /**
- * 安装目录。**故意仍叫 fingerprint-chromium**（没跟上游改名）——
- * 目录名同时是「已装版本」的判定依据（version.txt + 目录内二进制），
- * 一改名就会让所有存量用户的已装环境被判为「不可用」而重新下载 500MB+。
- * 里面的东西是 Chromix，只是目录名沿用历史。
+ * 安装目录。**按内核分目录**（2026-10-06 多内核）。
+ *
+ * 目录名保留历史的 `fingerprint-chromium` 形式（没跟上游改名）—— 目录名同时是
+ * 「已装版本」的判定依据（version.txt + 目录内二进制），一改名就会让所有存量用户
+ * 的已装环境被判为「不可用」而重新下载 500MB+。里面的东西是 Chromix，
+ * 只是目录名沿用历史。
+ *
+ * ⚠️ 必须按内核分目录（`fingerprint-chromium/chromix` vs `fingerprint-chromium/fp150`）：
+ *   两个内核的资产格式不同（zip vs zip+tar.xz）、启动 flag 不同，解压产物结构也不同。
+ *   共用目录会互相覆盖 —— 用户切回 154 时可能被 150 的残留顶掉，或反过来。
+ *   分目录后切换只是「换一个子目录读 version.txt」，两边可同时存在。
  */
-function installDir() {
-  return sp.resolve("fingerprint-chromium");
+function installDir(engineKey) {
+  const base = sp.resolve("fingerprint-chromium");
+  const e = engine(engineKey);
+  // 默认内核仍放 base 根目录：存量用户的已装 154 不需要迁移（迁移要重下 200MB，
+  // 且迁移期间软件不可用）。只在**非默认内核**时才建子目录。
+  return e.key === DEFAULT_ENGINE ? base : path.join(base, e.key);
 }
 
 /**
@@ -347,8 +436,37 @@ function preinstalledDir() {
   return p && fs.existsSync(p) ? p : null;
 }
 
-function versionFile() {
-  return path.join(installDir(), "version.txt");
+/**
+ * 当前生效的内核 key（模块级）。
+ *
+ * 为什么要用模块级状态而不是给每个函数加 engine 参数：这条链路上有 **20+ 个**
+ * 函数涉及「装的是哪个内核 / 版本号是多少 / 目录在哪」，
+ * 逐个加参数会让 90% 的调用点都要改、且极易漏一个（漏了就是静默用错内核）。
+ * 这里让主进程在启动 / 配置变更时调一次 `setEngine()`，其余函数一律读它。
+ *
+ * 守卫会钉住这个机制：`setEngine` 必须被主进程在启动路径上调用过
+ * （否则回落默认内核 —— 不会错，但用户选了 150 却静默用 154）。
+ */
+let CURRENT_ENGINE = DEFAULT_ENGINE;
+
+/** 设置当前生效内核（主进程启动时 + 用户切换时调用）。非法 key 静默回落默认。 */
+function setEngine(key) {
+  const next = normalizeEngine(key);
+  CURRENT_ENGINE = next;
+  return next;
+}
+
+function currentEngine() {
+  return CURRENT_ENGINE;
+}
+
+/** 当前内核的钉死版本（供旧调用点用：之前是直接读常量 PINNED_VERSION） */
+function currentPinned() {
+  return ENGINES[CURRENT_ENGINE].version;
+}
+
+function versionFile(engineKey) {
+  return path.join(installDir(engineKey), "version.txt");
 }
 
 /** 预装目录里的版本文件（镜像内置时由 Dockerfile 写入） */
@@ -372,7 +490,7 @@ function downloadDir() {
  *   路径隔离是**结构性**的根治，检查还可能被时序绕过，隔离不会。
  */
 function stagedDownloadDir() {
-  return sp.resolve("fp-download-staged");
+  return stagedDownloadDirFor(CURRENT_ENGINE);
 }
 
 /**
@@ -381,22 +499,28 @@ function stagedDownloadDir() {
  * 与 installDir 平级，路径 `storage/fingerprint-chromium-staging`。后台下载
  * 全程只写这里，绝不碰 installDir —— 这样**正在用旧内核跑的任务**的文件
  * 句柄、目录锁都不会被破坏。
+ *
+ * ⚠️ 多内核后默认内核仍用根目录（存量用户的 staging 不失效），
+ *   非默认内核用 `-<key>` 后缀 —— 否则用户装 150 的后台下载会把 154 的
+ *   staging 覆盖掉，切换后拿到的是另一个内核的产物。
  */
-function stagingDir() {
-  return sp.resolve("fingerprint-chromium-staging");
+function stagingDir(engineKey) {
+  const e = engine(engineKey);
+  const base = sp.resolve("fingerprint-chromium-staging");
+  return e.key === DEFAULT_ENGINE ? base : `${base}-${e.key}`;
 }
 
-function stagingVersionFile() {
-  return path.join(stagingDir(), "version.txt");
+function stagingVersionFile(engineKey) {
+  return path.join(stagingDir(engineKey), "version.txt");
 }
 
 /**
  * 读 staging 里的版本号；staging 不存在/无 version.txt 返回 null。
  * 调用方据此决定要不要尝试切换、后台要不要开始下载。
  */
-function stagedVersion() {
+function stagedVersion(CURRENT_ENGINE) {
   try {
-    const v = fs.readFileSync(stagingVersionFile(), "utf8").trim();
+    const v = fs.readFileSync(stagingVersionFile(CURRENT_ENGINE), "utf8").trim();
     return v || null;
   } catch {
     return null;
@@ -426,7 +550,7 @@ function notifyFpContext(delta) {
  * 的错位（桌面版可能同时存在运行时下载 + 预装两种来源）。
  */
 function installedVersion() {
-  const candidates = [preinstalledVersionFile(), versionFile()].filter(Boolean);
+  const candidates = [preinstalledVersionFile(), versionFile(CURRENT_ENGINE)].filter(Boolean);
   for (const f of candidates) {
     try {
       const v = fs.readFileSync(f, "utf8").trim();
@@ -551,22 +675,26 @@ function hasChromeExe(root) {
 }
 
 /**
- * 已安装且版本与 PINNED_VERSION 一致的可执行文件路径；不一致返回 null。
+ * 已安装且版本与当前内核钉死版本一致的可执行文件路径；不一致返回 null。
  *
  * ⚠️ **版本必须校验**（2026-10-05 加）：原先只看「exe 存在」就算就绪，于是
  * 换上游（fingerprint-chromium 150 → Chromix 154）之后，装着旧内核的用户
  * 会被判为「可用」而继续用 —— 而 150 恰恰是有 issue #94 崩溃缺陷的那个版本。
  * 存量用户升级本软件后会被引导重新下载，这是期望行为。
  *
+ * ⚠️ 多内核后这里校验的是**当前 engine 的**钉死版本：切到 150 就比对 150 的版本号，
+ * 装在 fp150 子目录里的那份用 154 的版本号去比一定不过（正确行为）。
+ *
  * Docker 预装路径同样校验：镜像里写 version.txt 的是构建时的版本，
- * 镜像没重建就不该用（selfcheck 也有守卫钉 Dockerfile 与本常量一致）。
+ * 镜像没重建就不该用（selfcheck 也有守卫钉 Dockerfile 与 ENGINES 一致）。
  */
 function executablePath() {
+  const pinned = currentPinned();
   /** 读目录里的 version.txt；读不到（缺文件/空）返回 null */
   const readVer = (dir) => {
     try {
       if (dir === preinstalledDir()) return fs.readFileSync(preinstalledVersionFile(), "utf8").trim() || null;
-      return fs.readFileSync(versionFile(), "utf8").trim() || null;
+      return fs.readFileSync(versionFile(CURRENT_ENGINE), "utf8").trim() || null;
     } catch {
       return null;
     }
@@ -577,22 +705,22 @@ function executablePath() {
     const exe = findExecutable(pre);
     if (exe) {
       const v = readVer(pre);
-      if (v && v !== PINNED_VERSION) {
+      if (v && v !== pinned) {
         logger.warn(
-          `镜像预装环境拟真浏览器版本为 ${v}，与钉死的 ${PINNED_VERSION} 不符，已忽略（需重建镜像）`
+          `镜像预装环境拟真浏览器版本为 ${v}，与钉死的 ${pinned} 不符，已忽略（需重建镜像）`
         );
       } else {
         return exe;
       }
     }
   }
-  const dir = installDir();
+  const dir = installDir(CURRENT_ENGINE);
   const exe = findExecutable(dir);
   if (!exe) return null;
   const v = readVer(dir);
-  if (v && v !== PINNED_VERSION) {
+  if (v && v !== pinned) {
     logger.warn(
-      `已安装的环境拟真浏览器为 ${v}，与钉死的 ${PINNED_VERSION} 不符，判为不可用` +
+      `已安装的环境拟真浏览器为 ${v}，与钉死的 ${pinned} 不符，判为不可用` +
         `（可在设置页点「重新下载」升级）`
     );
     return null;
@@ -604,19 +732,30 @@ function executablePath() {
   // 但不能无条件要求「exe 路径含版本号」：本项目 install() 解压出来的形态是
   // `chromix/chrome.exe`（Chromix 的 zip 内层目录固定叫 chromix，不含版本号）。
   // 所以只在**确实存在多个候选目录**时才用「路径含版本号」当第二道判据。
+  //
+  // ⚠️ 多内核后必须**排除非当前引擎的子目录**（fingerprint-chromium/fp150 等）：
+  //   那是另一个内核的安装位（用户装了 150 也留着 154 时就在这儿），不是「版本目录」。
+  //   不排除的话切回默认内核会误报「存在多个版本」。
+  const otherEngineDirs = new Set(
+    Object.values(ENGINES)
+      .map((e) => e.key)
+      .filter((k) => k !== CURRENT_ENGINE)
+      .map((k) => path.basename(installDir(k)))
+  );
   const dirs = (() => {
     try {
       return fs
         .readdirSync(dir, { withFileTypes: true })
         .filter((e) => e.isDirectory())
+        .filter((e) => !otherEngineDirs.has(e.name))
         .map((e) => path.join(dir, e.name));
     } catch {
       return [];
     }
   })().filter((d) => !!findExecutable(d));
-  if (dirs.length > 1 && !dirs.some((d) => d.includes(PINNED_VERSION) && findExecutable(d) === exe)) {
+  if (dirs.length > 1 && !dirs.some((d) => d.includes(pinned) && findExecutable(d) === exe)) {
     logger.warn(
-      `安装目录里存在多个版本（${dirs.length} 个候选），实际找到的可执行文件不在 ${PINNED_VERSION} 目录内` +
+      `安装目录里存在多个版本（${dirs.length} 个候选），实际找到的可执行文件不在 ${pinned} 目录内` +
         `（${exe}），判为不可用（建议清理安装目录后重新下载）`
     );
     return null;
@@ -632,20 +771,26 @@ function isReady() {
 async function status() {
   const exe = executablePath();
   const pre = preinstalledDir();
-  const stagedV = stagedVersion();
-  const stagedReady = stagedV === PINNED_VERSION && findExecutable(stagingDir());
+  const cur = ENGINES[CURRENT_ENGINE];
+  const pinned = currentPinned();
+  const stagedV = stagedVersion(CURRENT_ENGINE);
+  const stagedReady = stagedV === pinned && findExecutable(stagingDir(CURRENT_ENGINE));
   return {
-    supported: isSupported(),
+    supported: isSupported(CURRENT_ENGINE),
     platform: process.platform,
     ready: !!exe,
     executable: exe,
     version: installedVersion(),
-    pinned: PINNED_VERSION,
-    installDir: installDir(),
+    pinned,
+    installDir: installDir(CURRENT_ENGINE),
+    // 多内核：把可选内核清单下发给 UI。UI 只负责展示与提交 key，
+    // 不可用的（available:false）要显示 unavailableReason 而不是直接隐藏 ——
+    // 隐藏会让用户以为「没这个内核」，看不到「等它修好就能用」这条路径。
+    engines: engineCatalog(),
     // 镜像内置（Docker）：界面据此隐藏「下载/重新下载/删除」，避免用户在容器里
     // 点一下就把 134MB 拉到 /data 卷上（明明已经预装好了，纯属白折腾）。
     preinstalled: !!pre,
-    downloadUrl: releaseUrl(),
+    downloadUrl: releaseUrl(null, CURRENT_ENGINE),
     // 预装场景不需要镜像源下拉，跳过测速探测（省掉最长 4s 的启动等待）
     mirrors: pre ? [] : await mirrorOptionsWithLatency(),
     // 0.14 起：后台 staging 信息 —— UI 据此显示"后台下载中 / 等待闲时替换 / 已是最新"
@@ -653,15 +798,52 @@ async function status() {
       version: stagedV,
       ready: !!stagedReady,
       // installed 已是 pinned 时返回 true（说明 staging 是上一次清扫的产物，不需要再切）
-      committed: installedVersion() === PINNED_VERSION && preinstalledDir() == null,
+      committed: installedVersion() === pinned && preinstalledDir() == null,
     },
     // 0.14 起：当前活跃指纹浏览器上下文数（用户查看 + UI 角标）
     fpContextCount: fpContextActive(),
   };
 }
 
-/* ---------------- 种子 ---------------- */
+/* ---------------- 内核清单 ---------------- */
 
+/**
+ * 可选内核清单（下发给 UI）。
+ *
+ * **只导出 UI 需要的字段** —— repo / tag / asset 规则这些是实现细节，
+ * 漏出去只会让前端有机会拼出错 URL。每个条目都带 `installed`（该内核是否已装），
+ * 这样 UI 能把「已装的」和「没装的」区分开，而不是只显示版本号让人猜。
+ */
+function engineCatalog() {
+  return Object.values(ENGINES).map((e) => ({
+    key: e.key,
+    label: e.label,
+    version: e.version,
+    available: !!e.available,
+    // 不可用时给原因；UI 必须原样展示（措辞是实测结论，见 ENGINES 里的注释）
+    unavailableReason: e.available ? "" : e.unavailableReason || "",
+    notes: e.notes || "",
+    installed: installedVersionFor(e.key) === e.version,
+    default: e.key === DEFAULT_ENGINE,
+  }));
+}
+
+/** 指定内核的已装版本（供清单用；未装返回 null） */
+function installedVersionFor(engineKey) {
+  const f = versionFile(engineKey);
+  try {
+    return fs.readFileSync(f, "utf8").trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/** 切换当前内核。返回生效的 key（非法 key 静默回落默认）。 */
+function selectEngine(key) {
+  return setEngine(key);
+}
+
+/* ---------------- 种子 ---------------- */
 /**
  * 由账户标识派生 32 位拟真种子（FNV-1a）。
  *
@@ -777,9 +959,10 @@ async function probeTotal(rawUrl, version, mirror) {
   // 结果 digest 永远是 null，完整性校验形同虚设（实测踩到：本地镜像 HEAD 通了，
   // sha256 全是 null）。长度可以优先用 HEAD，哈希只能来自 API。
   const apiMeta = async () => {
-    const asset = assetName(version);
+    const asset = assetName(version, CURRENT_ENGINE);
     if (!asset) return { total: 0, sha256: null };
-    const api = `https://api.github.com/repos/${REPO}/releases/tags/${version || PINNED_VERSION}`;
+    const cur = ENGINES[CURRENT_ENGINE];
+    const api = `https://api.github.com/repos/${cur.repo}/releases/tags/${cur.tag(version || cur.version)}`;
     for (const prefix of mirrors) {
       const res = await probeFetch(prefix + api, {
         headers: { Accept: "application/vnd.github+json" },
@@ -1320,7 +1503,7 @@ async function downloadParallel(rawUrl, prefix, dest, total, onProgress, signal,
  */
 async function downloadAsset(version, onProgress, mirror, signal, opts) {
   throwIfAborted(signal);
-  const asset = assetName(version);
+  const asset = assetName(version, CURRENT_ENGINE);
   const raw = releaseUrl(version);
   if (!asset || !raw) throw new Error(`当前平台（${process.platform}）不提供环境拟真浏览器`);
   const mirrors = await resolveMirrors(mirror);
@@ -1578,7 +1761,7 @@ function assertExtracted(dir, method) {
  */
 async function install(opts) {
   const o = opts || {};
-  const version = o.version || PINNED_VERSION;
+  const version = o.version || currentPinned();
   const signal = o.signal;
   const report = (p) => {
     const payload = { stage: "fingerprint", ...p };
@@ -1604,7 +1787,7 @@ async function install(opts) {
     // 缓存里的分片可能正是损坏源头（镜像重压缩 / 提前断流），留着它续传
     // 等于把坏文件接着用，所以 force 时不走断点续传。
     try {
-      fs.rmSync(installDir(), { recursive: true, force: true });
+      fs.rmSync(installDir(CURRENT_ENGINE), { recursive: true, force: true });
     } catch {}
     try {
       fs.rmSync(downloadDir(), { recursive: true, force: true });
@@ -1627,7 +1810,7 @@ async function install(opts) {
     return { ok: false, canceled, error: canceled ? "下载已取消" : e.message };
   }
 
-  const dir = installDir();
+  const dir = installDir(CURRENT_ENGINE);
   try {
     fs.rmSync(dir, { recursive: true, force: true });
     fs.mkdirSync(dir, { recursive: true });
@@ -1654,21 +1837,259 @@ async function install(opts) {
   }
 }
 
-/** 卸载（删除解压目录与下载缓存） */
-function uninstall() {
+/**
+ * 卸载（删除解压目录与下载缓存）。
+ *
+ * @param {object} [opts]
+ * @param {string} [opts.engine] 指定要卸载哪个内核（默认当前内核）。
+ *   多内核后用户可能想「删掉备用内核但保留正在用的」或反过来，
+ *   所以这个参数是必须的 —— 只有「删当前」的话，切换过内核后就再也没法
+ *   清理另一个（目录留在磁盘上白占 500MB+）。
+ * @param {boolean} [opts.keepStaging] 保留 staging（默认 false，一并清）
+ * @returns {{ok: boolean, error?: string, removed?: string[]}}
+ */
+function uninstall(opts) {
   // 镜像内置（Docker）：预装目录在镜像层里，删不掉也不该删 —— 删了容器重建又回来，
   // 而且会让「默认使用环境拟真浏览器」直接落空。明确拒绝，别给假成功。
   if (preinstalledDir()) {
     return { ok: false, error: "环境拟真浏览器由镜像内置预装，无法在容器内删除；如需更替请重建镜像" };
   }
-  for (const d of [installDir(), stagingDir(), downloadDir()]) {
+  const key = (opts && opts.engine) || CURRENT_ENGINE;
+  const targets = [installDir(key), downloadDir()];
+  if (!(opts && opts.keepStaging)) targets.push(stagingDir(key));
+  // ⚠️ 删非默认内核时**顺带清掉它专属的下载缓存目录**：
+  //   fp-download-staged-fp150 这类分片残留没清的话，
+  //   磁盘上会留一份「下了一半的 200MB」，用户不会知道它是什么。
+  if (key !== DEFAULT_ENGINE) targets.push(stagedDownloadDirFor(key));
+
+  /**
+   * ⚠️⚠️ 删一个目录前必须先把它内部**其它内核的子目录搬出去**（2026-10-06）。
+   *
+   * 目录结构是「默认内核在根、其它内核在子目录」：
+   *   fingerprint-chromium/          ← chromix（默认）
+   *   fingerprint-chromium/fp150/    ← fp150（在上面那层的**里面**）
+   *
+   * 于是 `rmSync(installDir('chromix'), {recursive:true})` 会**把 fp150 一起删掉** ——
+   * 症状是「卸载旧内核 154，结果 150 的目录也消失了」，而 150 明明是本次要保留的目标。
+   * 反过来（删 fp150 子目录）不会影响根目录，所以这个坑只在一个方向上出现，
+   * 极难靠直觉发现。
+   *
+   * 解法：删非默认内核时，直接删它自己的子目录即可（不碰根）；
+   * 删默认内核时，把要保留的其它内核子目录先搬到 storage 根下同级位置。
+   */
+  const keptChildren = [];
+  if (key === DEFAULT_ENGINE) {
+    const base = installDir(DEFAULT_ENGINE);
+    for (const e of Object.values(ENGINES)) {
+      if (e.key === DEFAULT_ENGINE) continue;
+      const child = path.join(base, e.key);
+      if (!fs.existsSync(child)) continue;
+      // 暂存到 storage 根下（与 base 同级），避开 base 的递归删除
+      const parked = sp.resolve(`${path.basename(base)}-${e.key}-keep`);
+      try {
+        if (fs.existsSync(parked)) fs.rmSync(parked, { recursive: true, force: true });
+        fs.renameSync(child, parked);
+        keptChildren.push({ key: e.key, from: child, to: parked });
+      } catch (e) {
+        // 搬不动就**放弃删根目录**：宁可让用户手动清磁盘，也不能连带删掉另一个内核
+        logger.warn(
+          `卸载默认内核时无法搬走 ${e.key}（${e.message}），已取消删除以免连带删除该内核`
+        );
+        return {
+          ok: false,
+          removed: [],
+          error: `无法保留 ${e.label} 的安装目录，已取消删除（请关闭正在运行的浏览器后重试）`,
+        };
+      }
+    }
+  }
+
+  const removed = [];
+  for (const d of targets) {
+    if (!d) continue;
     try {
+      if (!fs.existsSync(d)) continue;
       fs.rmSync(d, { recursive: true, force: true });
+      removed.push(d);
     } catch (e) {
       logger.warn(`删除 ${d} 失败: ${e.message}`);
     }
   }
-  return { ok: true };
+  // 把搬出去的子目录放回原位（此刻 base 已删或已空，路径是干净的）
+  for (const k of keptChildren) {
+    const restored = path.join(installDir(DEFAULT_ENGINE), k.key);
+    try {
+      fs.mkdirSync(path.dirname(restored), { recursive: true });
+      fs.renameSync(k.to, restored);
+    } catch (e) {
+      // 还原失败**绝不能悄悄吞掉** —— 用户会以为内核还在，实际目录在 storage 根下
+      logger.error(
+        `卸载默认内核后 ${k.key} 的目录还原失败（${e.message}），现位于 ${k.to}，` +
+          `可手动移回 ${restored}`
+      );
+      return {
+        ok: true,
+        removed,
+        error: `部分内核目录未能还原：${k.key} 现位于 ${k.to}`,
+      };
+    }
+  }
+  if (keptChildren.length) {
+    logger.info(`卸载默认内核时保留了 ${keptChildren.map((k) => k.key).join("、")} 的安装目录`);
+  }
+  return { ok: true, removed };
+}
+
+/**
+ * 后台静默下载的缓存目录（按内核分目录）。
+ *
+ * ⚠️ 默认内核是 `fp-download-staged`（**不是** `fp-download`）——
+ *   `fp-download` 是**手动下载**的目录，两者绝不能撞：撞了之后
+ *   `downloadAsset` 第二轮失败重试的清场会删掉对方正在写的分片
+ *   （2026-10-05 用户日志：202MB 下了三遍，详见 MEMORY）。
+ *   非默认内核加 `-<key>` 后缀，防止两个内核的后台下载互删。
+ */
+function stagedDownloadDirFor(key) {
+  const e = engine(key);
+  return e.key === DEFAULT_ENGINE
+    ? sp.resolve("fp-download-staged")
+    : sp.resolve(`fp-download-staged-${e.key}`);
+}
+
+/**
+ * 切换当前内核，并在「只保留单个内核」模式下**卸载其它已装内核**（2026-10-06）。
+ *
+ * ## 为什么要自动卸载
+ *
+ * 每个内核解压后约 500MB。两个都留着就是 1GB 常驻磁盘 —— 而绝大多数用户
+ * 只用一个。默认开启单内核模式，切换时把旧的卸掉；用户想要「两个都留着随时切」
+ * 可以把这个开关关掉（设置页有）。
+ *
+ * ## 几条安全边界（都是踩过才知道的）
+ *
+ * 1. **绝不动当前 kernel 之外的「预装」目录** —— Docker 镜像层删不掉也不该删。
+ * 2. **有活跃指纹上下文时不动手** —— 正在跑的任务握着 exe 的文件句柄，
+ *    删了会让那个任务崩掉。返回 ok:false + 原因，下次切内核时再试。
+ * 3. **只卸「已装且不是目标内核」的** —— 没装的目录不存在，删了是空操作还白写日志。
+ * 4. **目标内核自己不能被卸** —— 切过去之后它就是当前内核，必须留着。
+ *
+ * @param {string} key 目标内核
+ * @param {{singleOnly?: boolean}} [opts] singleOnly=false 时保留其它内核
+ * @returns {{ok: boolean, engine: string, removed?: string[], reason?: string}}
+ */
+function switchEngine(key, opts) {
+  const next = normalizeEngine(key);
+  const singleOnly = !(opts && opts.singleOnly === false);
+  if (preinstalledDir()) {
+    // Docker：预装内核不可切换也不可删（镜像层），直接告知而不是假装成功
+    return { ok: false, engine: next, reason: "容器内由镜像内置预装，无法切换或删除内核" };
+  }
+  setEngine(next);
+
+  if (!singleOnly) return { ok: true, engine: next, removed: [] };
+
+  const removed = [];
+  const skipped = [];
+  for (const e of Object.values(ENGINES)) {
+    if (e.key === next) continue; // 目标内核自己不动
+    const ver = installedVersionFor(e.key);
+    if (!ver) continue; // 没装 → 无需卸
+    // 有活跃上下文时保留：删了会断掉正在跑的任务。留着下次再试。
+    if (fpContextActive() > 0) {
+      skipped.push(e.label);
+      continue;
+    }
+    const r = uninstall({ engine: e.key });
+    if (r.ok) removed.push(e.label);
+    else skipped.push(`${e.label}(${r.error || "删除失败"})`);
+  }
+  if (skipped.length) {
+    logger.info(
+      `切换到 ${ENGINES[next].label}，但以下内核暂未卸载：${skipped.join("、")}` +
+        (fpContextActive() > 0 ? "（有任务正在使用它们，任务结束后再切换一次即可）" : "")
+    );
+  } else if (removed.length) {
+    logger.info(`切换到 ${ENGINES[next].label}，已卸载旧内核：${removed.join("、")}`);
+  }
+  return { ok: true, engine: next, removed };
+}
+
+/**
+ * 一次性迁移：清理「旧上游内核」的残留（2026-10-06）。
+ *
+ * ## 背景
+ *
+ * 0.14.5 之前，环境拟真浏览器的安装目录是**没有内核子目录**的
+ * `storage/fingerprint-chromium/`（0.14.4 及更早都是这个形态，含 fp150）。
+ * 0.14.6 起按内核分目录，而**默认内核 Chromix 刻意继续用根目录**（存量用户
+ * 不用重下 200MB）。于是会出现这个组合：
+ *
+ *   - 用户从 0.14.4（装的是 fp150）升到 0.14.6
+ *   - 根目录里躺着的仍是 **fp150**，`executablePath()` 会因版本不符判「不可用」
+ *     → 引导重装（这是对的），但**旧文件一直占着 ~500MB 不清理**。
+ *   - 而且用户若切到 fp150 内核，会发现「已装」但一跑就崩。
+ *
+ * ## 判定的安全边界
+ *
+ * 只在**根目录版本号与默认内核不符，且根目录不是默认内核版本**时才清理 ——
+ * 也就是「确定根目录里是旧内核」才动手。根目录版本正确时**绝不能碰**
+ * （那是用户正在用的 154，删了就是灾难）。
+ *
+ * @returns {{ok: boolean, removed?: string[], reason?: string}}
+ */
+function migrateAwayLegacyEngine() {
+  if (preinstalledDir()) return { ok: true, removed: [] }; // Docker：镜像层不能动
+  const base = installDir(DEFAULT_ENGINE); // 根目录
+  const want = ENGINES[DEFAULT_ENGINE].version;
+  let v = "";
+  try {
+    v = fs.readFileSync(path.join(base, "version.txt"), "utf8").trim();
+  } catch {}
+  if (!v) return { ok: true, removed: [] }; // 没装 / 读不到 → 无从判断，不动
+  if (v === want) return { ok: true, removed: [] }; // 正是当前内核 → 绝不能删
+
+  // 到这里根目录里确定是「非当前内核的旧版本」。先找出它属于哪个已知内核，
+  // 让日志能说清删的是什么（便于用户对照备份/反馈）。
+  const owner = Object.values(ENGINES).find((e) => e.version === v);
+
+  // 先看有没有正在跑的指纹上下文：有就别删（删了会断掉正在跑的任务的文件句柄）。
+  if (fpContextActive() > 0) {
+    return {
+      ok: false,
+      removed: [],
+      reason: `仍有 ${fpContextActive()} 个指纹浏览器在运行，稍后会自动清理`,
+    };
+  }
+
+  // 把 legacy 根目录挪到一边再删：比直接 rmSync 稳（rm 失败时用户数据还在，
+  // 只是变成「一堆认不出的文件」，比「删一半删不动」好排查）。
+  const stash = `${base}.legacy-${v}`;
+  const removed = [];
+  try {
+    fs.renameSync(base, stash);
+  } catch (e) {
+    logger.warn(`迁移清理：无法移走旧内核目录（${e.message}），跳过清理`);
+    return { ok: false, removed: [], reason: e.message };
+  }
+  try {
+    fs.rmSync(stash, { recursive: true, force: true });
+    removed.push(stash);
+  } catch (e) {
+    // 移走了但删不掉：还原回去，别让用户的浏览器处于「目录没了」的坏状态
+    try {
+      fs.renameSync(stash, base);
+      logger.warn(`迁移清理：删除旧内核残留失败（${e.message}），已还原，未影响当前使用`);
+      return { ok: false, removed: [], reason: `删除失败已还原: ${e.message}` };
+    } catch (e2) {
+      logger.error(`迁移清理：还原也失败（${e2.message}），旧内核残留留在 ${stash}`);
+      removed.push(stash);
+      return { ok: true, removed, reason: `已移出但删除失败，残留: ${stash}` };
+    }
+  }
+  logger.info(
+    `迁移清理：已移除旧内核残留（${owner ? owner.label : v}，约占用数百 MB），当前内核 ${want} 不受影响`
+  );
+  return { ok: true, removed };
 }
 
 /**
@@ -1688,7 +2109,7 @@ function uninstall() {
 async function installStaged(opts) {
   const o = opts || {};
   const signal = o.signal;
-  const version = PINNED_VERSION;
+  const version = currentPinned();
   const report = (p) => {
     const payload = { stage: "fingerprint-staged", ...p };
     logger.log("依赖", `[${payload.stage}] ${p.message || ""}`.trim());
@@ -1720,7 +2141,7 @@ async function installStaged(opts) {
 
   try {
     const method = await extractArchive(file, dir);
-    fs.writeFileSync(stagingVersionFile(), version, "utf8");
+    fs.writeFileSync(stagingVersionFile(CURRENT_ENGINE), version, "utf8");
     try { fs.rmSync(file, { force: true }); } catch {}
     const exe = findExecutable(dir);
     if (!exe) {
@@ -1762,16 +2183,16 @@ async function installStaged(opts) {
 function commitStagedInstall(opts) {
   const o = opts || {};
   if (preinstalledDir()) return { ok: false, reason: "镜像内置预装" };
-  const staged = stagedVersion();
-  if (staged !== PINNED_VERSION) return { ok: false, reason: "staging 没有新版本" };
+  const staged = stagedVersion(CURRENT_ENGINE);
+  if (staged !== currentPinned()) return { ok: false, reason: "staging 没有新版本" };
   if (fpContextActive() > 0) return { ok: false, reason: `仍有 ${fpContextActive()} 个指纹浏览器上下文在运行` };
   if (o.isIdle === false) return { ok: false, reason: "账户任务正在运行" };
 
-  const active = installDir();
+  const active = installDir(CURRENT_ENGINE);
   const staging = stagingDir();
 
   // 已是 pinned 版本 → 后台把 staging 当垃圾清理掉
-  if (installedVersion() === PINNED_VERSION) {
+  if (installedVersion() === currentPinned()) {
     try { fs.rmSync(staging, { recursive: true, force: true }); } catch {}
     return { ok: true, swapped: false, cleaned: true };
   }
@@ -1797,7 +2218,7 @@ function commitStagedInstall(opts) {
  * 走同样的镜像链；查不到就返回 null，由调用方决定是否提示。
  */
 async function latestVersion() {
-  const api = `https://api.github.com/repos/${REPO}/releases/latest`;
+  const api = `https://api.github.com/repos/${ENGINES[CURRENT_ENGINE].repo}/releases/latest`;
   for (const prefix of MIRROR_PREFIXES) {
     try {
       const res = await fetch(prefix + api, { headers: { Accept: "application/vnd.github+json" } });
@@ -1824,18 +2245,18 @@ async function checkUpdate() {
   try {
     latest = await latestVersion();
   } catch (e) {
-    return { ok: false, error: e.message, latest: null, installed: installedVersion(), pinned: PINNED_VERSION, updateAvailable: false, reinstallAvailable: false };
+    return { ok: false, error: e.message, latest: null, installed: installedVersion(), pinned: currentPinned(), updateAvailable: false, reinstallAvailable: false };
   }
   const installed = installedVersion();
   return {
     ok: true,
     latest,
     installed,
-    pinned: PINNED_VERSION,
+    pinned: currentPinned(),
     // 上游发了比钉死版本更新的 tag（本项目不自动跟，仅提示）
-    updateAvailable: !!latest && latest !== PINNED_VERSION,
+    updateAvailable: !!latest && latest !== currentPinned(),
     // 已安装版本与钉死版本不一致（含未安装）→ 点「重新安装」可对齐
-    reinstallAvailable: installed !== PINNED_VERSION,
+    reinstallAvailable: installed !== currentPinned(),
   };
 }
 
@@ -1875,7 +2296,24 @@ function buildArgs(o) {
 }
 
 module.exports = {
-  REPO,
+  // —— 多内核（2026-10-06）——
+  ENGINES,
+  DEFAULT_ENGINE,
+  engine,
+  normalizeEngine,
+  setEngine,
+  currentEngine,
+  currentPinned,
+  engineCatalog,
+  installedVersionFor,
+  selectEngine,
+  switchEngine,
+  migrateAwayLegacyEngine,
+  stagedDownloadDirFor,
+  // 兼容旧导出：默认内核的 repo / 版本号
+  get REPO() {
+    return ENGINES[DEFAULT_ENGINE].repo;
+  },
   PINNED_VERSION,
   MIRROR_PREFIXES,
   platformName,

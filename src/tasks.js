@@ -126,7 +126,9 @@ async function taskSign(ctx, token) {
       return { status: "done", point: point || 0 };
     }
     logger.warn("签入接口返回异常，稍后重试");
-    return { status: "retry" };
+    // reason 必带：界面徽标与汇总行都靠它说明「是哪一项、为什么」，
+    // 空 reason 会退化成笼统的「部分任务未完成」，用户看不出缺什么。
+    return { status: "retry", reason: "签入接口返回异常" };
   } catch (e) {
     if (e && e.isAbort) throw e;
     logger.error(`签入任务出错！${e.message}`);
@@ -152,7 +154,8 @@ async function taskRead(ctx, token) {
     const readPro = await rewards.getReadPro(ctx, token);
     if (!readPro || !readPro.ok) {
       logger.warn("阅读进度获取失败，稍后重试");
-      return { status: "retry" };
+      // 同上：retry 必须带 reason，否则界面上只剩「需要注意」
+      return { status: "retry", reason: "阅读进度接口获取失败" };
     }
     let cur = readPro.progress || 0;
     let max = readPro.max || 30;
@@ -460,6 +463,82 @@ async function visitDailySetUrl(ctx, url) {
  *
  * @returns {Promise<{status:string, claimed?:number, reason?:string}>}
  */
+/**
+ * 「定期收取积分」的节流判定（2026-10-06 支持两种模式）。
+ *
+ * 抽成**独立纯函数**而不是内联在 taskClaimRewards 里，三个原因：
+ *   1. 可测 —— 内联在 async 函数里就只能靠跑真实浏览器验证，而领取要开无头
+ *      Chromium 访问 rewards.bing.com，成本高且不稳定；
+ *   2. now 可注入 —— 「今天到点了吗」这类断言如果直接读 new Date()，
+ *      任何在非目标时间跑的门禁都会假红（项目铁律：依赖当前时刻的断言必须传固定 now）；
+ *   3. 两种模式规则不同（跨天差值 vs 当天时间点），混在一起容易互相污染。
+ *
+ * @param {object} p
+ * @param {string} [p.mode] "interval" | "daily"
+ * @param {number} [p.everyDays] interval 模式的间隔天数
+ * @param {string} [p.dailyAt] daily 模式的 "HH:MM"（本地时区）
+ * @param {number} p.lastDate 上次领取日（YYYYMMDD，0 = 从未领过）
+ * @param {number} p.lastAt 上次领取时间戳（毫秒，0 = 从未领过）
+ * @param {number} p.todayNum 今天（YYYYMMDD）
+ * @param {number} p.now 本次判定时刻（毫秒）。**必须由调用方注入**（Date.now()），
+ *   不要在这里读 —— 否则单测与门禁无法固定输入。
+ * @returns {{ok: boolean, reason?: string}}
+ */
+function shouldRunClaim({ mode, everyDays, dailyAt, lastDate, lastAt, todayNum, now }) {
+  const st = { lastDate: Number(lastDate || 0), lastAt: Number(lastAt || 0) };
+
+  // —— daily：每天到点后跑一次，当天已跑过就跳过 ——
+  if (mode === "daily") {
+    // 解析 "HH:MM" → 当天该点的时间戳。故意**不用 new Date("...T..:..")**：
+    // 那种写法按 UTC 解释（ES2015+ 规范），在东八区会整体偏 8 小时。
+    const m = /^(\d{1,2}):(\d{2})$/.exec(String(dailyAt || ""));
+    if (!m) {
+      // 配置里的时间点非法 → 退回 interval 默认行为，不静默停掉整个任务
+      return shouldRunClaim({
+        mode: "interval",
+        everyDays,
+        lastDate: st.lastDate,
+        lastAt: st.lastAt,
+        todayNum,
+        now,
+      });
+    }
+    const hh = Math.min(23, Math.max(0, Number(m[1])));
+    const mm = Math.min(59, Math.max(0, Number(m[2])));
+    const d = new Date(now);
+    const at = new Date(d.getFullYear(), d.getMonth(), d.getDate(), hh, mm, 0, 0).getTime();
+    if (now < at) {
+      const hh2 = String(hh).padStart(2, "0");
+      const mm2 = String(mm).padStart(2, "0");
+      return { ok: false, reason: `未到每天的领取时间（${hh2}:${mm2}）` };
+    }
+    // 到点了。日期与时间戳一起判：只比日期的话，改系统时钟会让同一天重复跑。
+    if (st.lastDate === Number(todayNum)) {
+      return { ok: false, reason: "今天已领取过（每天一次）" };
+    }
+    if (st.lastAt && st.lastAt > at) {
+      return { ok: false, reason: "今天已领取过（每天一次）" };
+    }
+    return { ok: true };
+  }
+
+  // —— interval：每隔 N 天一次（默认 7，与旧行为一致）——
+  const p = (n) => {
+    const s = String(n);
+    return Date.UTC(Number(s.slice(0, 4)), Number(s.slice(4, 6)) - 1, Number(s.slice(6, 8)));
+  };
+  const days = Math.floor((p(todayNum) - p(st.lastDate)) / 86400000);
+  // everyDays 做范围收口：配置被写成 0 / -1 / 999 时不至于让任务永不执行。
+  // 用 Number() 先判 NaN 再夹紧 —— 写成 `Number(x) || 7` 会让 0 被当成「非法→7」，
+  // 表面上没错，但 then 后面文案用同一个变量会与实际执行的天数不一致（这里已经一致，
+  // 但曾经踩过「判定用 7、文案用 0」的分叉，所以刻意只算一次）。
+  const n = Math.min(30, Math.max(1, Math.floor(Number(everyDays)) || 7));
+  if (st.lastDate && days < n) {
+    return { ok: false, reason: `距上次领取 ${days} 天（每 ${n} 天一次）` };
+  }
+  return { ok: true };
+}
+
 async function taskClaimRewards(ctx) {
   const state = ctx.state;
   // 开关守卫：默认关闭（见 config DEFAULTS.tasks.claim）。关闭时 runner 也不会调用，
@@ -469,19 +548,31 @@ async function taskClaimRewards(ctx) {
   }
   const todayNum = Number(state.getDateNum()); // YYYYMMDD
 
-  /** 两个 YYYYMMDD 之间相差的天数 */
-  const daysBetween = (from, to) => {
-    const p = (n) => {
-      const s = String(n);
-      return Date.UTC(Number(s.slice(0, 4)), Number(s.slice(4, 6)) - 1, Number(s.slice(6, 8)));
-    };
-    return Math.floor((p(to) - p(from)) / 86400000);
-  };
-
-  const last = Number(state.get().lastClaimDate || 0);
-  if (last && daysBetween(last, todayNum) < 7) {
-    return { status: "skip", reason: `距上次领取仅 ${daysBetween(last, todayNum)} 天（7 天一次）` };
+  // 节奏配置（2026-10-06）。⚠️ 用 || 回退到默认值：旧配置文件没有这段，
+  // 直接解构会拿到 undefined → everyDays 变 NaN → 节流判定恒为真 → 每次都领。
+  const cfgAll = ctx.config.get() || {};
+  const sched = cfgAll.claimSchedule || {};
+  const gate = shouldRunClaim({
+    mode: sched.mode,
+    everyDays: sched.everyDays,
+    dailyAt: sched.dailyAt,
+    lastDate: state.get().lastClaimDate,
+    lastAt: state.get().lastClaimAt,
+    todayNum,
+    // now 由调用方注入（这里传真实时刻；单测/门禁直接调 shouldRunClaim 传固定值）
+    now: Date.now(),
+  });
+  if (!gate.ok) {
+    return { status: "skip", reason: gate.reason };
   }
+  // 记时间戳用同一个 now（判定时刻），不要在保存时重新取 Date.now()：
+  // 两次取值可能跨过午夜/跨过时间点，导致「判为该跑」却存进下一天的时间戳。
+  const claimNow = Date.now();
+  // 日志与提示里的节奏描述要跟随模式（原来写死「每周一次」，daily 模式会说错）
+  const claimCadence =
+    sched.mode === "daily"
+      ? `每天 ${String(sched.dailyAt || "09:00")}`
+      : `每 ${Math.min(30, Math.max(1, Math.floor(Number(sched.everyDays) || 7)))} 天`;
 
   let handle = null;
   let claimed = 0;
@@ -510,6 +601,7 @@ async function taskClaimRewards(ctx) {
     if (!targets.length) {
       logger.info("🎁 没有可领取的积分（未找到待领取入口）");
       state.get().lastClaimDate = todayNum;
+      state.get().lastClaimAt = claimNow;
       state.save();
       return { status: "done", claimed: 0, reason: "无待领取项" };
     }
@@ -562,8 +654,9 @@ async function taskClaimRewards(ctx) {
     }
 
     state.get().lastClaimDate = todayNum;
+    state.get().lastClaimAt = claimNow;
     state.save();
-    const msg = claimed > 0 ? `🎁 已处理 ${claimed} 个领取入口（每周一次）` : "🎁 本周无需领取";
+    const msg = claimed > 0 ? `🎁 已处理 ${claimed} 个领取入口（${claimCadence}）` : `🎁 ${claimCadence}，本次无需领取`;
     logger.success(msg);
     return { status: "done", claimed };
   } catch (e) {
@@ -1034,6 +1127,9 @@ module.exports = {
   taskDaily,
   taskPromos,
   taskClaimRewards,
+  // 节流判定抽成纯函数导出（2026-10-06）—— 门禁要拿固定 now 直接驱动它做断言，
+  // 不必真的开无头浏览器访问 rewards.bing.com
+  shouldRunClaim,
   taskSearch,
   searchProgressSnapshot,
   reportActivityFallback,

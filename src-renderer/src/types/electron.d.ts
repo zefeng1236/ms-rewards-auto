@@ -162,7 +162,22 @@ export interface ElectronApi {
   installFingerprint(opts?: { force?: boolean }): Promise<InstallFingerprintResult>;
   /** 取消当前环境拟真浏览器下载任务 */
   cancelFingerprintInstall(): Promise<{ ok: boolean; error?: string }>;
-  uninstallFingerprint(): Promise<{ ok: boolean; error?: string }>;
+  /**
+   * 卸载环境拟真浏览器。
+   * @param payload.engine 指定卸哪个内核（多内核时用来卸「非当前」的那个）；不传则卸当前。
+   */
+  uninstallFingerprint(payload?: { engine?: string }): Promise<{
+    ok: boolean;
+    error?: string;
+    /** 实际删除掉的目录绝对路径（便于日志与排查） */
+    removed?: string[];
+  }>;
+  /**
+   * 切换环境拟真内核（2026-10-06）。
+   * 主进程会落盘配置；在「只保留单个内核」模式下卸载旧内核，并自动开始下载目标内核。
+   * @returns 成功 { ok:true, engine, removed }；失败 { ok:false, error }（内核不可选 / Docker 预装）
+   */
+  setFingerprintEngine(key: string): Promise<{ ok: boolean; engine?: string; removed?: string[]; error?: string }>;
   /** 检查更新：只查询上游版本，不下载不安装 */
   checkFingerprintUpdate(): Promise<CheckFingerprintUpdateResult>;
   /** 应用本身更新检查：查询 GitHub Releases 最新正式版（自动加速），只查不下载 */

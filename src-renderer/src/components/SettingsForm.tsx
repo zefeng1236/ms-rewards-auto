@@ -54,12 +54,38 @@ const TASK_LABELS: { key: keyof AppConfig["tasks"]; label: string; hint?: string
   { key: "read", label: "阅读文章", hint: "自动阅读 MSN 文章，每篇 3 分，满额 30 分" },
   { key: "daily", label: "每日活动", hint: "首页每日三格活动，访问活动链接即可完成" },
   { key: "promos", label: "积分活动", hint: "earn 页更多活动，浏览指定网页获取积分" },
-  { key: "claim", label: "定期收取积分", hint: "每周自动点击「领取」按钮，收取待领取的积分" },
+  {
+    key: "claim",
+    label: "定期收取积分",
+    // ⚠️ 不要再写死「每周」—— 节奏由下方 claimSchedule 决定（2026-10-06 支持自选）
+    hint: "自动点击「领取」按钮，收取待领取的积分；频率在下方设置",
+  },
   { key: "search", label: "搜索积分", hint: "自动使用 Bing 搜索，每次 3 分，满额为止" },
 ];
 
-const IP_PROVIDER_OPTIONS: SelectOption[] = [
-  { label: "Bing 首页判定（默认，与MS Rewards 同源）", value: "bing" },
+/**
+ * 把用户输入的时间点收口成 "HH:MM"（2026-10-06）。
+ *
+ * 为什么要收口而不是原样存：`dailyAt` 会被主进程拿去与「今天该点的时间戳」比较，
+ * 写成 "9:00am" / "25:00" / "" 这类值要么被正则拒掉（退回 interval）、
+ * 要么算出离谱的时间点。渲染层先收口，用户改完立刻看到规范化后的值。
+ *
+ * 允许 9:00 → 09:00 的补零，但**不静默改时间点本身**（9:30 不会被挪成别的点）。
+ */
+function normalizeHHMM(input: unknown): string {
+  const m = /^(\d{1,2})\s*[:：]\s*(\d{1,2})$/.exec(String(input == null ? "" : input).trim());
+  if (!m) return "09:00";
+  const hh = Math.min(23, Math.max(0, Number(m[1])));
+  const mm = Math.min(59, Math.max(0, Number(m[2])));
+  return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+}
+
+const CLAIM_MODE_OPTIONS: SelectOption[] = [
+  { label: "每隔 N 天（默认 7 天）", value: "interval" },
+  { label: "每天定时（到点就跑一次）", value: "daily" },
+];
+
+const IP_PROVIDER_OPTIONS: SelectOption[] = [  { label: "Bing 首页判定（默认，与MS Rewards 同源）", value: "bing" },
   { label: "ip.sb（备用，全球 CDN、标准国家码）", value: "ipsb" },
   { label: "太平洋 IP 库（国内）", value: "pconline" },
   { label: "ipinfo.io", value: "ipinfo" },
@@ -154,6 +180,14 @@ export function SettingsForm({
   const setHitokotoTypes = (next: string[]) =>
     onChange({ notice: { hitokotoTypes: next } } as DeepPartial<AppConfig>);
 
+  // —— 定期收取积分的节奏（2026-10-06）——
+  // ⚠️ 全部经收口后再用：旧配置文件没有 claimSchedule 段，值会是 undefined，
+  // 直接进 Number()/正则会得到 NaN → 界面显示空白或 NaN。
+  const sched = value.claimSchedule || {};
+  const claimMode: "interval" | "daily" = sched.mode === "daily" ? "daily" : "interval";
+  const claimEveryDays = Math.min(30, Math.max(1, Math.floor(Number(sched.everyDays)) || 7));
+  const claimDailyAt = normalizeHHMM(sched.dailyAt);
+
   return (
     <div className="settings-form">
       <Section title="任务开关">
@@ -168,6 +202,50 @@ export function SettingsForm({
             />
           ))}
         </div>
+
+        {/* —— 定期收取积分的节奏（2026-10-06）——
+            只在开关打开时显示：关着的时候改频率没有意义（任务压根不会跑），
+            摆在那里只会让人以为改了有用。
+            ⚠️ 这里的值一律经 Math.min/max + 正则收口 —— 主进程也会再收一次，
+               但渲染层先收口能避免用户输「0 天」时界面就显示异常值。 */}
+        {value.tasks?.claim && (
+          <div className="form-grid" style={{ marginTop: 8 }}>
+            <SelectField
+              label="收取节奏"
+              hint="「每隔 N 天」按上次领取日算差值；「每天定时」到点就跑一次，当天已领过会跳过"
+              value={claimMode}
+              options={CLAIM_MODE_OPTIONS}
+              onChange={(v) => onChange({ claimSchedule: { mode: v } } as DeepPartial<AppConfig>)}
+            />
+            {claimMode === "interval" ? (
+              <NumberField
+                label="间隔天数"
+                hint="1 ~ 30 天。默认 7 天（与旧行为一致）"
+                value={claimEveryDays}
+                min={1}
+                max={30}
+                onChange={(v) =>
+                  onChange({
+                    claimSchedule: {
+                      everyDays: Math.min(30, Math.max(1, Math.floor(v) || 7)),
+                    },
+                  } as DeepPartial<AppConfig>)
+                }
+              />
+            ) : (
+              <TimeField
+                label="每天几点"
+                hint="本地时区 24 小时制。到点后当天跑一次，当天已领过会自动跳过"
+                value={claimDailyAt}
+                onChange={(v) =>
+                  onChange({
+                    claimSchedule: { dailyAt: normalizeHHMM(v) },
+                  } as DeepPartial<AppConfig>)
+                }
+              />
+            )}
+          </div>
+        )}
       </Section>
 
       <Section title="单次执行数量" desc="把当天的阅读与活动摊到多轮里做，避免一轮全部清空">

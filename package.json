@@ -1,7 +1,7 @@
 {
   "name": "ms-rewards-auto",
-  "version": "0.14.5",
-  "buildNumber": "0",
+  "version": "0.14.6",
+  "buildNumber": "1",
   "description": "MS 积分（MS Rewards）自动任务独立软件 · 多账户隔离 · 加密保险库 · 密码强度校验 · 每日活动/每周领取 · Electron GUI",
   "main": "src/electron-main.js",
   "scripts": {

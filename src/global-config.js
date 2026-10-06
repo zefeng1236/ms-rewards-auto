@@ -27,6 +27,18 @@ const GLOBAL_DEFAULTS = {
     claim: false,
     search: true,
   },
+  /**
+   * 定期收取积分的节奏（2026-10-06）。
+   * ⚠️ 必须与 src/config.js 的 DEFAULTS.claimSchedule、types/index.ts 的
+   * AppConfig.claimSchedule、api/mock.ts 逐字段对齐（铁律：四处缺一 → 白屏）。
+   *
+   * 独立成段而不塞进 tasks.claim：那个是 boolean 开关，改成对象会破坏存量配置。
+   */
+  claimSchedule: {
+    mode: "interval", // interval=每隔 everyDays 天 | daily=每天到 dailyAt
+    everyDays: 7,     // interval 模式：1~30，默认 7（与旧行为一致）
+    dailyAt: "09:00", // daily 模式：本地时区 HH:MM
+  },
   region: {
     lock: true,
     ipProvider: "bing",
@@ -84,6 +96,16 @@ const GLOBAL_DEFAULTS = {
   browser: {
     fingerprint: {
       enable: true,    // 启用环境拟真浏览器（未安装则自动回落普通 Chromium；默认开启，首次运行自动下载）
+      // 环境拟真内核（2026-10-06 起两个内核并存，用户可自选）：
+      //   chromix = Chromix 154（默认，稳定）
+      //   fp150  = adryfish/fingerprint-chromium 150（备用，**当前不可选**：
+      //             有 canvas 读像素崩溃缺陷，上游 issue #94 暂无补丁）
+      // 保留 fp150 是为了等上游修好后能直接放开选择，不用重新写一遍适配。
+      // 非法值一律回落 chromix（normalizeEngine 负责）。
+      engine: "chromix",
+      // **只保留单个内核**（默认开）。开启时切换内核会自动卸载上一个，
+      // 避免两个内核各占 ~500MB 常驻磁盘。关掉才能两个同时留着、随时切换。
+      singleEngineOnly: true,
       seed: 0,         // 拟真种子（32 位整数）；0 = 按账户 ID 自动派生，保证同账号长期稳定
       brand: "Chrome", // UA / Client Hints 声明的品牌：Chrome | Edge | Opera | Vivaldi
       hardwareConcurrency: 0, // CPU 核数；0 = 由拟真种子生成

@@ -24,6 +24,7 @@ const logger = require("./logger");
 const vault = require("./vault");
 const rewards = require("./rewards");
 const auth = require("./auth");
+const { classifyOutcome } = require("./outcome");
 
 const emitter = new EventEmitter();
 emitter.setMaxListeners(50);
@@ -101,33 +102,9 @@ function runStatusSnapshot() {
 }
 
 /**
- * 根据 runner 批次/单账号的结束信息判定终态。
- * @returns {{status:"warning"|"error", reason:string}|null} null 表示回到空闲
+ * 终态判定实现在 outcome.js（与 electron-main 共用，避免两份实现漂移）。
+ * 这里保留同名导出，调用方无须改动。
  */
-function classifyOutcome(info) {
-  if (!info) return null;
-  // 用户主动停止（整批 / 单个 / 排队中跳过）不算错误
-  if (info.aborted || info.abortAll || info.skipped) return null;
-  // 业务阻断但拿到了 result（如 IP 非大陆）→ 橙色「需要注意」
-  if (info.ok === false) {
-    if (info.error && !info.result) return { status: "error", reason: info.reason || info.error || "运行失败" };
-    return { status: "warning", reason: info.reason || "需要注意" };
-  }
-  // 任务级：真正报错 → 红；需人工介入 → 橙
-  const tasks = (info.result && info.result.tasks) || {};
-  for (const k of Object.keys(tasks)) {
-    const t = tasks[k];
-    if (t && t.status === "error") return { status: "error", reason: t.error || "任务执行出错" };
-  }
-  for (const k of Object.keys(tasks)) {
-    const t = tasks[k];
-    if (!t) continue;
-    if (t.unauthorized) return { status: "warning", reason: "未授权，请重新登录后再运行" };
-    if (t.status === "restricted") return { status: "warning", reason: "搜索任务收入受限" };
-    if (t.status === "retry") return { status: "warning", reason: "部分任务未完成，稍后会自动重试" };
-  }
-  return null;
-}
 
 function applyOutcome(id, info) {
   const verdict = classifyOutcome(info);

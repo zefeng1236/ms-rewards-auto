@@ -1733,6 +1733,15 @@ html[data-preset="opaque"] .compat-toast {
   color: #fff;
   flex: 0 0 auto;
 }
+/* 原因正文：省略号截断（完整内容在 title 里），字重放轻以免和「需要注意」抢眼 */
+.acc-issue-reason {
+  font-weight: 500;
+  opacity: 0.9;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
 .acc-issue-warn {
   background: rgb(245 158 11 / 0.18);
   color: #f59e0b;

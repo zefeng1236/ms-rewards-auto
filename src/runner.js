@@ -288,6 +288,8 @@ async function runOnce(ctxRaw, opts = {}) {
   // 签入：以「今日是否已完成」为准，不要只看分数。
   // signPoint 为 0 是合法结果（当天已签过、无二次奖励），
   // 只有真的没跑过才算「未运行」。
+  // retry（跑了但被接口挡住）必须与「未运行」区分开，否则用户看到「未运行」
+  // 会以为程序根本没执行，而实际上失败原因就写在任务返回的 reason 里。
   const signDone = state.isTaskDoneToday("sign");
   lines.push(
     `📅 签入: ${
@@ -297,6 +299,10 @@ async function runOnce(ctxRaw, opts = {}) {
           : "已签入（无额外奖励）"
         : rSign.unauthorized
         ? "跳过(未授权)"
+        : rSign.status === "retry"
+        ? `未完成(${rSign.reason || "接口异常"})`
+        : rSign.status === "error"
+        ? `失败(${rSign.error || "未知错误"})`
         : "未运行"
     }`
   );
@@ -314,6 +320,10 @@ async function runOnce(ctxRaw, opts = {}) {
           : `${raDone} 篇`
         : rRead.unauthorized
         ? "跳过(未授权)"
+        : rRead.status === "retry"
+        ? `未完成(${rRead.reason || "接口异常"})`
+        : rRead.status === "error"
+        ? `失败(${rRead.error || "未知错误"})`
         : "未运行"
     }`
   );

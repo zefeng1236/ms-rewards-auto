@@ -36,7 +36,7 @@ async function copyText(text: string): Promise<boolean> {
   }
 }
 
-const APP_VERSION = "0.14.5";
+const APP_VERSION = "0.14.6";
 
 /** 直接依赖（package.json 中声明的运行时依赖） */
 const DIRECT_DEPS: { name: string; version: string; license: string; desc: string; url: string }[] = [
@@ -76,11 +76,21 @@ const DIRECT_DEPS: { name: string; version: string; license: string; desc: strin
     url: "https://github.com/Tsdsj/liquid-glass-react",
   },
   {
-    name: "fingerprint-chromium",
-    version: "148.0.7778.215",
+    // ⚠️ 两个内核都在分发范围（设置页可自选），一并列出。
+    // 版本号必须与 src/fingerprint-browser.js 的 ENGINES 一致（selfcheck 有守卫），
+    // 别写旧版本 —— 用户按这里的号去核对下载到的是不是同一个。
+    name: "Chromix（fingerprint-chromium）",
+    version: "154.0.8037.57",
     license: "BSD-3-Clause",
-    desc: "可选环境拟真增强浏览器（Chromix，基于 Ungoogled Chromium），运行时按需下载",
+    desc: "环境拟真增强浏览器内核 · 默认（基于 Ungoogled Chromium），运行时按需下载",
     url: "https://github.com/xiaozhou26/Chromix",
+  },
+  {
+    name: "fingerprint-chromium（备用内核）",
+    version: "150.0.7871.186",
+    license: "BSD-3-Clause",
+    desc: "旧内核 · 保留备用当前不可选（存在 canvas 读像素崩溃缺陷，上游 issue #94 未修）",
+    url: "https://github.com/adryfish/fingerprint-chromium",
   },
 ];
 

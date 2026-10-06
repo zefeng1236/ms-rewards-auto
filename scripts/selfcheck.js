@@ -596,7 +596,230 @@ checkTrue("state 每日累计含 dailyPoint 且跨天清零", /dailyPoint: 0,/.t
 
 // —— 静态守卫：渲染层 ——
 checkTrue("设置页有「每日活动」开关", /key: "daily", label: "每日活动"/.test(formSrc));
-checkTrue("设置页有「定期收取积分」开关", /key: "claim", label: "定期收取积分"/.test(formSrc));
+
+// —— 0.14.6 新增守卫所需的源码（提前读取：下面同名变量在 1200+/4300+ 行才声明，
+//    在此处直接用会 TDZ —— ReferenceError: Cannot access before initialization）——
+const fpSrc2 = fs.readFileSync(path.join(ROOT, "src", "fingerprint-browser.js"), "utf8");
+const mainSrcFp2 = fs.readFileSync(path.join(ROOT, "src", "electron-main.js"), "utf8");
+const browserSrcFp2 = fs.readFileSync(path.join(ROOT, "src", "browser.js"), "utf8");
+const fpPanelSrc2 = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "components", "FingerprintBrowserPanel.tsx"),
+  "utf8"
+);
+const tasksSrcFp2 = fs.readFileSync(path.join(ROOT, "src", "tasks.js"), "utf8");
+const stateSrcFp2 = fs.readFileSync(path.join(ROOT, "src", "state.js"), "utf8");
+const gcSrcFp2 = fs.readFileSync(path.join(ROOT, "src", "global-config.js"), "utf8");
+const cfgSrcFp2 = fs.readFileSync(path.join(ROOT, "src", "config.js"), "utf8");
+const mockSrcFp2 = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "api", "mock.ts"),
+  "utf8"
+);
+const typesSrcFp2 = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "types", "index.ts"),
+  "utf8"
+);
+const formSrcFp2 = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "components", "SettingsForm.tsx"),
+  "utf8"
+);
+
+checkTrue(
+  "【多内核】uninstall 删默认内核前先搬走其它内核子目录（父目录递归删会连带删掉子内核）",
+  // 目录结构是「默认内核在根、其它内核在根的子目录里」，所以 rmSync(默认, recursive)
+  // 会把 fp150 一起删掉。守卫钉住「搬出 → 删 → 放回」这三步都在。
+  /keptChildren/.test(fpSrc2) &&
+    /fs\.renameSync\(child, parked\)/.test(fpSrc2) &&
+    /卸载默认内核时保留了/.test(fpSrc2) &&
+    /已取消删除以免连带删除该内核/.test(fpSrc2),
+  "少了搬出这一步 → 「卸载 154」会把 150 一起删掉，而 150 正是本次要保留的目标"
+);
+checkTrue(
+  "【多内核】搬不出去时放弃删除（不静默删掉另一个内核）",
+  /return \{\s*ok:\s*false,[\s\S]{0,220}?无法保留[\s\S]{0,120}?已取消删除/.test(fpSrc2) ||
+    /无法保留[\s\S]{0,200}?已取消删除/.test(fpSrc2),
+  "搬不动还继续删 → 用户另一个内核的目录被静默删除，且无任何提示"
+);
+checkTrue(
+  "【多内核】后台下载目录不是手动下载目录（fp-download-staged ≠ fp-download）",
+  /function stagedDownloadDirFor/.test(fpSrc2) &&
+    /sp\.resolve\("fp-download-staged"\)/.test(fpSrc2) &&
+    // 关键：默认内核的后台目录不能是手动那个
+    !/sp\.resolve\("fp-download"\);\s*\n\s*:\s*sp\.resolve\(`fp-download-/.test(fpSrc2),
+  "两者同名 → downloadAsset 的失败清场会删掉对方分片（202MB 反复下三遍的老问题）"
+);
+checkTrue(
+  "启动路径上先做旧内核迁移清理，再触发后台下载判定",
+  (() => {
+    // ⚠️ 必须按**行号**比较，不能用 indexOf("...\n}") —— 这个文件混用 LF/CRLF，
+    //    换行符不一致会让锚点匹配不到，守卫恒红。
+    const src = mainSrcFp2.replace(/\r/g, "");
+    const lines = src.split("\n");
+    const iMigrate = lines.findIndex((l) => l.includes("migrateAwayLegacyEngine();"));
+    // ⚠️ 要取**最后一个** maybeStart —— 文件里它出现两次（另一次在别的函数体内），
+    // findIndex 会命中第一个，那不是启动路径。
+    let iMaybe = -1;
+    lines.forEach((l, i) => {
+      if (l.replace(/\r$/, "").trim() === "maybeStartBackgroundFingerprint();") iMaybe = i;
+    });
+    return iMigrate !== -1 && iMaybe !== -1 && iMigrate < iMaybe;
+  })(),
+  "顺序反了 → 根目录里的旧内核被当成「已装但版本不符」，既触发重下又白占磁盘"
+);
+checkTrue(
+  "单内核模式开关各处一致（配置默认 true / 类型是 boolean / 读取用 !== false）",
+  // ⚠️ 分工要分清：
+  //   · config / global-config / mock 是**默认值载体** → 必须是 true
+  //   · types/index.ts 是**类型声明** → 只要求有 singleEngineOnly: boolean
+  //     （让它也带默认值是错的 —— 类型里写 "= true" 会被误读成有默认值）
+  //   · browser.js 是**读取方** → 必须用 !== false（否则旧配置 undefined 会误判成「关」）
+  /singleEngineOnly:\s*true/.test(cfgSrcFp2) &&
+    /singleEngineOnly:\s*true/.test(gcSrcFp2) &&
+    /singleEngineOnly:\s*true/.test(mockSrcFp2) &&
+    /singleEngineOnly:\s*boolean/.test(typesSrcFp2) &&
+    /singleEngineOnly:\s*fp\.singleEngineOnly !== false/.test(browserSrcFp2) &&
+    /label="只保留单个内核"/.test(fpPanelSrc2),
+  "默认值/类型/读取任一处不一致 → 旧配置读到 undefined 会误判成「关」，切换后两个内核都留着"
+);
+checkTrue(
+  "单内核模式读配置用 `!== false`（旧配置缺字段时算「开」）",
+  /singleEngineOnly:\s*fp\.singleEngineOnly !== false/.test(browserSrcFp2) &&
+    /singleOnly = fpCfg\.singleEngineOnly !== false/.test(mainSrcFp2),
+  "写成 === true → 旧配置读到 undefined 会误判成「关」，切换后两个内核都留着"
+);
+checkTrue(
+  "UI 切换内核走 setFingerprintEngine IPC（主进程才能卸载旧内核 + 触发下载）",
+  // ⚠️ 钉的是**下拉的 onChange**，不是 onSwitchEngine 函数体内有没有那个调用 ——
+  //    函数在但下拉没接上，一样是坏的（旧内核会留在磁盘上且新内核不会自动下载）。
+  /onChange=\{\(v\) => void onSwitchEngine\(v\)\}/.test(fpPanelSrc2) &&
+    /api\.setFingerprintEngine\(key\)/.test(fpPanelSrc2) &&
+    // 不能只 patch 配置
+    !/onChange=\{\(v\) => void patch\(\{ engine: v \}\)\}/.test(fpPanelSrc2),
+  "只改配置 → 旧内核目录留在磁盘上（500MB），且新内核不会自动下载"
+);
+checkTrue(
+  "app:setFingerprintEngine 拒绝不可用内核与 Docker 预装（不假装成功）",
+  /app:setFingerprintEngine/.test(mainSrcFp2) &&
+    /if \(!e\.available\)[\s\S]{0,200}?return \{\s*ok:\s*false/.test(mainSrcFp2) &&
+    /if \(fpBrowser\.preinstalledDir\(\)\)[\s\S]{0,220}?ok:\s*false/.test(mainSrcFp2),
+  "不拒绝 → 用户切到会崩的 fp150，或在容器里切了却什么都没发生"
+);
+checkTrue(
+  "切换失败时不落盘配置（保持配置与实际一致）",
+  /const r = fpBrowser\.switchEngine[\s\S]{0,300}?if \(!r\.ok\)[\s\S]{0,200}?return \{ ok: false/.test(
+    mainSrcFp2
+  ),
+  "失败也落盘 → 配置说已切换而实际没切，两者不一致且再没人纠正"
+);
+checkTrue(
+  "设置页有「只保留单个内核」开关",
+  /label="只保留单个内核"/.test(fpPanelSrc2) && /patch\(\{ singleEngineOnly: v \}\)/.test(fpPanelSrc2),
+  "没有开关 → 用户想两个都留着（随时切换）做不到"
+);
+
+// —— 定期收取积分：支持「每隔 N 天」与「每天定时」两种节奏（2026-10-06）——
+// ⚠️ 所需源码（fpSrc2 / fpPanelSrc2 / tasksSrcFp2 / stateSrcFp2 / gcSrcFp2 /
+//    cfgSrcFp2 / mockSrcFp2 / typesSrcFp2 / formSrcFp2）已在文件上方统一提前读取。
+
+checkTrue(
+  "claimSchedule 段四处字段一致（config / global-config / types / mock）",
+    /claimSchedule: \{/.test(gcSrcFp2) &&
+    /claimSchedule: \{/.test(typesSrcFp2) &&
+    /claimSchedule: \{/.test(mockSrcFp2) &&
+    // 三个字段一个都不能少（少一个 → 旧配置加载后 undefined → NaN 传进节流判定）
+    ["mode", "everyDays", "dailyAt"].every(
+      (f) =>
+        new RegExp(f + ':\\s*').test(cfgSrcFp2) &&
+        new RegExp(f + ':\\s*').test(gcSrcFp2) &&
+        new RegExp(f + '\\??:\\s*').test(typesSrcFp2) &&
+        new RegExp(f + ':\\s*').test(mockSrcFp2)
+    ),
+  "任一处缺字段 → 旧配置文件读到 undefined，节流判定恒为真 → 每次运行都去领"
+);
+checkTrue(
+  "claimSchedule 默认值一致（mode=interval / everyDays=7 / dailyAt=09:00）",
+  /mode:\s*"interval"/.test(cfgSrcFp2) &&
+    /everyDays:\s*7/.test(cfgSrcFp2) &&
+    /dailyAt:\s*"09:00"/.test(cfgSrcFp2) &&
+    /mode:\s*"interval"/.test(gcSrcFp2) &&
+    /everyDays:\s*7/.test(gcSrcFp2) &&
+    /dailyAt:\s*"09:00"/.test(gcSrcFp2) &&
+    /everyDays:\s*7/.test(mockSrcFp2) &&
+    /dailyAt:\s*"09:00"/.test(mockSrcFp2),
+  "默认值漂移 → 「全球配置」与「账户设置」初始状态不同，用户改一个另一个不变"
+);
+checkTrue(
+  "节流判定是**纯函数**且 now 由调用方注入（不读 new Date()）",
+  /function shouldRunClaim\(\{[\s\S]{0,200}?now\s*\}\)/.test(tasksSrcFp2) &&
+    /shouldRunClaim\([\s\S]{0,400}?now:\s*Date\.now\(\)/.test(tasksSrcFp2) &&
+    // 函数体内除了形参 now 之外不得再取真实时刻
+    (() => {
+      const fn = /function shouldRunClaim\([\s\S]*?\n\}/.exec(tasksSrcFp2);
+      if (!fn) return false;
+      const body = fn[0];
+      return !/Date\.now\(\)/.test(body) && !/new Date\(\)/.test(body);
+    })(),
+  "函数体里读 new Date()/Date.now() → 任何时刻跑门禁都会假红（项目铁律：依赖当前时刻的断言必须传固定 now）"
+);
+checkTrue(
+  "daily 模式用本地时区构造当天时间点（不用 new Date(ISO 串)——那会按 UTC 解释偏 8 小时）",
+  /new Date\(d\.getFullYear\(\), d\.getMonth\(\), d\.getDate\(\), hh, mm, 0, 0\)/.test(
+    tasksSrcFp2
+  ),
+  "用 new Date('...T09:00') → ES2015+ 按 UTC 解释，东八区整体偏 8 小时，daily 模式永远判「未到点」"
+);
+checkTrue(
+  "daily 模式同时校验 lastClaimDate 与 lastClaimAt（只比日期会被改时钟绕过）",
+  /st\.lastDate === Number\(todayNum\)/.test(tasksSrcFp2) &&
+    /st\.lastAt && st\.lastAt > at/.test(tasksSrcFp2),
+  "只比日期 → 用户把系统时钟往回拨一天，同一天会重复领取"
+);
+checkTrue(
+  "everyDays 收口到 1~30（配置被写成 0/-1/999 时不至于让任务永不执行）",
+  /Math\.min\(30, Math\.max\(1, Math\.floor\(Number\(everyDays\)\)/.test(tasksSrcFp2),
+  "不收口 → everyDays=0 时 days<0 恒不成立，任务会**每次运行都领**"
+);
+checkTrue(
+  "领取成功后同时写 lastClaimDate 与 lastClaimAt（两处写入点都要）",
+  (tasksSrcFp2.match(/lastClaimAt = claimNow/g) || []).length >= 2 &&
+    /const claimNow = Date\.now\(\)/.test(tasksSrcFp2),
+  "只写日期 → daily 模式改系统时钟就能重复领"
+);
+checkTrue(
+  "旧的 7 天硬编码节流已移除（否则 everyDays 改了也不生效）",
+  !/daysBetween\(last, todayNum\) < 7/.test(tasksSrcFp2) &&
+    !/7 天一次\)/.test(tasksSrcFp2),
+  "留着旧判定 → 无论 everyDays 配成几天都还是 7 天一次"
+);
+checkTrue(
+  "日志/提示里的节奏描述跟随模式（不再写死「每周一次」）",
+  /const claimCadence =/.test(tasksSrcFp2) && /\$\{claimCadence\}/.test(tasksSrcFp2),
+  "写死「每周一次」→ 用户配成每天 09:00，日志却说每周，排查时被误导"
+);
+checkTrue(
+  "设置页有节奏下拉 + 条件输入，且只在开关打开时显示",
+  /CLAIM_MODE_OPTIONS/.test(formSrcFp2) &&
+    /value\.tasks\?\.claim && \(/.test(formSrcFp2) &&
+    /claimMode === "interval"/.test(formSrcFp2) &&
+    /label="收取节奏"/.test(formSrcFp2),
+  "关着开关时也摆出来 → 用户以为改频率有用（任务压根不会跑）"
+);
+checkTrue(
+  "dailyAt 在渲染层就收口成 HH:MM（不把非法值存进配置）",
+  /function normalizeHHMM/.test(formSrcFp2) && /normalizeHHMM\(v\)/.test(formSrcFp2),
+  "不收口 → 存进 '9:00am' / '25:00'，主进程正则拒掉后退回 interval，用户以为设了没效果"
+);
+checkTrue(
+  "state 默认结构含 lastClaimAt（缺字段时 lastAt 是 undefined → 判为「从未领过」）",
+  /lastClaimAt:\s*0/.test(stateSrcFp2),
+  "缺字段 → daily 模式第一次运行时 lastAt=undefined，Number(undefined)=NaN，比较恒 false"
+);
+
+checkTrue(
+  "设置页有「定期收取积分」开关",
+  // ⚠️ 2026-10-06 起这一项写成了多行对象（加了 hint 说明频率在下方设置），
+  // 单行正则会漏 —— 断言只钉「key 与 label 都在同一项里」，不钉排版
+  /key: "claim"/.test(formSrc) && /label: "定期收取积分"/.test(formSrc)
+);
 checkTrue("设置页 promos 文案改为「积分活动」", /key: "promos", label: "积分活动"/.test(formSrc));
 checkTrue("设置页有 IP 服务下拉", /IP_PROVIDER_OPTIONS/.test(formSrc) && /IP 归属地查询服务/.test(formSrc));
 checkTrue("设置页可选 ip.sb / 太平洋 / ipinfo / ip-api / Bing",
@@ -1263,14 +1486,90 @@ checkTrue(
 );
 checkTrue(
   "版本钉死（避免上游节奏与本项目不同步）",
-  /PINNED_VERSION\s*=\s*"\d+\.\d+\.\d+\.\d+"/.test(fpSrc)
+  /const ENGINES = \{/.test(fpSrc) &&
+    /version:\s*"\d+\.\d+\.\d+\.\d+"/.test(fpSrc) &&
+    /const DEFAULT_ENGINE = "chromix"/.test(fpSrc) &&
+    /const PINNED_VERSION = ENGINES\[DEFAULT_ENGINE\]\.version/.test(fpSrc)
 );
 checkTrue(
-  "资产名按平台区分（Chromix：Windows/Linux 都是 zip，内层目录固定叫 chromix），macOS 明确不支持",
-  fpSrc.includes('return "chromix-win-x64.zip"') &&
-    fpSrc.includes('return "chromix-linux-x64.zip"') &&
-    /return null;/.test(fpSrc),
-  "资产名错 → release 下载 404，用户装不上（2026-10-05 换 Chromix，资产名不再内嵌版本号）"
+  "【多内核】About 页列出两个内核且版本与 ENGINES 一致（别停在陈旧版本号）",
+  (() => {
+    const about = fs.readFileSync(
+      path.join(ROOT, "src-renderer", "src", "views", "About.tsx"),
+      "utf8"
+    );
+    // 两个 repo 都要出现
+    if (!/xiaozhou26\/Chromix/.test(about)) return false;
+    if (!/adryfish\/fingerprint-chromium/.test(about)) return false;
+    // 两个版本号都要与 ENGINES 对上
+    const cv = /chromix:\s*\{[\s\S]{0,400}?version:\s*"([^"]+)"/.exec(fpSrc);
+    const fv = /fp150:\s*\{[\s\S]{0,400}?version:\s*"([^"]+)"/.exec(fpSrc);
+    if (!cv || !fv) return false;
+    return about.includes(cv[1]) && about.includes(fv[1]);
+  })(),
+  "About 页版本号与 ENGINES 漂移 → 用户按 About 核对下载物，号对不上会以为装错了内核"
+);
+checkTrue(
+  "browser.js 每次读配置时同步内核（唯一保证 engine 与配置一致的地方）",
+  /fpBrowser\.normalizeEngine\(fp\.engine\)/.test(browserSrcFp) &&
+    /fpBrowser\.setEngine\(engine\)/.test(browserSrcFp),
+  "少了同步 → 用户选了 fp150、界面也变了，但 openContext 仍用默认 chromix（无报错、结果不对，最难自查）"
+);
+checkTrue(
+  "【多内核】两个内核的安装目录/staging 目录物理隔离（防止互相覆盖）",
+  /e\.key === DEFAULT_ENGINE \? base : path\.join\(base, e\.key\)/.test(fpSrc) &&
+    /e\.key === DEFAULT_ENGINE \? base : `\$\{base\}-\$\{e\.key\}`/.test(fpSrc),
+  "共用目录 → 用户装了 150 又切回 154 时，150 的残留会顶掉 154（或反过来）"
+);
+checkTrue(
+  "【多内核】默认内核仍装在根目录（存量用户不用重下 200MB）",
+  /DEFAULT_ENGINE \? base/.test(fpSrc) &&
+    /刻意仍叫 fingerprint-chromium|保留历史的 `fingerprint-chromium`/.test(fpSrc),
+  "默认内核也搬进子目录 → 所有存量用户的已装内核被判不可用，被迫重下"
+);
+checkTrue(
+  "【多内核】多候选目录检查排除其他内核的子目录",
+  /otherEngineDirs/.test(fpSrc) && /!otherEngineDirs\.has\(e\.name\)/.test(fpSrc),
+  "不排除 → 装了 150 再切回 154 时被误报「存在多个版本」，判为不可用"
+);
+checkTrue(
+  "【多内核】两个内核都注册在 ENGINES 里，且 Chromix 是默认内核",
+  // fp150 必须留着（用户要求：等上游修好 bug 后开放自选）—— 不许删
+  /fp150:\s*\{/.test(fpSrc) &&
+    /adryfish\/fingerprint-chromium/.test(fpSrc) &&
+    /150\.0\.7871\.186/.test(fpSrc) &&
+    /xiaozhou26\/Chromix/.test(fpSrc) &&
+    /154\.0\.8037\.57/.test(fpSrc),
+  "删掉 fp150 → 等上游修好后没有代码可开；漏掉任一上游 → 用户选的与实际下载的不一致"
+);
+checkTrue(
+  "【多内核】fp150 当前标记为不可用且带已知缺陷原因（UI 要原样展示给用户）",
+  /fp150:[\s\S]{0,900}?available:\s*false/.test(fpSrc) &&
+    /unavailableReason:/.test(fpSrc) &&
+    /issue #94/.test(fpSrc),
+  "available 忘了置 false → 用户能选中会崩溃的内核；没有 reason → 用户看到禁用项却不知道为什么"
+);
+checkTrue(
+  "【多内核】两个上游的 tag 规则相反（Chromix 带 v 前缀 / fp150 不带），都封装在 ENGINES 里",
+  /tag:\s*\(v\)\s*=>\s*`v\$\{v\}`/.test(fpSrc) &&
+    /tag:\s*\(v\)\s*=>\s*`\$\{v\}`/.test(fpSrc) &&
+    !/releases\/download\/v\$\{/.test(fpSrc),
+  "tag 前缀写死 → 换内核时对另一个上游直接 404（tag 格式相反，静默失败）"
+);
+checkTrue(
+  "【多内核】两个上游的资产名规则相反（Chromix 不含版本 / fp150 内嵌版本+build编号）",
+  /"chromix-win-x64\.zip"/.test(fpSrc) &&
+    /"chromix-linux-x64\.zip"/.test(fpSrc) &&
+    /ungoogled-chromium_\$\{v\}-1\.1_windows_x64\.zip/.test(fpSrc) &&
+    /ungoogled-chromium-\$\{v\}-1-x86_64_linux\.tar\.xz/.test(fpSrc),
+  "资产名照抄另一个上游 → 下载 404，用户装不上"
+);
+checkTrue(
+  "资产名按平台区分（Windows/Linux 各自映射），macOS 明确不支持",
+  /platform === "win32"/.test(fpSrc) &&
+    /platform === "linux"/.test(fpSrc) &&
+    /: null,\n\s*notes:|return null;/.test(fpSrc),
+  "资产名错 → release 下载 404，用户装不上"
 );
 checkTrue(
   "下载做完整性校验（中断/长度不符要报错，不能静默产出坏文件）",
@@ -1636,7 +1935,7 @@ checkTrue(
 checkTrue(
   "force 重装时清空解压目录与下载缓存（不复用可能已损坏的分片）",
   /if \(o\.force\) \{/.test(fpSrc) &&
-    /fs\.rmSync\(installDir\(\), \{ recursive: true, force: true \}\)/.test(fpSrc) &&
+    /fs\.rmSync\(installDir\(CURRENT_ENGINE\), \{ recursive: true, force: true \}\)/.test(fpSrc) &&
     /fs\.rmSync\(downloadDir\(\), \{ recursive: true, force: true \}\)/.test(fpSrc)
 );
 
@@ -2489,9 +2788,11 @@ checkTrue(
     if (!fn) return false;
     const body = fn[0];
     // 运行时分支：installDir() 取到 exe 之后必须有版本比对 + 判为不可用的早退
-    const runtimeBranch = /const dir = installDir\(\);[\s\S]*?readVer\(dir\)[\s\S]*?!== PINNED_VERSION[\s\S]*?return null;/.test(
-      body
-    );
+    // ⚠️ 多内核后比对的是 currentPinned()（当前引擎的钉死版本），不再直接读常量
+    const runtimeBranch =
+      /const dir = installDir\(CURRENT_ENGINE\);[\s\S]*?readVer\(dir\)[\s\S]*?!== pinned[\s\S]*?return null;/.test(
+        body
+      ) && /const pinned = currentPinned\(\);/.test(body);
     return runtimeBranch;
   })(),
   "运行时目录不校验版本 → 用户换上游后仍跑旧内核，而旧内核（fp150）恰是有崩溃缺陷的那个"
@@ -2549,27 +2850,41 @@ checkTrue(
   /xiaozhou26\/Chromix\/releases\/download\/v\$\{FPCB_VERSION\}\/chromix-linux-x64\.zip/.test(dockerfileSrc),
   "tag 无 v 前缀或沿用 ungoogled-chromium-*.tar.xz 资产名 → 上游 404，镜像构建失败"
 );
+// ⚠️ 多内核后 PINNED_VERSION 变成 ENGINES[DEFAULT_ENGINE].version 的派生常量，
+// 不能再用 `/PINNED_VERSION = "x"/` 提取版本号 —— 必须从 ENGINES 里取默认内核的 version。
+function defaultEngineVersion(src) {
+  const blk = /chromix:\s*\{[\s\S]{0,400}?version:\s*"([^"]+)"/.exec(src || "");
+  return blk ? blk[1] : null;
+}
 checkTrue(
-  "预装版本号与 src/fingerprint-browser.js 的 PINNED_VERSION 跨文件一致",
+  "预装版本号与 src/fingerprint-browser.js 的默认内核版本跨文件一致",
   (() => {
-    const m = /PINNED_VERSION\s*=\s*"([^"]+)"/.exec(fpbSrc);
+    const m = defaultEngineVersion(fpbSrc);
     const d = /ARG FPCB_VERSION=([^\s]+)/.exec(dockerfileSrc);
-    return !!m && !!d && m[1] === d[1];
+    return !!m && !!d && m === d[1];
   })(),
   "两处版本号漂移 → 镜像里预装的版本与状态接口自报的「钉死版本」对不上，界面永远提示「需重建镜像对齐」"
 );
-// THIRD_PARTY_NOTICES.md 里 fingerprint-chromium 的版本标题必须跟 PINNED_VERSION 同步。
+// THIRD_PARTY_NOTICES.md 里 fingerprint-chromium 的版本标题必须跟默认内核版本同步。
 // 这份声明随安装包分发，且 README/关于页都指向它；停在旧版本会误导用户以为是旧内核。
 checkTrue(
-  "THIRD_PARTY_NOTICES.md 的 fingerprint-chromium 版本 == PINNED_VERSION",
+  "THIRD_PARTY_NOTICES.md 的 Chromix 版本 == 默认内核钉死版本",
   (() => {
-    const m = /PINNED_VERSION\s*=\s*"([^"]+)"/.exec(fpbSrc);
+    const m = defaultEngineVersion(fpbSrc);
     const t = /### fingerprint-chromium — ([\d.]+)/.exec(
       fs.readFileSync(noticesPath, "utf8")
     );
-    return !!m && !!t && m[1] === t[1];
+    return !!m && !!t && m === t[1];
   })(),
-  "第三方声明的内核版本停在旧版 → 升级 PINNED_VERSION 时漏改了 THIRD_PARTY_NOTICES.md"
+  "第三方声明的内核版本停在旧版 → 升级默认内核版本时漏改了 THIRD_PARTY_NOTICES.md"
+);
+// 多内核后两个上游都在分发，必须都出现在第三方声明里（Chromix 是默认，fp150 备用）。
+checkTrue(
+  "THIRD_PARTY_NOTICES.md 同时声明两个上游（Chromix 默认 + fp150 备用）",
+  /xiaozhou26\/Chromix|### fingerprint-chromium —/.test(
+    fs.readFileSync(noticesPath, "utf8")
+  ) && /150\.0\.7871\.186/.test(fs.readFileSync(noticesPath, "utf8")),
+  "只声明默认内核 → 用户换成 fp150 后，许可证声明与实际分发的二进制不符（合规问题）"
 );
 // docker 文档里的「锁定版本」示例必须等于当前版本号。
 // 这几处是用户会照抄的操作指引，示例停在历史版本会让人以为最新版只能回退。
@@ -3826,12 +4141,20 @@ console.log("\n【R】0.14.0 新功能（内核升级 + 后台 staging + 停止�
 // 内核版本：2026-10-05 从 adryfish/fingerprint-chromium 150 换成 xiaozhou26/Chromix 154。
 // 守卫改成「断言具体版本」而不是「断言等于某个可变量」——升级时故意让它变红，
 // 逼着同步 Dockerfile / THIRD_PARTY_NOTICES / UI 文案（这四处漂移会 404 或误导用户）。
+// 2026-10-06 起是两个内核并存（用户要求保留 fp150 备用，等上游修 bug 后开放自选）。
 const fpSrcR = fpbSrc; // 同一份源码，前面 2426 行已读
 checkTrue(
-  "指纹内核为 Chromix 154.0.8037.57（2026-10-05 从 fp-chromium 150 换，理由见 fingerprint-browser.js 注释）",
-  /PINNED_VERSION\s*=\s*"154\.0\.8037\.57"/.test(fpSrcR) &&
-    /REPO\s*=\s*"xiaozhou26\/Chromix"/.test(fpSrcR),
-  fpSrcR.match(/PINNED_VERSION\s*=\s*"([^"]+)"/)?.[1] || "(未匹配)"
+  "默认内核为 Chromix 154.0.8037.57（2026-10-05 从 fp-chromium 150 换，理由见 fingerprint-browser.js 注释）",
+  /version:\s*"154\.0\.8037\.57"/.test(fpSrcR) &&
+    /repo:\s*"xiaozhou26\/Chromix"/.test(fpSrcR) &&
+    /const DEFAULT_ENGINE = "chromix"/.test(fpSrcR),
+  fpSrcR.match(/chromix:\s*\{[\s\S]{0,400}?version:\s*"([^"]+)"/)?.[1] || "(未匹配)"
+);
+checkTrue(
+  "备用内核 fp150 的版本与 repo 未被改动（用户要求：保留旧的，等上游修 bug）",
+  /version:\s*"150\.0\.7871\.186"/.test(fpSrcR) &&
+    /repo:\s*"adryfish\/fingerprint-chromium"/.test(fpSrcR),
+  fpSrcR.match(/fp150:\s*\{[\s\S]{0,400}?version:\s*"([^"]+)"/)?.[1] || "(未匹配)"
 );
 
 // 自适应并发 4..16
@@ -3867,7 +4190,8 @@ checkTrue(
 );
 checkTrue(
   "commitStagedInstall 全部条件：staged===pinned / fpContextActive===0 / isIdle!==false",
-  /staged\s*!==\s*PINNED_VERSION/.test(fpSrcR) &&
+  // 多内核后 pinned 来自 currentPinned()（当前引擎的钉死版本），不再直接读常量
+  /staged\s*!==\s*currentPinned\(\)/.test(fpSrcR) &&
     /fpContextActive\(\)\s*>\s*0/.test(fpSrcR) &&
     /o\.isIdle\s*===\s*false/.test(fpSrcR),
   "commit 缺任一守门"
@@ -4038,9 +4362,31 @@ checkTrue(
 // 设置文案
 const fpPanelR = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "components", "FingerprintBrowserPanel.tsx"), "utf8");
 checkTrue(
-  "设置项「启用环境拟真浏览器」追加了 (xiaozhou26/Chromix)",
-  /label="启用环境拟真浏览器（xiaozhou26\/Chromix）"/.test(fpPanelR),
-  "文案未追加项目地址（2026-10-05 上游换成 Chromix，这条跟着同步）"
+  "「启用环境拟真浏览器」文案跟随所选内核（多内核后不能写死单一上游名）",
+  // 2026-10-06：文案改成按 currentEngineKey 动态取 repo，写死会让切到 fp150 后
+  // 标签仍显示 Chromix（用户看到「已切到 150」但界面写着 Chromix，且 About 链接也错）
+  /currentEngineKey === "fp150" \? "adryfish\/fingerprint-chromium" : "xiaozhou26\/Chromix"/.test(
+    fpPanelR
+  ) && /label=\{`启用环境拟真浏览器/.test(fpPanelR),
+  "写死单一上游名 → 切换内核后界面文案仍是另一个内核的名字"
+);
+checkTrue(
+  "设置页有内核选择下拉，且不可用内核是 disabled 而不是隐藏",
+  /label="环境拟真内核"/.test(fpPanelR) &&
+    /disabled: !e\.available/.test(fpPanelR) &&
+    /engineOpts\.some\(\(e\) => !e\.available\)/.test(fpPanelR),
+  "隐藏不可用内核 → 用户以为没这个内核，看不到「修好就能用」；不 disabled → 用户能选中会崩的"
+);
+checkTrue(
+  "不可用内核的原因由主进程原样下发并展示（前端不自己编措辞）",
+  /unavailableReason/.test(fpPanelR) && /unavailableReason:/.test(fpbSrc),
+  "前端自己写原因 → 与实测结论漂移，用户被误导"
+);
+checkTrue(
+  "主进程下发内核清单（engines），UI 有回落（接口异常时不能让下拉空掉）",
+  /engines: engineCatalog\(\)/.test(fpbSrc) &&
+    /st\?\.engines && st\.engines\.length/.test(fpPanelR),
+  "没下发 → 设置页无法选择；没回落 → 下拉空掉，用户以为功能坏了且回不到默认内核"
 );
 // 上游换 Chromix 时最容易漏的一类：flag 命名整套变了（--timezone → --fingerprint-timezone、
 // --accept-lang/--lang → --fingerprint-locale）。少改一个 → 参数被静默忽略
@@ -4063,11 +4409,10 @@ checkTrue(
   "沿用旧上游 flag 名 → Chromix 静默忽略，时区/Accept-Language 露馅"
 );
 checkTrue(
-  "buildArgs 的 repo/资产名/URL 全部指向 Chromix（tag 带 v 前缀、资产名不含版本号）",
-  /REPO = "xiaozhou26\/Chromix"/.test(fpbSrc) &&
-    /return "chromix-win-x64\.zip"/.test(fpbSrc) &&
-    /releases\/download\/v\$\{tag\}\//.test(fpbSrc),
-  "资产名或 tag 前缀照抄旧上游 → release 下载 404，用户装不上"
+  "release URL 拼接走 ENGINES 的 repo/tag/asset（不再硬编码 Chromix 的 v 前缀）",
+  /`https:\/\/github\.com\/\$\{e\.repo\}\/releases\/download\/\$\{e\.tag\(v\)\}\/\$\{asset\}`/.test(fpbSrc) &&
+    /const e = engine\(engineKey\);/.test(fpbSrc),
+  "URL 拼接硬编码 → 换内核时对另一个上游直接 404（tag 格式相反，静默失败）"
 );
 
 /* ============ 0.14.4 登录链路三个 bug 的回归守卫（2026-10-04 用户日志实测暴露）============
@@ -4170,6 +4515,28 @@ checkTrue(
   /if \(page\.isClosed\(\)\) \{/.test(pgCodeOnlyR) &&
     !/!page\.isClosed\(\)/.test(pgCodeOnlyR),
   "写成 !page.isClosed() → 页面正常时每轮都 return，轮询一次都不执行"
+);
+
+// —— 导航竞态不再刷 WARN（2026-10-06 用户反馈「日志里老是报」）——
+// refresh 挂 3 个高频事件 + 轮询，导航瞬间并发触发 → 旧文档的 execution context
+// 已被销毁 → evaluate 必然抛「Execution context was destroyed」。这不代表故障。
+checkTrue(
+  "导航期 evaluate 失败被识别为竞态（不再刷 WARN 干扰真正的问题排查）",
+  /function isNavigationRaceError/.test(pgSrcR) &&
+    /execution context was destroyed/i.test(pgSrcR) &&
+    /isNavigationRaceError\(msg\)/.test(pgSrcR),
+  "不识别 → 正常导航就刷一屏 WARN，用户的注意力全被噪音占走"
+);
+checkTrue(
+  "导航竞态日志有节流（60 秒窗口，且不永久吞掉）",
+  /NAV_RACE_LOG/.test(pgSrcR) && /60_000|60000/.test(pgSrcR) && /unref/.test(pgSrcR),
+  "无节流 → 一次导航风暴刷十几条；无 unref → 定时器吊住主进程不退出"
+);
+checkTrue(
+  "真的脚本错误仍走 WARN（不能被竞态判定一起吞掉）",
+  /if \(isNavigationRaceError\(msg\)\) \{[\s\S]{0,300}?\} else \{[\s\S]{0,200}?logger\.warn/.test(pgSrcR),
+  "一律降级 → TypeError 之类的真错误被静默，出问题查无对症"
+
 );
 
 const installerSrcFp = require("fs").readFileSync(
@@ -4292,6 +4659,107 @@ checkTrue(
     /readyVersion:\s*"",/.test(require("fs").readFileSync(path.join(ROOT, "src", "config.js"), "utf8")) &&
     /readySha256\??:\s*string/.test(typesSrcFp),
   "记录缺失则点安装时无法校验完整性"
+);
+
+// ====================== 【0.14.6】retry 必须指名任务 ======================
+// 用户反馈：「部分任务未完成，稍后会自动重试」但界面上看不到是哪一项没完成。
+// 根因是 retry 不带 reason + 判定逻辑在两处各写一份，退化时无处可查。
+const outcomeSrcFp = require("fs").readFileSync(path.join(ROOT, "src", "outcome.js"), "utf8");
+const { classifyOutcome: classifyOutcomeFp } = require(path.join(ROOT, "src", "outcome.js"));
+
+// ① 两处必须共用 outcome.js，不能各写一份 classifyOutcome（否则改一边忘另一边）
+checkTrue(
+  "终态判定只有一处实现（electron-main 与 app-core 均 require outcome.js）",
+  /require\("\.\/outcome"\)/.test(
+    require("fs").readFileSync(path.join(ROOT, "src", "electron-main.js"), "utf8")
+  ) &&
+    /require\("\.\/outcome"\)/.test(
+      require("fs").readFileSync(path.join(ROOT, "src", "app-core.js"), "utf8")
+    ) &&
+    !/function classifyOutcome/.test(
+      require("fs").readFileSync(path.join(ROOT, "src", "electron-main.js"), "utf8")
+    ) &&
+    !/function classifyOutcome/.test(
+      require("fs").readFileSync(path.join(ROOT, "src", "app-core.js"), "utf8")
+    ),
+  "两份实现必然漂移：桌面版显示「需要注意」而 Docker 版显示正常"
+);
+
+// ② 所有 retry 返回都必须带 reason（漏一个就退化成笼统提示）
+const tasksSrcRetryFp = require("fs").readFileSync(path.join(ROOT, "src", "tasks.js"), "utf8");
+const retryReturnsFp = tasksSrcRetryFp.match(/return \{ status: "retry"[^}]*\}/g) || [];
+checkTrue(
+  "tasks.js 中每处 retry 返回都带 reason",
+  retryReturnsFp.length >= 2 && retryReturnsFp.every((r) => /reason:/.test(r)),
+  `有 ${retryReturnsFp.filter((r) => !/reason:/.test(r)).length} 处 retry 未带 reason → 界面无法说明缺哪一项`
+);
+
+// ③ 判定逻辑：retry 必须点名具体任务，而不是「部分任务未完成」
+//    注意 reason 若与任务名重复会被去重成「阅读（进度接口获取失败）」，
+//    所以不能拿完整子串去断言，分别校验任务名与原因片段即可。
+const retryOutcomeFp = classifyOutcomeFp({
+  result: { tasks: { sign: { status: "done" }, read: { status: "retry", reason: "阅读进度接口获取失败" } } },
+});
+checkTrue(
+  "retry 判定会点名具体任务并带原因",
+  !!retryOutcomeFp &&
+    retryOutcomeFp.status === "warning" &&
+    /阅读/.test(retryOutcomeFp.reason) &&
+    /进度接口获取失败/.test(retryOutcomeFp.reason) &&
+    !/部分任务未完成/.test(retryOutcomeFp.reason),
+  "笼统文案「部分任务未完成」不告诉用户缺什么，只剩一个「需要注意」"
+);
+
+// ④ 多项 retry 要全部列出，不能只报第一项
+const multiRetryFp = classifyOutcomeFp({
+  result: {
+    tasks: {
+      read: { status: "retry", reason: "阅读进度接口获取失败" },
+      search: { status: "retry", reason: "搜索进度获取失败" },
+    },
+  },
+});
+checkTrue(
+  "多项 retry 全部列出而非只报第一项",
+  !!multiRetryFp && /阅读/.test(multiRetryFp.reason) && /搜索/.test(multiRetryFp.reason),
+  "漏报会让用户修好一项后才发现还有下一项"
+);
+
+// ⑤ retry 不得盖住 error（error 优先，红色高于橙色）
+const errAndRetryFp = classifyOutcomeFp({
+  result: {
+    tasks: {
+      read: { status: "retry", reason: "阅读进度接口获取失败" },
+      promos: { status: "error", error: "交卷接口 500" },
+    },
+  },
+});
+checkTrue(
+  "error 优先于 retry 判定",
+  !!errAndRetryFp && errAndRetryFp.status === "error" && /交卷接口 500/.test(errAndRetryFp.reason),
+  "retry 先命中会把真正的报错降级成橙色，错误被掩盖"
+);
+
+// ⑥ 前端徽标必须把 reason 显示出来，不能只挂在 title 上
+const dashSrcFp = require("fs").readFileSync(
+  path.join(ROOT, "src-renderer", "src", "views", "Dashboard.tsx"),
+  "utf8"
+);
+checkTrue(
+  "账号卡片徽标直接显示 reason（不再只靠 title 悬停）",
+  /acc-issue-reason/.test(dashSrcFp) &&
+    /global\.css|acc-issue-reason/.test(
+      require("fs").readFileSync(path.join(ROOT, "src-renderer", "src", "styles", "global.css"), "utf8")
+    ),
+  "reason 只在 title 里 → 不悬停就看不到「哪一项没完成」"
+);
+
+// ⑦ 汇总行必须把 retry 与「未运行」区分开
+const runnerSrcFp2 = require("fs").readFileSync(path.join(ROOT, "src", "runner.js"), "utf8");
+checkTrue(
+  "汇总行把 retry 显示为「未完成(原因)」而非「未运行」",
+  /rRead\.status === "retry"/.test(runnerSrcFp2) && /rSign\.status === "retry"/.test(runnerSrcFp2),
+  "写成「未运行」会让用户以为程序根本没执行，而实际是被接口挡住了"
 );
 
 /* ============ 汇总 ============ */

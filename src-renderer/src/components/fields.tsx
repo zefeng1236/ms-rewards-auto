@@ -118,10 +118,12 @@ export function TextField({
  */
 export function TimeField({
   label,
+  hint,
   value,
   onChange,
 }: {
   label?: string;
+  hint?: string;
   value: string;
   onChange: (v: string) => void;
 }) {
@@ -134,6 +136,7 @@ export function TimeField({
         value={value}
         onChange={(e) => onChange(e.target.value)}
       />
+      {hint && <div className="hint">{hint}</div>}
     </div>
   );
 }

@@ -107,7 +107,13 @@ contextBridge.exposeInMainWorld("api", {
   fingerprintStatus: () => ipcRenderer.invoke("app:fingerprintStatus"),
   installFingerprint: (opts) => ipcRenderer.invoke("app:installFingerprint", opts),
   cancelFingerprintInstall: () => ipcRenderer.invoke("app:cancelFingerprintInstall"),
-  uninstallFingerprint: () => ipcRenderer.invoke("app:uninstallFingerprint"),
+  uninstallFingerprint: (payload) => ipcRenderer.invoke("app:uninstallFingerprint", payload),
+  /**
+   * 切换环境拟真内核（2026-10-06）。
+   * 单内核模式下会顺带卸载旧内核，并自动开始下载目标内核。
+   * 返回 { ok, engine, removed } 或 { ok:false, error }（内核不可选 / Docker 预装）。
+   */
+  setFingerprintEngine: (key) => ipcRenderer.invoke("app:setFingerprintEngine", key),
   checkFingerprintUpdate: () => ipcRenderer.invoke("app:checkFingerprintUpdate"),
 
   // 应用本身更新检查（查询 GitHub Releases 最新正式版，自动加速）

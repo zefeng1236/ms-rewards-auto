@@ -17,8 +17,25 @@ const DEFAULTS = {
     read: true,    // 阅读文章
     promos: true,  // 积分活动（earn 页更多活动）
     daily: true,   // 每日活动（dashboard dailySet，每日三格）
-    claim: false,  // 定期收取积分（每周一次自动点「领取」），默认关闭
+    claim: false,  // 定期收取积分（自动点「领取」），默认关闭
     search: true,  // 搜索积分
+  },
+  /**
+   * 定期收取积分的节奏（2026-10-06）。
+   *
+   * ⚠️ **刻意不塞进 tasks.claim** —— 那个字段是 boolean（开关），改成对象会
+   * 让所有存量配置读到 `tasks.claim.mode` 时拿到 undefined，且 types 里的
+   * `claim: boolean` 也得跟着变，牵连渲染层一堆判断。独立成段最省心。
+   *
+   * 两种模式（由用户在设置页选）：
+   *   interval —— 每隔 everyDays 天跑一次（lastClaimDate 差值 >= N 才执行）
+   *   daily    —— 每天到 dailyAt（HH:MM）后跑一次，当天已跑过就跳过
+   * ⚠️ 必须与 global-config.js / types/index.ts / api/mock.ts 逐字段对齐。
+   */
+  claimSchedule: {
+    mode: "interval", // interval | daily
+    everyDays: 7,     // interval 模式：每隔几天（1~30）。默认 7 = 与旧行为一致
+    dailyAt: "09:00", // daily 模式：每天几点（本地时区 HH:MM）
   },
   // 区域设置
   region: {
@@ -100,6 +117,11 @@ const DEFAULTS = {
   browser: {
     fingerprint: {
       enable: true,    // 启用环境拟真浏览器（未安装则自动回落普通 Chromium；默认开启，首次运行自动下载）
+      // 环境拟真内核（2026-10-06）：chromix=Chromix 154（默认）/ fp150=旧内核（备用，当前不可选）
+      // 非法值回落 chromix；两个内核的差异全在 src/fingerprint-browser.js 的 ENGINES 里
+      engine: "chromix",
+      // 只保留单个内核（默认开）：切换内核时自动卸载上一个，省 ~500MB 磁盘
+      singleEngineOnly: true,
       seed: 0,         // 拟真种子（32 位整数）；0 = 按账户 ID 自动派生，保证同账号长期稳定
       brand: "Chrome", // UA / Client Hints 声明的品牌：Chrome | Edge | Opera | Vivaldi
       hardwareConcurrency: 0, // CPU 核数；0 = 由拟真种子生成

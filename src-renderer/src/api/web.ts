@@ -405,7 +405,12 @@ export function createWebApi(): ElectronApi {
     fingerprintStatus: () => rpc<FingerprintStatus>("fingerprintStatus"),
     installFingerprint: (opts) => rpc<InstallFingerprintResult>("installFingerprint", opts),
     cancelFingerprintInstall: () => rpc<{ ok: boolean; error?: string }>("cancelFingerprintInstall"),
-    uninstallFingerprint: () => rpc<{ ok: boolean }>("uninstallFingerprint"),
+    uninstallFingerprint: () => rpc<{ ok: boolean; removed?: string[] }>("uninstallFingerprint"),
+    // Web/Docker 版无法在运行时切换内核（预装在镜像层，切了也没法重下）
+    setFingerprintEngine: async () => ({
+      ok: false,
+      error: "Web/Docker 版无法切换内核（如需更替请重建镜像）",
+    }),
     checkFingerprintUpdate: () => rpc<CheckFingerprintUpdateResult>("checkFingerprintUpdate"),
     checkAppUpdate: () => rpc<CheckAppUpdateResult>("checkAppUpdate"),
     // Web/Docker 版无桌面安装包，更新走 `docker compose pull` 重建镜像，这里返回明确语义

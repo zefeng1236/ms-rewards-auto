@@ -99,8 +99,22 @@ function fingerprintCfg(ctx) {
     } catch {}
   }
   const fp = (b && b.fingerprint) || {};
+  // ⚠️ 同步当前内核到 fingerprint-browser 的模块级状态（2026-10-06 多内核）。
+  //
+  // 放在这里而不是「应用启动时 set 一次」：这是**唯一保证 engine 与配置一致**的地方。
+  // 少了这一行，用户在设置页选了 fp150，界面也变了，但 openContext 仍会用
+  // 模块里的默认 chromix —— 表现是「界面显示已切到 150，实际跑的还是 154」，
+  // 而这种错位最难自查（没有报错，只是结果不对）。
+  // idempotent，重复调用无副作用。
+  const engine = fpBrowser.normalizeEngine(fp.engine);
+  fpBrowser.setEngine(engine);
   return {
     enable: fp.enable === true,
+    engine,
+    // 只保留单个内核（默认开）。单内核模式下切换会自动卸载旧内核，
+    // 避免两个内核各占 ~500MB 常驻磁盘。写 `!== false` 而不是 `=== true`：
+    // 旧配置文件没有这个字段时是 undefined，那样会误判成「关」而保留两个。
+    singleEngineOnly: fp.singleEngineOnly !== false,
     seed: Number(fp.seed) || 0,
     brand: typeof fp.brand === "string" && fp.brand ? fp.brand : "Chrome",
     hardwareConcurrency: Number(fp.hardwareConcurrency) || 0,

@@ -12,9 +12,13 @@ import type {
 
 type FpCfg = AppConfig["browser"]["fingerprint"];
 
-// ⚠️ mirror 默认值必须与 src/config.js / src/global-config.js 一致（selfcheck 有跨文件守卫）
+// ⚠️ mirror / engine 默认值必须与 src/config.js / src/global-config.js 一致（selfcheck 有跨文件守卫）
 const FALLBACK: FpCfg = {
   enable: false,
+  // 与 GLOBAL_DEFAULTS 一致：默认内核是 Chromix 154（fp150 备用，当前不可选）
+  engine: "chromix",
+  // 默认只留一个内核（切换时自动卸载旧的）
+  singleEngineOnly: true,
   seed: 0,
   brand: "Chrome",
   hardwareConcurrency: 0,
@@ -88,6 +92,43 @@ export function FingerprintBrowserPanel() {
   const patch = async (p: Partial<FpCfg>) => {
     const next = await api.setGlobalConfig({ browser: { fingerprint: p } });
     setCfg(next?.browser?.fingerprint || FALLBACK);
+  };
+
+  /**
+   * 切换内核（2026-10-06）。
+   *
+   * ⚠️ 刻意**不走**上面的 `patch`：内核切换不只是改配置，主进程还要
+   * ① 在「只保留单个内核」模式下卸载旧内核（省 ~500MB）
+   * ② 目标内核没装时自动开始下载
+   * ③ Docker 预装场景要拒绝（预装在镜像层，切了也换不了）
+   * 这些都只有主进程能做，所以走独立 IPC。
+   */
+  const onSwitchEngine = async (key: string) => {
+    // ⚠️ 这里不能用 currentEngineKey（它是下面才定义的 const，TDZ）——
+    //    直接比对 cfg.engine，语义一样且没有时序问题。
+    if (key === cfg.engine) return;
+    setLocalBusy(true);
+    try {
+      const r = await api.setFingerprintEngine(key);
+      if (r && r.ok === false) {
+        toast.error(r.error || "切换内核失败");
+      } else if (r && r.removed && r.removed.length) {
+        toast.success(
+          `已切换到 ${key}，并卸载了旧内核（释放约 500MB）：${r.removed.join("、")}`
+        );
+      } else {
+        toast.success(`已切换到 ${key}，正在后台下载该内核`);
+      }
+      // 状态要重新拉：installed / version / 下载进度都会变
+      await refresh();
+      try {
+        setCfg(await api.getGlobalConfig().then((g) => g?.browser?.fingerprint || FALLBACK));
+      } catch {}
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "切换内核失败");
+    } finally {
+      setLocalBusy(false);
+    }
   };
 
   const refresh = async () => {
@@ -188,6 +229,36 @@ export function FingerprintBrowserPanel() {
    */
   const waitingInstall = !!st?.staged?.ready && !st?.staged?.committed && !st?.preinstalled;
 
+  /**
+   * 内核清单（2026-10-06 多内核）。
+   *
+   * ⚠️ 主进程没下发 engines 时（旧版本 / 接口异常）必须**回落到一个只含默认内核的
+   * 列表**，不能让下拉空掉 —— 空下拉会让人以为功能坏了，且用户无法回到默认内核。
+   * 这里用 st.pinned 反推版本号，保证与主进程自报一致。
+   */
+  const engineOpts: NonNullable<FingerprintStatus["engines"]> =
+    st?.engines && st.engines.length
+      ? st.engines
+      : [
+          {
+            key: "chromix",
+            label: "Chromix 154",
+            version: st?.pinned || "154.0.8037.57",
+            available: true,
+            unavailableReason: "",
+            notes: "",
+            installed: !!st?.ready,
+            default: true,
+          },
+        ];
+  // 当前生效的内核：配置里的值优先，非法/缺失则与主进程自报对齐
+  const currentEngineKey = engineOpts.some((e) => e.key === cfg.engine)
+    ? cfg.engine
+    : engineOpts.find((e) => e.default)?.key || engineOpts[0].key;
+  // 用户正选中的那个不可用内核（要展示它的已知缺陷说明）
+  const pickedEngine = engineOpts.find((e) => e.key === currentEngineKey);
+  const pickedBlocked = !!pickedEngine && !pickedEngine.available;
+
   return (
     <div className="block">
       <div className="block-head">
@@ -210,7 +281,7 @@ export function FingerprintBrowserPanel() {
         ) : (
           <>
             <SwitchField
-              label="启用环境拟真浏览器（xiaozhou26/Chromix）"
+              label={`启用环境拟真浏览器（${currentEngineKey === "fp150" ? "adryfish/fingerprint-chromium" : "xiaozhou26/Chromix"}）`}
               hint={
                 st?.preinstalled
                   ? "Docker 版镜像内置，且容器里只有环境拟真浏览器可用，因此始终启用（不可关闭）"
@@ -222,6 +293,45 @@ export function FingerprintBrowserPanel() {
             />
 
             <div className="form-grid" style={{ marginTop: 12 }}>
+              {/* —— 内核选择（2026-10-06 多内核）——
+                  两个内核并存，用户可自选。fp150 当前不可选（上游 issue #94 崩溃缺陷），
+                  但**要显示出来并写明原因** —— 隐藏会让用户以为「没这个内核」，
+                  看不到「等上游修好就能用」这条路径。
+                  unavailableReason 由主进程原样下发（那是实测结论，别在前端编措辞）。 */}
+              <SelectField
+                label="环境拟真内核"
+                hint={
+                  engineOpts.length
+                    ? engineOpts
+                        .map(
+                          (e) =>
+                            `${e.label}${e.default ? "（默认）" : ""}${e.installed ? " · 已装" : ""}` +
+                            `${e.available ? "" : " · 暂不可选"}`
+                        )
+                        .join("　/　")
+                    : "内核清单加载中…"
+                }
+                value={currentEngineKey}
+                options={engineOpts.map((e) => ({
+                  value: e.key,
+                  // 不可用的**列出来但 disabled** —— 用户能在下拉里看到它存在，
+                  // 并且通过下方的说明块读到为什么暂不可选（Select 原生支持 disabled）
+                  label: e.available ? e.label : `${e.label}（暂不可选）`,
+                  disabled: !e.available,
+                }))}
+                onChange={(v) => void onSwitchEngine(v)}
+              />
+              <SwitchField
+                label="只保留单个内核"
+                hint={
+                  cfg.singleEngineOnly === false
+                    ? "两个内核都会保留（约各 500MB），可随时来回切换"
+                    : "切换内核时自动卸载旧的，只占用一个内核的空间（约 500MB）。想让两个都留着可随时切换就关掉它"
+                }
+                checked={cfg.singleEngineOnly !== false}
+                disabled={!st?.preinstalled && engineOpts.filter((e) => e.installed).length < 2}
+                onChange={(v) => void patch({ singleEngineOnly: v })}
+              />
               <SelectField
                 label="浏览器品牌"
                 hint="UA 与 Client Hints 声明的品牌，必须与内核一致才不会自相矛盾"
@@ -264,6 +374,32 @@ export function FingerprintBrowserPanel() {
                 />
               )}
             </div>
+
+            {/* 不可用内核的已知问题说明（2026-10-06）。
+                把所有 available:false 的内核都列出来，而不是只列「当前选中的那个」——
+                用户在看到下拉里那项标着「暂不可选」时，需要在这里读到原因。
+                措辞直接用主进程下发的 unavailableReason（实测结论，前端不自己编）。 */}
+            {engineOpts.some((e) => !e.available) && (
+              <div className="hint fp-note" style={{ marginTop: 4 }}>
+                {engineOpts
+                  .filter((e) => !e.available)
+                  .map((e) => (
+                    <div key={e.key} style={{ marginTop: 4 }}>
+                      <strong>{e.label} 暂不可选</strong>：{e.unavailableReason || "上游存在问题，修复后即可选择"}
+                      {e.notes ? `（${e.notes}）` : ""}
+                    </div>
+                  ))}
+              </div>
+            )}
+
+            {/* 防御：若配置里存了不可用/已下架的内核，明确告知「本轮不会用」，
+                别让用户以为界面改了但浏览器没换（这种错位没有报错，最难自查）。 */}
+            {pickedBlocked && (
+              <div className="hint fp-note" style={{ marginTop: 4, color: "var(--warn, #d97706)" }}>
+                你选择的 {pickedEngine?.label} 当前不可用，本轮会回落到默认内核（
+                {engineOpts.find((e) => e.default)?.label || "Chromix 154"}）。请改选其他内核。
+              </div>
+            )}
 
             {st?.preinstalled ? (
               <div className="hint fp-note" style={{ marginTop: 4 }}>

@@ -32,6 +32,13 @@
 - **仓库**：https://github.com/xiaozhou26/Chromix （上游：https://github.com/ungoogled-software/ungoogled-chromium ）
 - **更换说明**：2026-10-05 从 adryfish/fingerprint-chromium 150.0.7871.186 换为 Chromix。原上游 150 存在未修复缺陷（issue #94：开启 canvas 伪装时页面读取像素会导致渲染进程崩溃），且之后无新版本发布。两者同为基于 Ungoogled Chromium 的 BSD-3 定制发行版，本软件的许可状况不变。
 - **用途**：可选的「环境拟真增强浏览器」，运行时按需下载（约 212MB，解压后 536MB+，不随安装包分发）。它对 UA / userAgentData / Client Hints 三者做源码层的同源生成，并支持 `--fingerprint=<seed>` 种子化环境特征，用于把应用层改不动的那部分环境一致性在源码层补齐。本软件未修改其二进制，仅下载、解压并以命令行为其传入启动参数。
+
+### fingerprint-chromium — 150.0.7871.186（备用内核，当前不可选）
+- **许可**：BSD 3-Clause（基于 Ungoogled Chromium；Copyright (c) The ungoogled-chromium Authors 及 patch 原作者 adryfish）
+- **仓库**：https://github.com/adryfish/fingerprint-chromium （上游：https://github.com/ungoogled-software/ungoogled-chromium ）
+- **状态**：**保留为备用内核，代码路径完整但当前不开放选择**（设置页可见但置灰）。启用后页面读取像素会触发渲染进程崩溃（上游 issue #94，暂无补丁）；本项目默认使用 Chromix 154。待上游修复后开放选择。
+- **并列声明的原因**：软件在设置页提供内核自选（`chromix` / `fp150`），两个内核都可能随用户选择被下载并在本机运行，故**两者都在分发范围内**，一并声明。
+- **用途**：同「Chromix 154」条目（可选的「环境拟真增强浏览器」，运行时按需下载，不随安装包分发）。本软件未修改其二进制。
 - **许可文本（BSD 3-Clause）**：
   ```
   Redistribution and use in source and binary forms, with or without

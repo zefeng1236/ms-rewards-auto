@@ -28,6 +28,8 @@ import { mergeDeep } from "../utils";
 const DEFAULT_CONFIG: AppConfig = {
   useGlobal: true,
   tasks: { sign: true, read: true, daily: true, promos: true, claim: false, search: true },
+  // 定期收取积分节奏 —— 必须与 config.js / global-config.js / types 逐字段对齐
+  claimSchedule: { mode: "interval", everyDays: 7, dailyAt: "09:00" },
   region: { lock: true, ipProvider: "bing" },
   search: { span: 30, api: "offline" },
   limits: { random: false, read: 6, promos: 0, search: 6, allowExceed: false },
@@ -61,8 +63,8 @@ const DEFAULT_CONFIG: AppConfig = {
     items: [{ name: "积分目标", scope: "balance", target: 300, rewardName: "", showDashboard: true }],
   },
   browser: {
-    // mirror 默认值必须与 src/config.js / src/global-config.js 一致（selfcheck 有跨文件守卫）
-    fingerprint: { enable: true, seed: 0, brand: "Chrome", hardwareConcurrency: 0, platform: "windows", mirror: "cdn.gh-proxy.org" },
+    // mirror / engine 默认值必须与 src/config.js / src/global-config.js 一致（selfcheck 有跨文件守卫）
+    fingerprint: { enable: true, engine: "chromix", singleEngineOnly: true, seed: 0, brand: "Chrome", hardwareConcurrency: 0, platform: "windows", mirror: "cdn.gh-proxy.org" },
   },
   // 软件本体更新（0.14.5 起）—— 必须与 config.js / global-config.js / types 逐字段对齐
   update: { silentDownload: false, lastPromptDate: "", readyVersion: "", readyFile: "", readyBytes: 0, readySha256: "", dismissedVersion: "" },
@@ -681,7 +683,13 @@ export function createMockApi(): ElectronApi {
       mockFpCancel = true;
       return { ok: true };
     },
-    uninstallFingerprint: async () => ({ ok: true }),
+    uninstallFingerprint: async () => ({ ok: true, removed: [] }),
+    // 预览模式：假装切换成功（便于看切换后的界面状态）
+    setFingerprintEngine: async (key?: string) => ({
+      ok: true,
+      engine: String(key || "chromix"),
+      removed: [],
+    }),
     checkFingerprintUpdate: async () => ({
       ok: true,
       latest: "148.0.7778.215",

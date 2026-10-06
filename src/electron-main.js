@@ -31,6 +31,7 @@ const appearance = require("./appearance");
 const uapi = require("./uapi");
 const wallpapers = require("./wallpapers");
 const launch = require("./launch");
+const { classifyOutcome } = require("./outcome");
 const setup = require("./setup");
 const sp = require("./storage-path");
 const vault = require("./vault");
@@ -359,35 +360,9 @@ function setAccountStatus(id, status, reason) {
 }
 
 /**
- * 根据 runner 批次/单账号的结束信息判定终态。
- * @returns {{status:"warning"|"error", reason:string}|null} null 表示回到空闲（不标记）
+ * 终态判定实现在 outcome.js（与 app-core 共用，避免两份实现漂移）。
+ * 这里保留同名函数调用，调用方无须改动。
  */
-function classifyOutcome(info) {
-  if (!info) return null;
-  // 用户主动停止（整批 / 单个 / 排队中跳过）不算错误，回到无标记
-  if (info.aborted || info.abortAll || info.skipped) return null;
-  // 业务阻断但拿到了 result（如 IP 非大陆）→ 橙色「需要注意」
-  if (info.ok === false) {
-    if (info.error && !info.result) return { status: "error", reason: info.reason || info.error || "运行失败" };
-    return { status: "warning", reason: info.reason || "需要注意" };
-  }
-  // 任务级状态：真正报错 → 红；需要人工介入（未授权/收入受限/需重试）→ 橙
-  const tasks = (info.result && info.result.tasks) || {};
-  for (const k of Object.keys(tasks)) {
-    const t = tasks[k];
-    if (t && t.status === "error") {
-      return { status: "error", reason: t.error || "任务执行出错" };
-    }
-  }
-  for (const k of Object.keys(tasks)) {
-    const t = tasks[k];
-    if (!t) continue;
-    if (t.unauthorized) return { status: "warning", reason: "未授权，请重新登录后再运行" };
-    if (t.status === "restricted") return { status: "warning", reason: "搜索任务收入受限" };
-    if (t.status === "retry") return { status: "warning", reason: "部分任务未完成，稍后会自动重试" };
-  }
-  return null;
-}
 
 /** 把 runner 的 end 信息落到账号状态上 */
 function applyOutcome(id, info) {
@@ -820,6 +795,15 @@ function startBackgroundWork() {
 // - 已装旧版本（pinned 升级）：下载写 staging，**不动 installDir**，等闲时再切
 // 用户主动点的「立即下载 / 重新下载」走另一条 IPC 路径（fingerprintInstallController），
 // 行为不变；这里的入口只在 app 启动 / staged 缺失时被触发。
+  // 0.14.6：先清掉 0.14.4 及更早留下的旧内核（fp150）目录。
+  // 必须在后台下载判定**之前** —— 否则根目录里躺着的 150 会被当成「已装但版本不符」，
+  // 既触发一次重下，又白占 ~500MB 磁盘。清理完再判定，状态才干净。
+  try {
+    fpBrowser.migrateAwayLegacyEngine();
+  } catch (e) {
+    logger.warn(`旧内核残留清理失败（不影响使用）: ${e.message}`);
+  }
+
   maybeStartBackgroundFingerprint();
 }
 
@@ -1501,10 +1485,61 @@ function registerIpc() {
     return { ok: true };
   });
 
-  ipcMain.handle("app:uninstallFingerprint", () => {
-    const r = fpBrowser.uninstall();
+  // 卸载内核。payload.engine 可指定卸哪个（多内核：切到 154 后仍能卸掉 150）。
+  // 不传则卸当前内核 —— 保持旧调用点（设置页「删除」按钮）行为不变。
+  ipcMain.handle("app:uninstallFingerprint", (_e, payload) => {
+    const r = fpBrowser.uninstall({
+      engine: (payload && payload.engine) || undefined,
+    });
     pushFingerprintStatus();
     return r;
+  });
+
+  // 切换内核（2026-10-06）。落盘配置 + 在「只保留单个内核」模式下卸载旧的。
+  //
+  // ⚠️ 顺序很重要：先 setEngine 让 fpBrowser 内部状态跟着变，再 set() 落盘。
+  // 反过来的话，若 set() 抛错（比如磁盘只读）fpBrowser 已经切了而配置没跟上，
+  // 两者不一致且再也没人纠正。
+  ipcMain.handle("app:setFingerprintEngine", async (_e, key) => {
+    const next = fpBrowser.normalizeEngine(key);
+    const e = fpBrowser.ENGINES[next];
+    if (!e.available) {
+      return {
+        ok: false,
+        error: `${e.label} 当前不可选：${e.unavailableReason || "上游存在问题"}`,
+      };
+    }
+    // 镜像内置（Docker）：预装内核不可切换也不可删
+    if (fpBrowser.preinstalledDir()) {
+      return { ok: false, error: "容器内由镜像内置预装，无法切换内核（如需更替请重建镜像）" };
+    }
+    const cfg = globalConfig.get() || {};
+    const fpCfg = (cfg.browser && cfg.browser.fingerprint) || {};
+    // singleEngineOnly 默认 true（`!== false`：旧配置没这字段时也算开）
+    const singleOnly = fpCfg.singleEngineOnly !== false;
+    const r = fpBrowser.switchEngine(next, { singleOnly });
+    if (!r.ok) {
+      // 切换本身没成功（Docker 等）→ 不落盘，保持配置与实际一致
+      return { ok: false, error: r.reason || "切换失败" };
+    }
+    globalConfig.set({
+      browser: {
+        ...(cfg.browser || {}),
+        fingerprint: { ...fpCfg, engine: next },
+      },
+    });
+    // 目标内核可能还没装（用户从没用过）→ 立刻开下，用户不用再点一次
+    if (!fpBrowser.installedVersionFor(next)) {
+      logger.info(`已切换到 ${e.label}，开始下载该内核`);
+      // 后台静默下载（走 staging，闲时切换）—— 不阻塞 IPC 返回
+      maybeStartBackgroundFingerprint().catch((e2) =>
+        logger.warn(`切换后自动下载 ${e.label} 失败: ${e2.message}`)
+      );
+    } else {
+      logger.info(`已切换到 ${e.label}`);
+    }
+    pushFingerprintStatus();
+    return { ok: true, engine: next, removed: r.removed || [] };
   });
 
   // 「检查更新」只查询不下载（0.9.4.18 修：此前按钮直连 install(force) 会重下 181MB）

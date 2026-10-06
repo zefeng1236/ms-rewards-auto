@@ -87,9 +87,22 @@ export interface AppConfig {
     daily: boolean;
     /** 积分活动（earn 页更多活动） */
     promos: boolean;
-    /** 定期收取积分（每周自动点「领取」），默认关闭 */
+    /** 定期收取积分（自动点「领取」），默认关闭；节奏见 claimSchedule */
     claim: boolean;
     search: boolean;
+  };
+  /**
+   * 定期收取积分的节奏（2026-10-06）。
+   *
+   * 独立成段而不并进 tasks.claim：那个是 boolean 开关，改成对象会破坏存量配置。
+   */
+  claimSchedule: {
+    /** interval = 每隔 everyDays 天一次；daily = 每天到 dailyAt 一次 */
+    mode: "interval" | "daily";
+    /** interval 模式：每隔几天（1~30）。默认 7（与旧行为一致） */
+    everyDays: number;
+    /** daily 模式：每天几点（本地时区 HH:MM，如 "09:00"） */
+    dailyAt: string;
   };
   region: {
     lock: boolean;
@@ -174,6 +187,13 @@ export interface AppConfig {
      */
     fingerprint: {
       enable: boolean;
+      /** 环境拟真内核：chromix = Chromix 154（默认）；fp150 = adryfish
+       *  fingerprint-chromium 150（备用，当前不可选 —— 有 canvas 读像素崩溃缺陷，
+       *  上游 issue #94 暂无补丁）。保留是为了等上游修好后直接放开选择。 */
+      engine: string;
+      /** 只保留单个内核（默认 true）：开启时切换内核会自动卸载上一个，
+       *  避免两个内核各占 ~500MB 常驻磁盘。关掉才能两个同时留着、随时切换。 */
+      singleEngineOnly: boolean;
       /** 拟真种子（32 位整数）；0 = 按账户 ID 自动派生，保证同账号长期稳定 */
       seed: number;
       /** UA / Client Hints 声明的品牌 */
@@ -416,9 +436,25 @@ export interface FingerprintStatus {
   executable: string | null;
   /** 已安装版本，未安装为 null */
   version: string | null;
-  /** 本项目钉死的版本 */
+  /** 本项目钉死的版本（当前所选内核的） */
   pinned: string;
   installDir: string;
+  /** 可选内核清单（2026-10-06 多内核）。
+   *  unavailable 的条目**要展示出来但禁用**，不能隐藏 —— 隐藏会让用户以为
+   *  「没这个内核」，看不到「等它修好就能用」这条路径。
+   *  unavailableReason 必须原样展示（那是实测结论，不要前端自己编措辞）。 */
+  engines?: {
+    key: string;
+    label: string;
+    version: string;
+    available: boolean;
+    unavailableReason: string;
+    notes: string;
+    /** 该内核是否已装（装了两边都在时用来区分） */
+    installed: boolean;
+    /** 是否默认内核 */
+    default: boolean;
+  }[];
   /** 是否由**镜像内置预装**（Docker 版：/opt/fingerprint-chromium）。
    *  为 true 时界面隐藏「下载/重新下载/删除」——那些动作在容器里要么无意义
    *  （已在镜像层），要么会造成一次多余的大体积运行时下载。 */
