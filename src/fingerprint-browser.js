@@ -362,6 +362,20 @@ function downloadDir() {
 }
 
 /**
+ * 后台静默下载的**独立**下载目录（2026-10-06）。
+ *
+ * 为什么必须与 downloadDir 物理隔离，而不是只加「正在下载就别重复触发」的检查：
+ *   `downloadAsset` 第二轮失败重试时会**清场** —— 删掉目标 zip 和它的全部分片。
+ *   手动下载与后台下载一旦共用目录，后台那 16 个分片正在写的文件会被手动那轮
+ *   的清场直接删掉 → 后台报 `ENOENT: ...part0` → 两边互相重试，
+ *   202MB 反复下三遍（用户 2026-10-05 22:45 的实测日志就是这么炸的）。
+ *   路径隔离是**结构性**的根治，检查还可能被时序绕过，隔离不会。
+ */
+function stagedDownloadDir() {
+  return sp.resolve("fp-download-staged");
+}
+
+/**
  * 后台暂存目录：放着下一版内核的解压产物，闲时再切到 installDir。
  *
  * 与 installDir 平级，路径 `storage/fingerprint-chromium-staging`。后台下载
@@ -1211,16 +1225,52 @@ async function downloadParallel(rawUrl, prefix, dest, total, onProgress, signal,
     });
   };
 
-  await Promise.all(
-    segs.map(async (s) => {
-      if (s.got === s.end - s.start + 1) return; // 已完成，跳过
-      await downloadSegment(url, s.file, s.start, s.end, (n2) => {
-        s.got += n2;
+  /**
+   * ⚠️ 必须自建一个「本轮分片共享」的 AbortController（2026-10-06 修）。
+   *
+   * `Promise.all` 的语义是「任一 reject 就整体 reject」，但它**不会取消其余
+   * 仍在 pending 的分片** —— 那些分片的 HTTP 请求继续跑、继续回调 onBytes、
+   * 继续往上抛进度。外层 catch 到错误换下一个镜像源之后，上一个源的僵尸分片
+   * 还在上报进度，于是界面出现**两条进度条一前一后交替跳**，其中那条永远到不了
+   * 100%（看着像卡住）。用户 2026-10-05 23:40 的日志就是这么炸的：
+   *   cdn 源 aborted → 切 v4 → 慢的那组 136MB→164MB 还在涨。
+   *
+   * 注意 downloadSegment 自己是**有** AbortController 的，但它只桥接外部传入的
+   * signal；换源走的是「Promise.all 被 reject」这条路，外部 signal 从头到尾没被
+   * abort 过 —— 那层保护形同虚设。所以这里必须自建一个本轮私有的，再把外部
+   * signal 桥接进来，两者任一触发都掐掉全部分片。
+   */
+  const roundAc = new AbortController();
+  const onOuterAbort = () => {
+    try {
+      roundAc.abort();
+    } catch {}
+  };
+  if (signal) {
+    if (signal.aborted) onOuterAbort();
+    else signal.addEventListener("abort", onOuterAbort, { once: true });
+  }
+
+  try {
+    await Promise.all(
+      segs.map(async (s) => {
+        if (s.got === s.end - s.start + 1) return; // 已完成，跳过
+        await downloadSegment(url, s.file, s.start, s.end, (n2) => {
+          s.got += n2;
+          emit(false);
+        }, roundAc.signal, ip);
         emit(false);
-      }, signal, ip);
-      emit(false);
-    })
-  );
+      })
+    );
+  } catch (e) {
+    // 换源/失败前先掐掉本轮所有还在跑的分片，杜绝僵尸进度
+    try {
+      roundAc.abort();
+    } catch {}
+    throw e;
+  } finally {
+    if (signal) signal.removeEventListener("abort", onOuterAbort);
+  }
   emit(true);
   throwIfAborted(signal);
 
@@ -1263,15 +1313,20 @@ async function downloadParallel(rawUrl, prefix, dest, total, onProgress, signal,
 
 /**
  * 按镜像链下载，中途失败换下一个镜像并复用已下载的部分。
+ *
+ * @param {object} [opts]
+ * @param {boolean} [opts.staged] true=后台静默下载，用独立目录 stagedDownloadDir()
+ *   （见该函数注释：两路下载共用目录时，一方的「失败清场」会互删对方分片）
  */
-async function downloadAsset(version, onProgress, mirror, signal) {
+async function downloadAsset(version, onProgress, mirror, signal, opts) {
   throwIfAborted(signal);
   const asset = assetName(version);
   const raw = releaseUrl(version);
   if (!asset || !raw) throw new Error(`当前平台（${process.platform}）不提供环境拟真浏览器`);
   const mirrors = await resolveMirrors(mirror);
 
-  const dir = downloadDir();
+  // 后台静默下载走独立目录（见 stagedDownloadDir 注释：清场会互删分片）
+  const dir = opts && opts.staged ? stagedDownloadDir() : downloadDir();
   fs.mkdirSync(dir, { recursive: true });
   const dest = path.join(dir, asset);
 
@@ -1651,7 +1706,8 @@ async function installStaged(opts) {
   report({ message: `后台静默下载环境拟真浏览器 ${version}…`, pct: 0 });
   let file;
   try {
-    const dl = await downloadAsset(version, (p) => report(p), mirrorKey, signal);
+    // staged:true → 走独立目录，不与手动下载共用分片（见 stagedDownloadDir 注释）
+    const dl = await downloadAsset(version, (p) => report(p), mirrorKey, signal, { staged: true });
     file = dl.file;
     report({ message: `下载完成（${fmtSize(dl.size)}，来源 ${dl.mirror}），后台解压中…`, pct: 100 });
   } catch (e) {

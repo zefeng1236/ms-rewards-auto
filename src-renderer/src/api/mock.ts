@@ -64,6 +64,8 @@ const DEFAULT_CONFIG: AppConfig = {
     // mirror 默认值必须与 src/config.js / src/global-config.js 一致（selfcheck 有跨文件守卫）
     fingerprint: { enable: true, seed: 0, brand: "Chrome", hardwareConcurrency: 0, platform: "windows", mirror: "cdn.gh-proxy.org" },
   },
+  // 软件本体更新（0.14.5 起）—— 必须与 config.js / global-config.js / types 逐字段对齐
+  update: { silentDownload: false, lastPromptDate: "", readyVersion: "", readyFile: "", readyBytes: 0, readySha256: "", dismissedVersion: "" },
 };
 
 /**
@@ -712,6 +714,29 @@ export function createMockApi(): ElectronApi {
     cancelUpdateDownload: async () => ({ ok: true }),
     runUpdateInstaller: async () => ({ ok: false, error: "浏览器预览模式不支持安装" }),
     revealUpdateFile: async () => ({ ok: false, error: "浏览器预览模式不支持打开文件夹" }),
+    // 预览模式给一份假的更新日志，便于验证「更新日志」弹窗排版
+    releaseNotes: async (version?: string) => ({
+      ok: true,
+      version: String(version || DISPLAY_VERSION),
+      notes: `## ${version || DISPLAY_VERSION}\n\n（浏览器预览模式：这里是模拟的更新日志正文）\n\n- 示例条目一\n- 示例条目二`,
+      pageUrl: "",
+    }),
+    installUpdate: async () => ({ ok: false, error: "浏览器预览模式不支持安装" }),
+    dismissUpdatePrompt: async () => ({ ok: true }),
+    // 预览模式点「立即检查」：直接复用上面 fake 数据，省一层自引用
+    checkUpdateNow: async () => ({
+      ok: true,
+      updateAvailable: true,
+      currentVersion: DISPLAY_VERSION,
+      latestVersion: "0.14.0",
+      downloadUrl:
+        "https://github.com/zefeng1236/ms-rewards-auto/releases/download/v0.14.0/MS-Rewards-Auto-Setup-0.14.0.exe",
+      assetName: "MS-Rewards-Auto-Setup-0.14.0.exe",
+      pageUrl: "https://github.com/zefeng1236/ms-rewards-auto/releases/tag/v0.14.0",
+      releaseNotes: "## 0.14.0\n\n- (mock) 模拟的更新日志正文",
+      publishedAt: new Date().toISOString(),
+    }),
+    onUpdatePrompt: () => () => {},
     onUpdateDownloadProgress: () => () => {},
 
     onRunning: noop,

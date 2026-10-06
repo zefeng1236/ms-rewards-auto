@@ -3,23 +3,31 @@ import { Personalize } from "./Personalize";
 import { LaunchSettings } from "./LaunchSettings";
 import { FingerprintBrowserPanel } from "../components/FingerprintBrowserPanel";
 import { VaultPanel } from "../components/VaultPanel";
+import { UpdatePanel } from "../components/UpdatePanel";
 import { IS_WEB } from "../api/ipc";
+import type { ReleaseNotesResult } from "../types";
 
 /**
  * 软件设置的分类清单：左侧边栏选项卡与本页分区共用同一份，
  * 「启动与托盘」是桌面端专属（Docker/Web 版由 compose 的 restart 策略接管），自动隐藏。
+ *
+ * ⚠️ 「更新」分区里的静默下载与桌面安装包相关，但 Web/Docker 版也要能看
+ * 「当前版本 + 平台 + 当前版本更新日志」（镜像更新走 compose pull），
+ * 所以两个分支都保留 update，只是内容由 UpdatePanel 自行按 IS_WEB 收敛。
  */
 export const SOFTWARE_SECTIONS: { key: string; label: string }[] = IS_WEB
   ? [
       { key: "personalize", label: "个性化" },
       { key: "browser", label: "浏览器" },
       { key: "security", label: "安全" },
+      { key: "update", label: "更新" },
     ]
   : [
       { key: "personalize", label: "个性化" },
       { key: "launch", label: "启动与托盘" },
       { key: "browser", label: "浏览器" },
       { key: "security", label: "安全" },
+      { key: "update", label: "更新" },
     ];
 
 /**
@@ -37,10 +45,13 @@ export function SoftwareSettingsView({
   bgSrc,
   onShuffle,
   onSpySec,
+  onShowNotes,
 }: {
   bgSrc: string;
   onShuffle?: () => void;
   onSpySec?: (key: string) => void;
+  /** 「当前版本更新日志」拿到内容后交给上层弹窗展示 */
+  onShowNotes?: (notes: ReleaseNotesResult) => void;
 }) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   // 回调放进 ref，滚动监听只挂一次，不随父组件重渲染反复解绑
@@ -125,6 +136,17 @@ export function SoftwareSettingsView({
           账户登录态的加密存储与保险库管理
         </div>
         <VaultPanel />
+      </div>
+
+      {/* 分类 ⑤：更新（静默下载开关 / 当前版本 / 平台 / 检查更新 / 更新日志） */}
+      <div className="sec sw-sec" id="swsec-update">
+        <div className="sec-title">更新</div>
+        <div className="hint" style={{ marginBottom: 8 }}>
+          {IS_WEB
+            ? "查看当前版本与更新日志；Docker 版更新镜像请用 docker compose pull"
+            : "新版本检查与后台静默下载；下载不会申请管理员权限，安装时才弹 UAC"}
+        </div>
+        <UpdatePanel onShowNotes={onShowNotes} />
       </div>
     </div>
   );

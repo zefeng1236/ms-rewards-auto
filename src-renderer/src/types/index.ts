@@ -189,6 +189,23 @@ export interface AppConfig {
       mirror: string;
     };
   };
+  /** 软件本体更新（0.14.5 起） */
+  update: {
+    /** 后台静默下载新版本安装包，默认关闭 */
+    silentDownload: boolean;
+    /** 当天是否已弹过更新提示（YYYY-MM-DD），点叉后当天不再弹 */
+    lastPromptDate: string;
+    /** 已静默下载完成、等待安装的版本号（空 = 无待装包） */
+    readyVersion: string;
+    /** 待装安装包的落盘路径（空 = 无） */
+    readyFile: string;
+    /** 待装包下载时的字节数（安装前复核） */
+    readyBytes: number;
+    /** 待装包的 sha256（安装前复核；GitHub 不提供官方 digest，这是留存基准） */
+    readySha256: string;
+    /** 用户点叉忽略的版本号，避免同一版本反复弹 */
+    dismissedVersion: string;
+  };
 }
 
 /** 补丁写入用的深层可选类型 */
@@ -457,6 +474,32 @@ export interface CheckAppUpdateResult {
   releaseNotes: string;
   /** ISO 时间戳 */
   publishedAt: string;
+  error?: string;
+}
+
+/**
+ * 主进程推给界面的更新提示（打开 GUI 时按规则触发）。
+ * mode=ready：静默下载已下完，可直接安装；mode=available：只是告知有新版本。
+ */
+export interface UpdatePromptPayload {
+  mode: "ready" | "available";
+  /** 相关版本号 */
+  version: string;
+  /** mode=ready 时是安装包路径 */
+  file?: string;
+  /** mode=available 时是新版本更新日志正文 */
+  notes?: string;
+}
+
+/** 指定版本的更新日志（设置页「当前版本更新日志」按钮） */
+export interface ReleaseNotesResult {
+  ok: boolean;
+  /** 请求的版本号（不含 v 前缀） */
+  version: string;
+  /** Release 正文（Markdown 原文） */
+  notes: string;
+  /** 该版本的 Release 页面地址 */
+  pageUrl: string;
   error?: string;
 }
 

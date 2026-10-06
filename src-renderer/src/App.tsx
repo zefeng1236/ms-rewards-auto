@@ -18,7 +18,9 @@ import { SetupWizard } from "./views/SetupWizard";
 import { VaultLock } from "./views/VaultLock";
 import { ClosePrompt } from "./components/ClosePrompt";
 import { BgProgressBubble } from "./components/BgProgressBubble";
-import type { SetupState, VaultStatus } from "./types";
+import { ReleaseNotesDialog } from "./components/ReleaseNotesDialog";
+import { UpdatePromptDialog } from "./components/UpdatePromptDialog";
+import type { ReleaseNotesResult, SetupState, UpdatePromptPayload, VaultStatus } from "./types";
 
 export type ViewKey = "dashboard" | "achievements" | "account" | "settings" | "software" | "about";
 
@@ -78,9 +80,19 @@ function Shell() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // 点 × 关闭且关闭行为为「每次询问」时，主进程推事件要求弹选项卡
   const [closePromptOpen, setClosePromptOpen] = useState(false);
+  // 设置页「更新」→「当前版本更新日志」：只读展示某一版的 Release 正文
+  const [notesOpen, setNotesOpen] = useState(false);
+  const [notesData, setNotesData] = useState<ReleaseNotesResult | null>(null);
+  // 打开 GUI 时主进程按规则推来的更新提示（当天只弹一次，点叉不再来）
+  const [updatePrompt, setUpdatePrompt] = useState<UpdatePromptPayload | null>(null);
 
   useEffect(() => {
     const off = api.onClosePrompt(() => setClosePromptOpen(true));
+    return off;
+  }, []);
+
+  useEffect(() => {
+    const off = api.onUpdatePrompt((p) => setUpdatePrompt(p || null));
     return off;
   }, []);
 
@@ -230,6 +242,16 @@ function Shell() {
     <ClosePrompt onClose={() => setClosePromptOpen(false)} />
   ) : null;
 
+  // 「当前版本更新日志」只读弹窗（由软件设置 → 更新 触发）
+  const notesDialog = (
+    <ReleaseNotesDialog open={notesOpen} data={notesData} onClose={() => setNotesOpen(false)} />
+  );
+
+  // 打开 GUI 时的更新提示（静默下载已完成 / 发现新版本）
+  const updatePromptDialog = updatePrompt ? (
+    <UpdatePromptDialog payload={updatePrompt} onClose={() => setUpdatePrompt(null)} />
+  ) : null;
+
   // 首次启动：向导走完才进主界面
   if (!setup.done) {
     return (
@@ -241,6 +263,8 @@ function Shell() {
         <Toaster position="bottom-right" max={3} />
         <BgProgressBubble />
         {closePrompt}
+        {notesDialog}
+        {updatePromptDialog}
       </LiquidGlassConfig>
     );
   }
@@ -253,6 +277,8 @@ function Shell() {
         <Toaster position="bottom-right" max={3} />
         <BgProgressBubble />
         {closePrompt}
+        {notesDialog}
+        {updatePromptDialog}
       </LiquidGlassConfig>
     );
   }
@@ -303,7 +329,15 @@ function Shell() {
                 )}
                 {view === "settings" && <SettingsView />}
                 {view === "software" && (
-                  <SoftwareSettingsView bgSrc={bgSrc} onShuffle={shuffleBg} onSpySec={handleSwSpy} />
+                  <SoftwareSettingsView
+                    bgSrc={bgSrc}
+                    onShuffle={shuffleBg}
+                    onSpySec={handleSwSpy}
+                    onShowNotes={(d) => {
+                      setNotesData(d);
+                      setNotesOpen(true);
+                    }}
+                  />
                 )}
                 {view === "about" && <About />}
               </div>
@@ -313,6 +347,8 @@ function Shell() {
 
         <LogConsole />
         {closePrompt}
+        {notesDialog}
+        {updatePromptDialog}
         {/* 一言（右下角位置）：悬浮在窗口右下、贴底。
             用 fixed 而不是塞进 .content —— 后者会被滚动容器裁掉，也就"贴不住底部"了 */}
         {hitokoto && hitokotoPosition === "bottomRight" && (

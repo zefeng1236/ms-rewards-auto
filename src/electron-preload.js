@@ -119,6 +119,20 @@ contextBridge.exposeInMainWorld("api", {
   runUpdateInstaller: (filePath) => ipcRenderer.invoke("app:runUpdateInstaller", filePath),
   // 打开安装包所在文件夹并选中
   revealUpdateFile: (filePath) => ipcRenderer.invoke("app:revealUpdateFile", filePath),
+  // 取指定版本的更新日志（不传 = 当前版本）
+  releaseNotes: (version) => ipcRenderer.invoke("app:releaseNotes", version),
+  // 安装已下载的更新包：先校验文件存在，再校验完整性（大小 + PE 头 + sha256）
+  installUpdate: (payload) => ipcRenderer.invoke("app:installUpdate", payload),
+  // 关掉更新提示：当天不再弹
+  dismissUpdatePrompt: (version) => ipcRenderer.invoke("app:dismissUpdatePrompt", version),
+  // 手动检查更新（忽略「当天已弹过」）
+  checkUpdateNow: () => ipcRenderer.invoke("app:checkUpdateNow"),
+  // 主进程推更新提示：{ mode: "ready"|"available", version, notes?, file? }
+  onUpdatePrompt: (cb) => {
+    const handler = (_e, v) => cb(v);
+    ipcRenderer.on("update-prompt", handler);
+    return () => ipcRenderer.removeListener("update-prompt", handler);
+  },
   // 更新下载进度推送：{ loaded, total, pct, speed }；返回退订函数
   onUpdateDownloadProgress: (cb) => {
     const handler = (_e, v) => cb(v);

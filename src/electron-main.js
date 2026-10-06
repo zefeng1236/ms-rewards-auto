@@ -43,6 +43,17 @@ const IS_SMOKE = process.argv.includes("--smoke");
 const DEV_SERVER = "http://localhost:5173/";
 let mainWindow = null;
 let running = false;
+/**
+ * 是否正在跑**账户任务**（区别于 running）。
+ *
+ * 为什么要单独一个标志（2026-10-06 用户反馈「不执行任务的时候应该都可以叫闲时」）：
+ * `running` 是个泛化忙标志 —— 账户任务、授权登录、状态同步、浏览器下载
+ * **全都置它**。而指纹内核的「闲时切换」只该被**账户任务**挡住：
+ * 登录/同步/下载时候旧内核根本没人用，没理由继续等。
+ * 之前用 `isIdle: !running`，于是「正在下载内核」时 running=true → 判忙 →
+ * 下完也不切，一直卡在「等待空闲」，用户看到的就是进度条停在 99% 不动。
+ */
+let taskRunning = false;
 let daemonStop = null;
 let tray = null;
 /** 托盘「退出」时置位，允许窗口真正关闭（否则会被 close 拦截到托盘） */
@@ -401,6 +412,7 @@ async function runIds(ids, interactive, opts = {}) {
   // 预置：第一个立即工作，其余排队（轮到时 start 回调改为 working）
   valid.forEach((id, i) => setAccountStatus(id, i === 0 ? "running" : "waiting"));
   setRunning(true);
+  taskRunning = true;
   try {
     const results = await runner.runBatch(valid, {
       interactive,
@@ -433,6 +445,7 @@ async function runIds(ids, interactive, opts = {}) {
       const s = runStatus.get(id);
       if (s && (s.status === "running" || s.status === "waiting")) setAccountStatus(id, "idle");
     }
+    taskRunning = false;
     setRunning(false);
   }
 }
@@ -570,6 +583,11 @@ function createWindow(show = true) {
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:/.test(url)) shell.openExternal(url);
     return { action: "deny" };
+  });
+
+  // 打开 GUI 后按规则决定是否弹更新提示（见 maybePromptUpdate 注释）
+  mainWindow.webContents.on("did-finish-load", () => {
+    maybePromptUpdate();
   });
 
   // 冒烟测试模式：加载完成后等待 init() 异步渲染，再探查关键 DOM
@@ -853,9 +871,10 @@ function maybeStartBackgroundFingerprint() {
         return;
       }
       logger.info(`后台指纹内核新版 ${r.version} 解压就绪，等待闲时切换`);
-      // 下载完成 → 立刻尝试一次切换；不满足条件就靠定时器兜底
-      tryCommitFingerprintStaged();
-      ensureFingerprintCommitTimer();
+      // 下载完成 → 立刻尝试一次切换。
+      // ⚠️ 只有**没切换成功**才建定时器兜底：以前无论成败都建，于是已经切完了
+      // 定时器还在，每 30 秒刷一条「staging 没有新版本」的无用日志。
+      if (!tryCommitFingerprintStaged()) ensureFingerprintCommitTimer();
     })
     .catch((e) => logger.error(`后台指纹浏览器下载失败: ${e && e.message ? e.message : e}`))
     .finally(() => {
@@ -864,15 +883,86 @@ function maybeStartBackgroundFingerprint() {
     });
 }
 
+/** 本地日期（YYYY-MM-DD）。不用 toISOString —— 那是 UTC，凌晨会算成前一天。 */
+function todayStr() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/**
+ * 打开 GUI 时按规则决定是否弹更新提示（0.14.5）。
+ *
+ * 三条规则（用户 2026-10-06 明确）：
+ *   ① 静默下载已下完（有 readyFile）→ 下次打开 GUI 弹更新日志，可直接装；
+ *   ② 没开静默下载 → 当天**第一次**打开 GUI 时查一次，有新版本就弹；
+ *   ③ 用户点叉 → 当天不再弹（记 lastPromptDate），且记下 dismissedVersion，
+ *      避免同一个版本天天来烦人。
+ *
+ * ⚠️ 弹窗只是**通知**，不自动下载、不自动安装（静默下载开关才管下载）。
+ *
+ * @param {boolean} [force] 忽略「当天已弹过」的检查（手动点「检查更新」时用）
+ */
+async function maybePromptUpdate(force) {
+  if (IS_SMOKE) return;
+  try {
+    const cfg = globalConfig.get() || {};
+    const up = cfg.update || {};
+    const today = todayStr();
+
+    // ① 静默下载已完成 → 待装包优先，直接提示安装
+    if (up.readyFile && up.readyVersion) {
+      const v = await appUpdate.verifyUpdateFile({
+        path: up.readyFile,
+        bytes: up.readyBytes,
+        sha256: up.readySha256,
+      });
+      // 下完到点安装可能隔好几天，文件可能已被清理/损坏 —— 校验不过就当没有
+      if (v.ok) {
+        pushUpdatePrompt({ mode: "ready", version: up.readyVersion, file: up.readyFile });
+        return;
+      }
+      logger.warn(`待装更新包已失效（${v.reason}），清除待装标记`);
+      try {
+        globalConfig.set({ update: { ...up, readyFile: "", readyVersion: "" } });
+      } catch {}
+    }
+
+    // ③ 当天已经弹过 → 不再弹（除非 force）
+    if (!force && up.lastPromptDate === today) return;
+    // 这个版本用户已经点叉忽略了 → 不再弹
+    const r = await appUpdate.checkAppUpdate(displayVersion());
+    if (!r || !r.ok || !r.updateAvailable) return;
+    if (!force && up.dismissedVersion === r.latestVersion) return;
+
+    pushUpdatePrompt({ mode: "available", version: r.latestVersion, notes: r.releaseNotes || "" });
+  } catch (e) {
+    // 检查更新失败不能影响启动：静默吞掉
+    logger.warn(`更新提示检查失败: ${e && e.message ? e.message : e}`);
+  }
+}
+
+/** 把更新提示推给渲染层 */
+function pushUpdatePrompt(payload) {
+  try {
+    mainWindow?.webContents?.send("update-prompt", payload);
+  } catch {
+    /* 窗口已销毁时忽略 */
+  }
+}
+
 /**
  * 单次尝试：把 staging 切换到活动安装。
  *
  * 满足条件（staged ready、fpContext=0、没在跑账户任务）就执行；否则只记一行日志。
  * 成功 → 顺手取消 commit 定时器；失败 → 让定时器继续兜底。
+ *
+ * @returns {boolean} 是否已切换/已清扫成功（调用方据此决定要不要再建定时器）
  */
 function tryCommitFingerprintStaged() {
-  if (typeof fpBrowser.commitStagedInstall !== "function") return;
-  const r = fpBrowser.commitStagedInstall({ isIdle: !running });
+  if (typeof fpBrowser.commitStagedInstall !== "function") return false;
+  // ⚠️ 用 taskRunning 而不是 running：登录/同步/下载不算忙，只有账户任务才算
+  const r = fpBrowser.commitStagedInstall({ isIdle: !taskRunning });
   if (r && r.ok) {
     if (r.swapped) logger.info(`指纹内核已闲时切换为 ${fpBrowser.PINNED_VERSION}`);
     if (r.cleaned) logger.info(`staging 已清理（已是钉死版本）`);
@@ -881,7 +971,7 @@ function tryCommitFingerprintStaged() {
       fingerprintCommitTimer = null;
     }
     pushFingerprintStatus();
-    return;
+    return true;
   }
   if (r && r.reason) {
     // 静默 → 定时器下轮再来；只记 warn 一次免得刷屏
@@ -890,6 +980,7 @@ function tryCommitFingerprintStaged() {
       tryCommitFingerprintStaged._lastReason = r.reason;
     }
   }
+  return false;
 }
 
 /**
@@ -1347,7 +1438,31 @@ function registerIpc() {
   // ---- 环境拟真浏览器（可选增强，见 src/fingerprint-browser.js）----
   ipcMain.handle("app:fingerprintStatus", () => fpBrowser.status());
   ipcMain.handle("app:installFingerprint", async (_e, opts) => {
-    if (running) return { ok: false, error: "已有任务正在运行，请稍候" };
+    // ⚠️ 手动优先于后台：后台静默下载必须**先中止**再往下走。
+    //
+    // 为什么必须中止而不是只做「已存在就拒绝」（2026-10-06 实修）：
+    //   两者都往同一个 dest（fp-download/<asset>.zip）和同一组 .partN 分片写，
+    //   而 downloadAsset 的第二轮（allowResume=false）会清场删掉所有分片 ——
+    //   于是后台那次下到 202MB 的进度被 ip-direct 的清场一把删光（ENOENT），
+    //   用户眼看着下了三遍 202MB。光靠并发检查挡不住（时序上仍有窗口），
+    //   必须让手动下载把后台彻底掐掉。
+    if (fingerprintStagedController) {
+      logger.info("用户手动下载环境拟真浏览器：先中止后台静默下载（避免共用分片互相踩踏）");
+      try {
+        fingerprintStagedController.abort();
+      } catch {}
+      // 后台 controller 置空后它自己会在 finally 里清；这里立即置空让状态一致
+      fingerprintStagedController = null;
+      pushFingerprintStatus();
+    }
+    // 手动触发时若正在跑账户任务 → 按用户要求「终止任务后立即安装」。
+    // 只终止**任务**（taskRunning），登录/同步这类不必打断。
+    if (taskRunning) {
+      logger.warn("手动安装环境拟真浏览器：先终止正在执行的账户任务");
+      cancel.abort();
+      // 给协作式取消一点时间落地（长任务在可中断点退出、sleep 被唤醒）
+      await new Promise((r) => setTimeout(r, 800));
+    }
     if (fingerprintInstallController) return { ok: false, error: "环境拟真浏览器正在下载，请稍候" };
     fingerprintInstallController = new AbortController();
     setRunning(true);
@@ -1398,6 +1513,31 @@ function registerIpc() {
   // 应用本身更新检查：查询 GitHub Releases 最新正式版（自动走 gh-proxy 加速），只查不下载。
   ipcMain.handle("app:checkAppUpdate", () => appUpdate.checkAppUpdate(displayVersion()));
 
+  // 取**指定版本**的更新日志（设置页「当前版本更新日志」按钮）
+  ipcMain.handle("app:releaseNotes", (_e, version) =>
+    appUpdate.fetchReleaseNotes(String(version || displayVersion()))
+  );
+
+  // 用户关掉更新提示：记「当天已弹」+「这个版本已忽略」，当天不再来烦
+  ipcMain.handle("app:dismissUpdatePrompt", (_e, version) => {
+    const cfg = globalConfig.get() || {};
+    const up = cfg.update || {};
+    globalConfig.set({
+      update: {
+        ...up,
+        lastPromptDate: todayStr(),
+        dismissedVersion: String(version || up.dismissedVersion || ""),
+      },
+    });
+    return { ok: true };
+  });
+
+  // 手动点「检查更新」：忽略「当天已弹过」，强制查一次
+  ipcMain.handle("app:checkUpdateNow", async () => {
+    await maybePromptUpdate(true);
+    return appUpdate.checkAppUpdate(displayVersion());
+  });
+
   // ---- 应用更新：内置下载（不跳浏览器）----
   // 下载安装包到系统「下载」目录，进度经 update-download-progress 推给渲染端。
   ipcMain.handle("app:downloadUpdate", async (_e, payload) => {
@@ -1405,10 +1545,15 @@ function registerIpc() {
     if (!url) return { ok: false, error: "缺少下载地址" };
     if (updateDownloadController) return { ok: false, error: "已有更新正在下载，请稍候" };
 
-    const downloadsDir = app.getPath("downloads") || app.getPath("home");
+    // 落盘目录：优先**软件安装目录下的 updates/**，写不进去（需提权）则回落 AppData。
+    // 用户要求默认放软件根目录，并确认「要提权就放 appdata」（2026-10-06）。
+    const { dir: updateDir, fallback } = appUpdate.resolveUpdateDir(app.getPath("userData"));
     const safeName = String(assetName || "MS-Rewards-Auto-Setup.exe")
       .replace(/[\\/:*?"<>|]/g, "_");
-    const destFile = path.join(downloadsDir, safeName);
+    const destFile = path.join(updateDir || app.getPath("downloads"), safeName);
+    if (fallback) {
+      logger.info(`更新包目录回落到用户数据目录（安装目录不可写）: ${updateDir}`);
+    }
 
     updateDownloadController = new AbortController();
     try {
@@ -1426,11 +1571,103 @@ function registerIpc() {
       });
       if (r.ok) {
         logger.info(`更新安装包已下载：${destFile}（${r.bytes} 字节）`);
+        // 记录待装包信息（路径 + 版本 + 大小 + 哈希），供「点安装」时复核。
+        // ⚠️ version 从调用参数取：downloadUpdate 只负责搬字节，不知道版本号。
+        try {
+          const cfg = globalConfig.get() || {};
+          const prev = cfg.update || {};
+          const readyVersion = String((payload && payload.version) || prev.readyVersion || "");
+          globalConfig.set({
+            update: {
+              ...prev,
+              readyFile: r.path || destFile,
+              readyVersion,
+              readyBytes: r.bytes || 0,
+              readySha256: r.sha256 || "",
+            },
+          });
+        } catch (e) {
+          logger.warn(`记录待装更新包信息失败: ${e.message}`);
+        }
+        // 顺手清理旧安装包，只留刚下的这个
+        try {
+          const { removed } = appUpdate.cleanupOldSetups(updateDir, r.path || destFile, 1);
+          if (removed.length) logger.info(`已清理旧安装包 ${removed.length} 个`);
+        } catch {}
       }
       return r;
     } finally {
       updateDownloadController = null;
     }
+  });
+
+  // ---- 安装已下载的更新包 ----
+
+  /**
+   * 提权启动安装包（弹 UAC），并以无人值守方式安装。
+   *
+   * 为什么用 PowerShell 的 `Start-Process -Verb RunAs` 而不是 shell.openPath：
+   *   - `shell.openPath` 用的是「默认动词」，不保证提权；装到 Program Files 时
+   *     安装程序会因权限不足写到 VirtualStore 或直接失败。
+   *   - `-Verb RunAs` 是 Windows 标准的提权方式，会正常弹 UAC 让用户确认。
+   *
+   * 为什么带 `/S`（无人值守）：用户明确要求「直接开始安装，不需要手点」。
+   * 安装目录沿用上一次安装记录的 $INSTDIR（NSIS 静默会用注册表里的旧值），
+   * 所以升级场景不会装错位置。
+   *
+   * ⚠️ 只在**用户主动点安装**时调用。后台静默下载阶段绝不提权。
+   */
+  function launchInstallerElevated(exePath) {
+    const exe = String(exePath || "").replace(/'/g, "''");
+    // -Verb RunAs 触发 UAC；/S 让 NSIS 无人值守；装完由 installer.nsh 拉起新版本
+    const ps = `Start-Process -FilePath '${exe}' -ArgumentList '/S' -Verb RunAs`;
+    const child = spawn(
+      "powershell",
+      ["-NoProfile", "-NonInteractive", "-Command", ps],
+      { detached: true, windowsHide: true, stdio: "ignore" }
+    );
+    child.unref();
+  }
+
+  // 用户要求（2026-10-06）：点安装 → 弹 UAC → 装完自动打开，全程不用手点。
+  // 步骤：① 校验文件确实存在 ② 校验完整性 ③ 提权启动安装包（/S 无人值守）
+  //       ④ 本进程自动退出 ⑤ 安装包装完自动拉起新版本（见 installer.nsh）。
+  //
+  // ⚠️ 为什么这里**要**提权、而静默下载时**绝不**提权：
+  //   下载是后台行为，弹 UAC 就不叫静默了；而「点安装」是用户主动操作，
+  //   此时弹 UAC 是预期内的、也是必须的（装到 Program Files 需要管理员）。
+  ipcMain.handle("app:installUpdate", async (_e, payload) => {
+    const cfg = globalConfig.get() || {};
+    const info = cfg.update || {};
+    const file = String((payload && payload.file) || info.readyFile || "");
+    const v = await appUpdate.verifyUpdateFile({
+      path: file,
+      bytes: info.readyBytes,
+      sha256: info.readySha256,
+    });
+    if (!v.ok) {
+      logger.warn(`更新包校验未通过: ${v.reason}`);
+      return { ok: false, error: v.reason };
+    }
+    logger.info(`更新包校验通过（${v.bytes} 字节），提权启动安装程序…`);
+    // 退出前先把待装标记清掉，避免下次启动又弹已装过的版本
+    try {
+      globalConfig.set({ update: { ...info, readyFile: "", readyVersion: "" } });
+    } catch {}
+    try {
+      launchInstallerElevated(v.path);
+    } catch (e) {
+      return { ok: false, error: `启动安装程序失败: ${e.message}` };
+    }
+    // 让安装包先起来再退自己：立刻 quit 可能把刚 spawn 的安装包一起带走
+    setTimeout(() => {
+      try {
+        app.quit();
+      } catch {
+        /* 忽略 */
+      }
+    }, 1200);
+    return { ok: true };
   });
 
   ipcMain.handle("app:cancelUpdateDownload", () => {

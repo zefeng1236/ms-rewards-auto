@@ -107,6 +107,17 @@ const DEFAULTS = {
       mirror: "cdn.gh-proxy.org", // 下载镜像源：默认 cdn.gh-proxy.org；也可指定单个节点、auto 自动测速或 direct 直连
     },
   },
+  // 软件本体更新（0.14.5 起）。
+  // ⚠️ 必须与 global-config.js 的 GLOBAL_DEFAULTS.update 逐字段对齐。
+  update: {
+    silentDownload: false, // 后台静默下载，默认关闭
+    lastPromptDate: "",    // 当天是否已弹过（YYYY-MM-DD）
+    readyVersion: "",      // 已下好待安装的版本号
+    readyFile: "",         // 待装安装包路径
+    readyBytes: 0,         // 待装包字节数（安装前复核）
+    readySha256: "",       // 待装包 sha256（安装前复核）
+    dismissedVersion: "",  // 用户点叉忽略的版本
+  },
   // 积分目标。可配多个，按账户总积分余额判断，可选设置奖品与详情页显示。
   // 达成判定：当前余额 >= target；奖品数量按 floor(余额 / target) 计算。
   goals: {

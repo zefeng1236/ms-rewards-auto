@@ -531,6 +531,10 @@ function createApi({ emit }) {
     checkAppUpdate() {
       return appUpdate.checkAppUpdate(displayVersion());
     },
+    // 指定版本的更新日志（Docker 版也能看「当前版本改了什么」）
+    releaseNotes(version) {
+      return appUpdate.fetchReleaseNotes(String(version || displayVersion()));
+    },
 
     /* --------------------------- Web 专属 --------------------------- */
     /** 登出：只销毁本浏览器会话，保险库保持解锁，后台任务不受影响 */

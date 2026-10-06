@@ -178,6 +178,15 @@ export function FingerprintBrowserPanel() {
   const supported = st ? st.supported : true;
   const outdated = !!st && !!st.version && st.pinned && st.version !== st.pinned;
   const pct = progress && typeof progress.pct === "number" ? Math.min(99, progress.pct) : 0;
+  /**
+   * 新版本已下好、放在暂存区等着替换（还没真正装上）。
+   *
+   * ⚠️ 这个状态必须优先于下载进度条：以前 `pct` 被 Math.min(99,...) 夹住，
+   * 下载完成时 progress.pct=100 → 压成 99 → `pct < 100` 恒真 →
+   * **进度条永远停在 99% 不动**，用户以为卡住了，其实只是在等替换时机。
+   * 现在命中这个状态就显示「等待安装」，不再显示那条假进度。
+   */
+  const waitingInstall = !!st?.staged?.ready && !st?.staged?.committed && !st?.preinstalled;
 
   return (
     <div className="block">
@@ -306,15 +315,24 @@ export function FingerprintBrowserPanel() {
               </div>
             )}
 
-            {progress && pct < 100 && (
+            {waitingInstall ? (
               <div className="fp-progress">
-                <div className="fp-bar">
-                  <div className="fp-bar-fill" style={{ width: `${pct}%` }} />
-                </div>
-                <div className="hint" title={progress.message || ""}>
-                  {progress.message || `正在下载 ${pct}%`}
+                <div className="hint" style={{ fontWeight: 600 }}>
+                  新版本 {st?.staged?.version} 已下载完成，等待安装
                 </div>
               </div>
+            ) : (
+              progress &&
+              pct < 100 && (
+                <div className="fp-progress">
+                  <div className="fp-bar">
+                    <div className="fp-bar-fill" style={{ width: `${pct}%` }} />
+                  </div>
+                  <div className="hint" title={progress.message || ""}>
+                    {progress.message || `正在下载 ${pct}%`}
+                  </div>
+                </div>
+              )
             )}
 
             {check && check.ok && (
@@ -347,16 +365,15 @@ export function FingerprintBrowserPanel() {
               headless 下它只把 UA 的 HeadlessChrome 改成 Chrome，其余 headless 特征不变。
             </div>
 
-            {/* 0.14：后台 staging 状态提示 —— 仅在"已装旧版 + 钉死版本更新"或"刚装好新版"两种场景出现 */}
-            {!st?.preinstalled &&
-              st?.staged?.ready &&
-              !st?.staged?.committed && (
-                <div className="hint fp-note" style={{ marginTop: 4 }}>
-                  新版本 <strong>{st.staged.version}</strong> 已下载到临时位置，等待空闲时段自动切换；
-                  当前任务完全不受影响，正在跑的内核照常用，闲下来再切。
-                  （当前活跃内核数：{st.fpContextCount ?? 0}）
-                </div>
-              )}
+            {/* 0.14：后台 staging 状态提示 —— 仅在"已装旧版 + 钉死版本更新"或"刚装好新版"两种场景出现
+                ⚠️ 这里只补充「为什么还在等」，「已下载完成、等待安装」那句在上面的进度区显示，
+                两处不要重复同一句话。 */}
+            {waitingInstall && (
+              <div className="hint fp-note" style={{ marginTop: 4 }}>
+                替换时机：只要当前没有账户任务在跑就会自动装（登录、同步、下载都不算忙）。
+                正在跑的内核不受影响，会等它空闲下来再切。（当前活跃内核数：{st.fpContextCount ?? 0}）
+              </div>
+            )}
           </>
         )}
       </AppCard>

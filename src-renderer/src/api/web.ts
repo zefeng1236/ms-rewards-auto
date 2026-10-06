@@ -15,6 +15,7 @@ import type {
   DeepPartial,
   DownloadResult,
   FingerprintStatus,
+  ReleaseNotesResult,
   HistorySnapshot,
   Hitokoto,
   InstallBrowserResult,
@@ -412,6 +413,11 @@ export function createWebApi(): ElectronApi {
     cancelUpdateDownload: async () => ({ ok: true }),
     runUpdateInstaller: async () => ({ ok: false, error: "Web 版无桌面安装包" }),
     revealUpdateFile: async () => ({ ok: false, error: "Web 版无桌面安装包" }),
+    releaseNotes: () => rpc<ReleaseNotesResult>("releaseNotes"),
+    installUpdate: async () => ({ ok: false, error: "Web 版请通过 docker compose pull 更新镜像" }),
+    dismissUpdatePrompt: async () => ({ ok: true }),
+    checkUpdateNow: () => rpc<CheckAppUpdateResult>("checkAppUpdate"),
+    onUpdatePrompt: () => () => {},
     onUpdateDownloadProgress: () => () => {},
 
     /* ---------------- 事件订阅 ---------------- */

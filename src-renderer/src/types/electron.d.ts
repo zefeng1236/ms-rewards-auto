@@ -175,6 +175,19 @@ export interface ElectronApi {
   runUpdateInstaller(filePath: string): Promise<{ ok: boolean; error?: string }>;
   /** 打开安装包所在文件夹并选中 */
   revealUpdateFile(filePath: string): Promise<{ ok: boolean; error?: string }>;
+  /** 取指定版本的更新日志（不传 = 当前版本） */
+  releaseNotes(version?: string): Promise<ReleaseNotesResult>;
+  /**
+   * 安装已下载的更新包：先校验文件确实存在，再校验完整性（大小 + PE 头 + sha256），
+   * 通过后才启动安装包。静默下载场景尤其必要 —— 下完到点安装可能隔好几天。
+   */
+  installUpdate(payload?: { file?: string }): Promise<{ ok: boolean; error?: string }>;
+  /** 关掉更新提示：当天不再弹 */
+  dismissUpdatePrompt(version?: string): Promise<{ ok: boolean }>;
+  /** 手动检查更新（忽略「当天已弹过」的限制） */
+  checkUpdateNow(): Promise<CheckAppUpdateResult>;
+  /** 主进程推来的更新提示；返回退订函数 */
+  onUpdatePrompt(cb: (v: UpdatePromptPayload) => void): () => void;
   /** 更新下载进度推送：{ loaded, total, pct, speed }；返回退订函数 */
   onUpdateDownloadProgress(cb: (v: UpdateDownloadProgress) => void): () => void;
 

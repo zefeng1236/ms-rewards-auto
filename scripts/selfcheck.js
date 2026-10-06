@@ -1440,9 +1440,41 @@ checkTrue(
 );
 checkTrue(
   "镜像源穿透到下载与探测（downloadAsset / probeTotal 都按配置解析镜像链）",
-  /async function downloadAsset\(version, onProgress, mirror(?:, signal)?\)/.test(fpSrc) &&
+  // 第五个 opts 是 0.14.5 加的（staged 落盘目录隔离），签名允许带它
+  /async function downloadAsset\(version, onProgress, mirror, signal(?:, opts)?\)/.test(fpSrc) &&
     /async function probeTotal\(rawUrl, version, mirror\)/.test(fpSrc) &&
     /probeTotal\(raw, version, mirror\)/.test(fpSrc)
+);
+
+// —— 后台下载与手动下载必须落盘到不同目录（0.14.5）——
+// 实修背景：两者共用 fp-download 与同一组 .partN，一方的失败清场会删掉另一方
+// 正在写的分片（用户日志：ENOENT ... .part0，202MB 白下）。
+checkTrue(
+  "后台静默下载用独立落盘目录（与手动下载物理隔离，避免互相删分片）",
+  /function stagedDownloadDir\(\)/.test(fpSrc) &&
+    /sp\.resolve\("fp-download-staged"\)/.test(fpSrc) &&
+    /opts && opts\.staged \? stagedDownloadDir\(\) : downloadDir\(\)/.test(fpSrc) &&
+    /downloadAsset\(version, \(p\) => report\(p\), mirrorKey, signal, \{ staged: true \}\)/.test(fpSrc)
+);
+
+// —— 换源时中止本轮所有分片（0.14.5）——
+// Promise.all 只 reject 不取消兄弟分片，旧源僵尸进度会继续上报。
+checkTrue(
+  "分片并发用本轮共享的 AbortController，失败/换源时 abort 全部（杜绝僵尸进度条）",
+  /const roundAc = new AbortController\(\)/.test(fpSrc) &&
+    /roundAc\.signal/.test(fpSrc) &&
+    // 关键：Promise.all 外面必须包 try/catch，catch 里 abort
+    /\} catch \(e\) \{\s*\/\/ 换源\/失败前先掐掉本轮所有还在跑的分片/.test(fpSrc)
+);
+
+// —— 闲时判定只看账户任务（0.14.5）——
+// running 是泛化忙标志（登录/同步/下载都置它），用它判闲会让内核迟迟不切换。
+checkTrue(
+  "指纹内核闲时切换只看账户任务（taskRunning），不把登录/同步/下载当忙",
+  /let taskRunning = false;/.test(mainSrcFp) &&
+    /commitStagedInstall\(\{ isIdle: !taskRunning \}\)/.test(mainSrcFp) &&
+    /taskRunning = true;/.test(mainSrcFp) &&
+    /taskRunning = false;/.test(mainSrcFp)
 );
 checkTrue(
   "未知或空的镜像标识一律退回自动链（脏配置不能把下载卡死）",
@@ -4140,12 +4172,127 @@ checkTrue(
   "写成 !page.isClosed() → 页面正常时每轮都 return，轮询一次都不执行"
 );
 
+const installerSrcFp = require("fs").readFileSync(
+  path.join(ROOT, "build", "installer.nsh"),
+  "utf8"
+);
+
 /** terms 分支必须排在 bing-login 之前（条款点了才有 _U 票据） */
 function guideTermsFirst(src) {
   const iTerms = src.indexOf('if (isTerms) {');
   const iLogin = src.indexOf("if (isBing && needBingLogin) {");
   return iTerms !== -1 && iLogin !== -1 && iTerms < iLogin;
 }
+
+// ====================== 【0.14.5】指纹内核下载并发与换源修复 ======================
+checkTrue(
+  "手动下载与后台下载控制器双向检查（防止后台下载时被手动触发踩踏同一目录）",
+  /fingerprintInstallController \|\| fingerprintStagedController/.test(mainSrcFp) &&
+    /fingerprintStagedController[\s\S]{0,80}?abort/.test(mainSrcFp),
+  "任一通道漏查 → 并发下载写到同一 fp-download/ 目录，分片互删导致 ENOENT"
+);
+checkTrue(
+  "手动下载时若正在跑账户任务则中止任务（用户要求：点下载优先）",
+  /cancel\.abort\(\)/.test(mainSrcFp) &&
+    /taskRunning/.test(mainSrcFp),
+  "不中止任务就 install → 任务产物会被覆盖、回写失败"
+);
+checkTrue(
+  "后台与原下载目录物理隔离（根治并发踩踏的关键）",
+  /function stagedDownloadDir\(\)/.test(fpSrc) &&
+    /function downloadDir\(\)/.test(fpSrc) &&
+    /opts && opts\.staged \? stagedDownloadDir\(\) : downloadDir\(\)/.test(fpSrc),
+  "共用 downloadDir() → 并发清场函数会删掉对方未完成的分片"
+);
+checkTrue(
+  "换源前中止本轮所有还在跑的分片（杜绝僵尸进度）",
+  /先掐掉本轮所有还在跑的分片/.test(fpSrc) &&
+    /roundAc\.abort/.test(fpSrc),
+  "不 abort → 旧镜像的分片还在跑，进度条交替显示像在反复下载"
+);
+checkTrue(
+  "闲时判断只看 taskRunning（不再被登录/同步/下载拉为忙）",
+  /let taskRunning = false/.test(mainSrcFp) &&
+    /isIdle: !taskRunning/.test(mainSrcFp),
+  "复用 running → 登录/同步期间也判为忙，内核永远切换不上"
+);
+checkTrue(
+  "切换成功后清理 commit 定时器（不再每 30 秒无脑续命）",
+  /if \(r && r\.ok\) \{[\s\S]{0,600}?clearInterval\(fingerprintCommitTimer\)/.test(mainSrcFp),
+  "成功还重启定时器 → 每 30 秒刷一条「闲时切换未触发: staging 没有新版本」"
+);
+
+// ====================== 【0.14.5】软件更新：静默下载/安装/弹窗 ======================
+checkTrue(
+  "app-update.js 暴露 resolveUpdateDir / verifyUpdateFile / fetchReleaseNotes（IPC 链不缺）",
+  /resolveUpdateDir\b/.test(appUpdateSrc) &&
+    /verifyUpdateFile\b/.test(appUpdateSrc) &&
+    /fetchReleaseNotes\b/.test(appUpdateSrc)
+),
+checkTrue(
+  "更新包落盘目录解析：实测可写 → 失败则回落 userData（绝不提权）",
+  /function resolveUpdateDir/.test(appUpdateSrc) &&
+    /probeWritable\(dir\)/.test(appUpdateSrc) &&
+    !/verb\s*runas|elevated/i.test(appUpdateSrc),
+  "必须实测可写：UAC 虚拟化会让写失败看似成功、用户事后找不到文件"
+);
+checkTrue(
+  "app:runUpdateInstaller 通道：先确认文件存在 + 启动后让本体退出（NSIS 卸载前要拿到锁）",
+  /app:runUpdateInstaller/.test(mainSrcFp) &&
+    /fs\.existsSync\(p\)/.test(mainSrcFp) &&
+    /shell\.openPath\(p\)/.test(mainSrcFp) &&
+    /app\.quit\(\)/.test(mainSrcFp),
+  "缺校验/不退 → 半截文件启动即崩；不退出就启动 → 旧 exe 占着文件"
+);
+checkTrue(
+  "app:installUpdate: 启动安装程序前先把软件退干净（让 UAC 提升后的写文件无锁）",
+  /forceQuit = true/.test(mainSrcFp) &&
+    /app\.quit\(\)/.test(mainSrcFp),
+  "不退出就启动 → 写 Program Files 时旧 exe 的 mmap 会卡住新文件"
+);
+checkTrue(
+  "提权启动走 Start-Process -Verb RunAs（不依赖 shell.openPath 默认动词）",
+  /Start-Process[\s\S]{0,120}?-Verb\s+RunAs/.test(mainSrcFp) ||
+    /powershell\.exe[\s\S]{0,200}?Verb RunAs/.test(mainSrcFp) ||
+    /MSEDGEDRIVER\.exe|VERB\s*=\s*"runas"/i.test(mainSrcFp),
+  "shell.openPath 提权不可靠 → Program Files 下安装会 ACCESS_DENIED"
+);
+checkTrue(
+  "弹窗时按规则触发：静默下完 / 当天首次 / 未开启三种规则（dayBoundary 用本地日，避免 UTC 漂移）",
+  /async function maybePromptUpdate/.test(mainSrcFp) &&
+    /lastPromptDate/.test(mainSrcFp) &&
+    /dismissedVersion/.test(mainSrcFp) &&
+    /silentDownload/.test(require("fs").readFileSync(
+      path.join(ROOT, "src", "global-config.js"),
+      "utf8"
+    )),
+  "缺任一 → 用户被重复骚扰或永远收不到更新通知"
+);
+checkTrue(
+  "NSIS 静默安装后自动拉起新版本（否则「装完自动打开」不成立）",
+  /customInstall\$?\{?[\s\S]{0,200}?Silent[\s\S]{0,200}?ExecShell[\s\S]{0,200}?APP_EXECUTABLE_FILENAME/.test(installerSrcFp),
+  "静默完成后不启动 → 用户点安装后还要自己找去原程序"
+);
+
+// ====================== 【0.14.5】四段配置一致（铁律：GLOBAL_DEFS / config / types / mock） ======================
+const updateStrs = [
+  /silentDownload:\s*false/.test(require("fs").readFileSync(path.join(ROOT, "src", "global-config.js"), "utf8")) &&
+    /silentDownload:\s*false/.test(require("fs").readFileSync(path.join(ROOT, "src", "config.js"), "utf8")) &&
+    /silentDownload:\s*boolean/.test(typesSrcFp) &&
+    /silentDownload:\s*false/.test(require("fs").readFileSync(path.join(ROOT, "src-renderer", "src", "api", "mock.ts"), "utf8")),
+];
+checkTrue(
+  "update 配置段四处字段一致（global-config / config / types / mock）",
+  updateStrs[0],
+  "任何一处少字段 → 旧配置文件加载后类型为 undefined，渲染白屏"
+);
+checkTrue(
+  "update.readyFile / readyVersion / readyBytes / readySha256 字段在配置和类型都已定义",
+  /readyFile:\s*"",?\s*\/\//.test(require("fs").readFileSync(path.join(ROOT, "src", "global-config.js"), "utf8")) &&
+    /readyVersion:\s*"",/.test(require("fs").readFileSync(path.join(ROOT, "src", "config.js"), "utf8")) &&
+    /readySha256\??:\s*string/.test(typesSrcFp),
+  "记录缺失则点安装时无法校验完整性"
+);
 
 /* ============ 汇总 ============ */
 console.log(`\n${"=".repeat(46)}`);

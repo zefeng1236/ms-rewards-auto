@@ -91,6 +91,29 @@ const GLOBAL_DEFAULTS = {
       mirror: "cdn.gh-proxy.org", // 下载镜像源：默认 cdn.gh-proxy.org；也可指定单个节点、auto 自动测速或 direct 直连
     },
   },
+  /**
+   * 软件本体更新（0.14.5 起）。
+   *
+   * ⚠️ 必须与 src/config.js 的 DEFAULTS.update、src-renderer/src/types/index.ts 的
+   * GlobalConfig.update、src-renderer/src/api/mock.ts 的 browser 同级 update 段
+   * **逐字段对齐** —— 旧配置缺新字段会导致渲染层白屏（0.13.x 踩过）。
+   */
+  update: {
+    // 后台静默下载新版本安装包。默认关闭：不未经允许就在后台拉 100MB+。
+    silentDownload: false,
+    // 当天是否已弹过更新提示（YYYY-MM-DD）。用户点叉后当天不再弹。
+    lastPromptDate: "",
+    // 已静默下载完成、待安装的版本号（空 = 没有待装包）
+    readyVersion: "",
+    // 待装安装包的落盘路径（相对或绝对；空 = 无）
+    readyFile: "",
+    // 待装包下载时的字节数与 sha256（安装前复核用；GitHub 不提供官方 digest，
+    // 这是我们自己留存的基准，用于发现文件损坏/被动过）
+    readyBytes: 0,
+    readySha256: "",
+    // 已忽略的版本号（用户点叉的那个版本，避免同版本反复弹）
+    dismissedVersion: "",
+  },
   // 积分目标。可配多个，按账户总积分余额判断，可选设置奖品与详情页显示。
   // 达成判定：当前余额 >= target；奖品数量按 floor(余额 / target) 计算。
   // ⚠️ 必须与 src/config.js 的 DEFAULTS.goals 对齐（含 items: []）。
