@@ -4,7 +4,7 @@
 
 ## 0.14.7
 
-发布日期：2026-10-07 · Windows 安装包 `MS-Rewards-Auto-Setup-0.14.7.exe`
+发布日期：2026-10-07 · Windows 安装包 `MS-Rewards-Auto-Setup-0.14.7.1.exe`
 
 本版四件事：根治**自动更新下载卡死**、清掉 GitHub Code scanning 的 **15 条安全告警**、
 把**双内核切换**从下拉框改成一眼可见的卡片、以及修掉**弹窗不居中 / 安装包被系统拦截**
