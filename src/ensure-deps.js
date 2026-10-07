@@ -286,7 +286,16 @@ async function tryInstallWithMirror(hostValue, stage) {
   // 进程内 require 已加载的 playwright-core 不会重新读 env，强制重置 require 缓存
   const corePath = require.resolve("playwright-core/lib/coreBundle");
   delete require.cache[corePath];
-  const probed = hostValue.startsWith("https://cdn.npmmirror.com")
+  // host 主机名精确比对（startsWith 前缀判断可被 https://cdn.npmmirror.com.evil.com 绕过，CodeQL js/incomplete-url-substring-sanitization）
+  const isNpmmirror = (() => {
+    try {
+      const u = new URL(hostValue);
+      return u.protocol === "https:" && u.hostname === "cdn.npmmirror.com";
+    } catch {
+      return false;
+    }
+  })();
+  const probed = isNpmmirror
     ? await probeChromiumHeadOk(hostValue)
     : null;
   const poller = startInstallProgressPoller({ stage });

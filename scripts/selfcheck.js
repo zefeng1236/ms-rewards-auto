@@ -43,6 +43,11 @@ const os = require("os");
 let pass = 0;
 let fail = 0;
 
+/** 完整转义正则元字符（只转义点号是不够的，CodeQL js/incomplete-sanitization / js/regex-injection） */
+function escapeRegExp(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /**
  * 加载一个 TSX 渲染器并返回其导出。
  *
@@ -384,7 +389,7 @@ checkTrue(
 const changelogSrc = fs.readFileSync(path.join(ROOT, "CHANGELOG.md"), "utf8");
 checkTrue(
   "CHANGELOG 含当前版本章节",
-  new RegExp(`^## ${pkgVersion.replace(/\./g, "\\.")}\\s*$`, "m").test(changelogSrc),
+  new RegExp(`^## ${escapeRegExp(pkgVersion)}\\s*$`, "m").test(changelogSrc),
   `CHANGELOG 中未找到「## ${pkgVersion}」`
 );
 
@@ -1573,11 +1578,14 @@ checkTrue(
   "README 的上游链接均指向真实仓库（防止文档腐坏）",
   (() => {
     const rd = require("fs").readFileSync(path.join(ROOT, "README.md"), "utf8");
+    // 提取 README 里的全部 URL 做精确匹配（子串判断会被 evil.com/?x=github.com 绕过，CodeQL js/incomplete-url-substring-sanitization）
+    const norm = (u) => u.replace(/[.,;:)\]）》」』]+$/u, "").replace(/\/+$/, "");
+    const urls = new Set((rd.match(/https?:\/\/[^\s)\]）》」』>]+/g) || []).map(norm));
     // 两个上游仓库 + fp150 的缺陷追踪 issue，三者缺一文档就不可信
     return (
-      rd.includes("https://github.com/xiaozhou26/Chromix") &&
-      rd.includes("https://github.com/adryfish/fingerprint-chromium") &&
-      rd.includes("https://github.com/adryfish/fingerprint-chromium/issues/94")
+      urls.has("https://github.com/xiaozhou26/Chromix") &&
+      urls.has("https://github.com/adryfish/fingerprint-chromium") &&
+      urls.has("https://github.com/adryfish/fingerprint-chromium/issues/94")
     );
   })(),
   "上游链接缺失 → 用户找不到 issue #94，也就看不到 fp150 为何不可选"
@@ -2085,7 +2093,7 @@ checkTrue(
 checkTrue(
   "镜像源默认值必须是 MIRROR_KEYS 里登记过的键（防止改成未登记域名 → 静默走兜底链）",
   !!fpDefaultMirror &&
-    new RegExp(`["']?${fpDefaultMirror.replace(/\./g, "\\.")}["']?:`).test(
+    new RegExp(`["']?${escapeRegExp(fpDefaultMirror)}["']?:`).test(
       (fpSrc.match(/const MIRROR_KEYS = \{([\s\S]*?)\n\};/) || ["", ""])[1]
     )
 );
@@ -3840,7 +3848,7 @@ const appUpdateSrc = fs.readFileSync(path.join(ROOT, "src", "app-update.js"), "u
 checkTrue("下载链路：preload 暴露 downloadUpdate + 进度订阅", /downloadUpdate: \(url, assetName\)/.test(preloadSrc) && /onUpdateDownloadProgress/.test(preloadSrc));
 checkTrue("下载链路：主进程注册 下载/取消/安装/打开文件夹 四 handler", /ipcMain\.handle\("app:downloadUpdate"/.test(mainSrcHist) && /ipcMain\.handle\("app:cancelUpdateDownload"/.test(mainSrcHist) && /ipcMain\.handle\("app:runUpdateInstaller"/.test(mainSrcHist) && /ipcMain\.handle\("app:revealUpdateFile"/.test(mainSrcHist));
 checkTrue("下载链路：主进程推送进度事件 update-download-progress", /"update-download-progress"/.test(mainSrcHist));
-checkTrue("下载链路：app-update 提供流式 downloadUpdate（走镜像链）", /async function downloadUpdate/.test(appUpdateSrc) && /MIRROR_PREFIXES/.test(appUpdateSrc) && /AbortSignal\.timeout/.test(appUpdateSrc));
+checkTrue("下载链路：app-update 提供流式 downloadUpdate（走镜像链 + 空闲看门狗 + 断点续传）", /async function downloadUpdate/.test(appUpdateSrc) && /MIRROR_PREFIXES/.test(appUpdateSrc) && /STALL_IDLE_MS/.test(appUpdateSrc) && /PART_SUFFIX/.test(appUpdateSrc) && /headers\.Range = `bytes=\$\{have\}-`/.test(appUpdateSrc), "下载卡死三件套（空闲超时/断点续传/.part 半成品）任一缺失 → 弱网下下载会挂死或从 0 重来");
 checkTrue("下载链路：web.ts 提供 downloadUpdate（Docker 提示语义）", /downloadUpdate: async/.test(webTsSrc));
 checkTrue("下载链路：mock 提供 downloadUpdate（预览提示语义）", /downloadUpdate: async/.test(mockApiSrc));
 checkTrue("下载链路：类型声明含 downloadUpdate 与进度", /downloadUpdate\(url: string, assetName: string\)/.test(dtsSrc) && /UpdateDownloadProgress/.test(dtsSrc));
@@ -4997,6 +5005,56 @@ checkTrue(
   /rRead\.status === "retry"/.test(runnerSrcFp2) && /rSign\.status === "retry"/.test(runnerSrcFp2),
   "写成「未运行」会让用户以为程序根本没执行，而实际是被接口挡住了"
 );
+
+// ====================== 【0.14.7】CodeQL 安全告警修复守卫 ======================
+// GitHub Code scanning 15 条告警修复后的防回潮。每条都对应一个真实攻击面，
+// 被误删/回退时必须变红（反例验证见 .workbuddy/tmp/test-codeql-guards.js 的思路：
+// 逐条注入旧值跑本脚本，确认对应守卫报 FAIL）。
+console.log("\n【0.14.7】CodeQL 安全告警修复守卫");
+{
+  const guiSrc = require("fs").readFileSync(path.join(ROOT, "gui", "renderer.js"), "utf8");
+  // ① 原型链污染：mergeInto 必须跳过危险键（js/prototype-pollution-utility）
+  checkTrue(
+    "gui/mergeInto 阻断原型链污染（__proto__/constructor/prototype 一律不合并）",
+    /FORBIDDEN_KEYS/.test(guiSrc) && /FORBIDDEN_KEYS\.has\(k\)/.test(guiSrc),
+    "mergeInto 无键名过滤 → 恶意 patch 可污染全局原型，所有对象行为被劫持"
+  );
+  // ② XSS：主题色进 innerHTML 模板前必须过 safeAccent 白名单（js/xss-through-dom）
+  checkTrue(
+    "gui 主题色经 safeAccent 白名单校验（hex 颜色格式）后才进 innerHTML",
+    /function safeAccent/.test(guiSrc) && /escapeHtml\(safeAccent\(cfg\.accent\)\)/.test(guiSrc),
+    "cfg.accent 来自 DOM 输入，裸拼进 value=\"...\" 可闭合属性注入脚本"
+  );
+  // ③ URL 判定必须用 new URL 主机名精确比对（js/incomplete-url-substring-sanitization）
+  const ensureDepsSrc2 = require("fs").readFileSync(path.join(ROOT, "src", "ensure-deps.js"), "utf8");
+  const exploreDailySrc2 = require("fs").readFileSync(path.join(ROOT, "scripts", "explore-daily.js"), "utf8");
+  checkTrue(
+    "URL 校验走主机名精确比对（cdn.npmmirror.com / rewards.bing.com）",
+    /new URL\(hostValue\)/.test(ensureDepsSrc2) &&
+      !/startsWith\("https:\/\/cdn\.npmmirror\.com"\)/.test(ensureDepsSrc2) &&
+      /st\.host === "rewards\.bing\.com"/.test(exploreDailySrc2) &&
+      !/st\.host\.includes\("rewards\.bing\.com"\)/.test(exploreDailySrc2),
+    "子串/前缀判断可被 cdn.npmmirror.com.evil.com 等伪装域名绕过"
+  );
+  // ④ 正则拼接必须完整转义元字符（js/regex-injection / js/incomplete-sanitization）
+  const bumpSrcGuard = require("fs").readFileSync(path.join(ROOT, "scripts", "bump-version.js"), "utf8");
+  checkTrue(
+    "版本号进正则走 escapeRegExp（完整转义，非只转义点号）",
+    /function escapeRegExp/.test(bumpSrcGuard) &&
+      !bumpSrcGuard.includes('replace(/\\./g') &&
+      /escapeRegExp\(expected\)/.test(bumpSrcGuard) &&
+      /escapeRegExp\(targetVersion\)/.test(bumpSrcGuard),
+    "只转义点号 → 括号/星号等元字符仍可注入正则，导致校验被绕过或误匹配"
+  );
+  // ⑤ workflow 最小权限（actions/missing-workflow-permissions）
+  const ciSrcGuard = require("fs").readFileSync(path.join(ROOT, ".github", "workflows", "ci.yml"), "utf8");
+  checkTrue(
+    "ci.yml 三个 job 都显式声明 permissions（最小权限原则）",
+    (ciSrcGuard.match(/^\s{4}permissions:/gm) || []).length >= 3 &&
+      !/permissions:\s*\n\s*contents:\s*write/.test(ciSrcGuard),
+    "缺 permissions 声明 → job 默认拿 GITHUB_TOKEN 全量写权限"
+  );
+}
 
 /* ============ 汇总 ============ */
 console.log(`\n${"=".repeat(46)}`);

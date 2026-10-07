@@ -24,6 +24,11 @@ function escapeHtml(s) {
     .replace(/"/g, "&quot;");
 }
 
+/** 主题色只接受合法 hex 颜色，其余一律回落默认（阻断属性逃逸 / CSS 注入） */
+function safeAccent(v) {
+  return typeof v === "string" && /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(v) ? v : "#3b82f6";
+}
+
 function toast(msg, type = "") {
   const el = $("#toast");
   el.textContent = msg;
@@ -39,8 +44,10 @@ function setBusy(sel, busy) {
 }
 
 /** 深合并到本地缓存，避免每次改设置都要重新拉一遍 IPC */
+const FORBIDDEN_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 function mergeInto(base, patch) {
   for (const k of Object.keys(patch || {})) {
+    if (FORBIDDEN_KEYS.has(k)) continue; // 阻断原型链污染
     const v = patch[k];
     if (v && typeof v === "object" && !Array.isArray(v) && base[k] && typeof base[k] === "object" && !Array.isArray(base[k])) {
       mergeInto(base[k], v);
@@ -507,7 +514,7 @@ function applyAppearance(cfg) {
   if (!cfg) return;
   const root = document.documentElement;
 
-  const accent = cfg.accent || "#3b82f6";
+  const accent = safeAccent(cfg.accent);
   root.style.setProperty("--app-accent", accent);
   root.style.setProperty("--app-accent-hi", shiftColor(accent, 0.18));
   root.style.setProperty("--app-accent-dim", shiftColor(accent, -0.25));
@@ -758,7 +765,7 @@ async function renderPersonalize() {
       <div class="form-grid">
         <label class="field inline">
           <span>主题色</span>
-          <input type="color" id="pa-accent" value="${cfg.accent || "#3b82f6"}" />
+          <input type="color" id="pa-accent" value="${escapeHtml(safeAccent(cfg.accent))}" />
         </label>
         <div class="swatches" id="pa-swatches">
           ${["#3b82f6", "#34d399", "#f0b429", "#f85149", "#a855f7", "#ec4899"].map((c) => `<button type="button" class="swatch" style="background:${c}" data-color="${c}" title="${c}"></button>`).join("")}

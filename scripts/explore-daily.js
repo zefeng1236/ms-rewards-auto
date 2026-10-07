@@ -64,7 +64,9 @@ async function main() {
           " head=" + JSON.stringify(st.txt.slice(0, 80))
         );
       }
-      if (st.host.includes("rewards.bing.com") && hasAvail) {
+      // hostname 精确比对（includes 子串可被 evil-rewards.bing.com 绕过，CodeQL js/incomplete-url-substring-sanitization）
+      const onRewardsHost = st.host === "rewards.bing.com" || st.host.endsWith(".rewards.bing.com");
+      if (onRewardsHost && hasAvail) {
         loggedIn = true;
         log("[login] 已登录（检测到可用积分）");
         break;

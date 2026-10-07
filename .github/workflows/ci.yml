@@ -22,6 +22,10 @@ jobs:
     name: 门禁（typecheck + selfcheck + 前端构建）
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # 最小权限：门禁只读代码 + 上传产物，不需要任何写权限
+    # （CodeQL actions/missing-workflow-permissions）
+    permissions:
+      contents: read
 
     steps:
       - name: 检出代码
@@ -63,6 +67,10 @@ jobs:
     name: Windows 桌面安装包（NSIS）
     runs-on: windows-latest
     timeout-minutes: 45
+    # 最小权限：打包只读代码 + 上传产物，不需要任何写权限
+    # （CodeQL actions/missing-workflow-permissions）
+    permissions:
+      contents: read
     # PR 不打包：安装包要下载 Electron / NSIS / winCodeSign 资源，耗时较长，
     # 门禁交给 verify 就够了；推 main 与手动触发才产出可下载的安装包。
     if: github.event_name != 'pull_request'

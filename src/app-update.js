@@ -224,12 +224,37 @@ function compareVersionTagForSort(a, b) {
   return compareVersion(va, vb);
 }
 
+/** 半成品的后缀：下载中只写 .part，完成后才改名成正式文件名 */
+const PART_SUFFIX = ".part";
+
 /**
- * 内置下载安装包：流式写入 destFile，走与「检查更新」同源的 gh-proxy 镜像链
- * （国内直连 GitHub 慢/失败时自动换下一个镜像，最后回落直连）。
+ * 空闲超时（毫秒）：连续这么久**一个字节都没读到**才判「停滞」并断开重试。
  *
- * 进度经 onProgress({ loaded, total, pct, speed }) 周期性回调（按 1% 节流）；
- * 传入 signal 可取消（abort 后返回 { ok:false, canceled:true } 并清理半截文件）。
+ * ⚠️ 这里刻意不是「总时长」超时 —— 2026-10-07 用户反馈「下载会卡住」，根因就是
+ * 旧实现 `signal || AbortSignal.timeout(180000)`：
+ *   ① UI 调用永远传 signal → 超时**整个不生效**，连接半死时 reader.read()
+ *      永久挂起，进度条定格在 42%（截图现场）；
+ *   ② 不传 signal 时 180 秒是**总**时限，102MB 在 1.4MB/s 要 73 秒、在
+ *      0.5MB/s 要 204 秒 → 慢速下载中途被掐断，从 0 重来，永远下不完。
+ * 空闲超时两头兼顾：下得慢但一直有数据 → 不打扰；彻底断流 → 30 秒自动换源续传。
+ */
+const STALL_IDLE_MS = 30000;
+
+/**
+ * 内置下载安装包：流式写入 `.part` 半成品，成功后改名为 destFile。
+ * 走与「检查更新」同源的 gh-proxy 镜像链（国内直连 GitHub 慢/失败时自动换
+ * 下一个镜像，最后回落直连）。
+ *
+ * 三条抗卡死设计（2026-10-07）：
+ *   ① **空闲超时**：30 秒收不到任何字节就断开，自动换下一条镜像（见 STALL_IDLE_MS）；
+ *   ② **断点续传**：半成品保留，重试/换源时发 `Range: bytes=N-` 接着下 ——
+ *      94% 被掐断不再从 0 开始。镜像不支持 Range（回 200）就自动从头写；
+ *   ③ **写盘错误不挂死**：drain 等待与 fd error 同时监听，磁盘出错立即失败
+ *      而不是永远等一个不会来的 drain。
+ *
+ * 进度经 onProgress({ loaded, total, pct, speed }) 回调（pct 变化或每 500ms）；
+ * 传入 signal 可取消（abort 后返回 { ok:false, canceled:true }，半成品保留
+ * 供下次续传）。
  *
  * 为什么不是 electron 的 session.downloadURL：那个走 Chromium 下载栈，
  * 一来在无窗口/后台场景不好用，二来镜像链需要逐个试（下载栈没法优雅回退）。
@@ -238,6 +263,7 @@ async function downloadUpdate({ url, destFile, signal, onProgress }) {
   const rawUrl = String(url || "");
   if (!rawUrl) return { ok: false, error: "缺少下载地址" };
 
+  const partFile = destFile + PART_SUFFIX;
   let lastErr = null;
   let canceled = false;
 
@@ -246,77 +272,223 @@ async function downloadUpdate({ url, destFile, signal, onProgress }) {
       canceled = true;
       break;
     }
-    try {
-      const res = await fetch(prefix + rawUrl, {
-        redirect: "follow",
-        signal: signal || AbortSignal.timeout(180000),
-        headers: { Accept: "application/octet-stream" },
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-      const total = Number(res.headers.get("content-length")) || 0;
-      const reader = res.body.getReader();
-      const fd = fs.createWriteStream(destFile);
-      const start = Date.now();
-      let loaded = 0;
-      let lastPct = -1;
-      try {
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          loaded += value.length;
-          if (!fd.write(value)) {
-            await new Promise((r) => fd.once("drain", r));
-          }
-          if (onProgress && total > 0) {
-            const pct = Math.floor((loaded / total) * 100);
-            if (pct !== lastPct) {
-              lastPct = pct;
-              const secs = (Date.now() - start) / 1000;
-              onProgress({
-                loaded,
-                total,
-                pct,
-                speed: secs > 0 ? Math.round(loaded / secs) : 0,
-              });
-            }
-          }
-        }
-      } finally {
-        await new Promise((r) => fd.end(r));
-      }
-
-      const bytes = fs.statSync(destFile).size;
-      // 顺手记下哈希：安装前用它做「再次校验完整性」的基准。
-      // 算 200MB 约 1 秒，值得（用户明确要求点安装时再校验一次）。
-      let sha256 = "";
-      try {
-        sha256 = await sha256File(destFile);
-      } catch {}
-      return { ok: true, path: destFile, bytes, sha256 };
-    } catch (e) {
-      if (signal && signal.aborted) {
-        canceled = true;
-        break;
-      }
-      lastErr = e;
-      try {
-        if (fs.existsSync(destFile)) fs.unlinkSync(destFile);
-      } catch {
-        /* 忽略清理失败 */
-      }
+    const r = await downloadAttempt({
+      fullUrl: prefix + rawUrl,
+      partFile,
+      destFile,
+      signal,
+      onProgress,
+    });
+    if (r.ok) return r;
+    if (r.canceled) {
+      canceled = true;
+      break;
     }
+    lastErr = new Error(r.error || "下载失败");
   }
 
   if (canceled) {
-    try {
-      if (fs.existsSync(destFile)) fs.unlinkSync(destFile);
-    } catch {
-      /* 忽略 */
-    }
+    // 半成品**保留**：用户只是暂时取消，下次点「下载更新」直接续传。
     return { ok: false, canceled: true, error: "下载已取消" };
   }
   return { ok: false, error: lastErr ? lastErr.message || "下载失败" : "下载失败" };
+}
+
+/**
+ * 单条镜像的一次下载尝试（含 Range 续传与空闲超时）。
+ * 失败时保留 .part 供下一条镜像/下次重试续传；垃圾内容（HTML 错误页等）则丢弃。
+ *
+ * @param {number} [stallMs] 停滞判定阈值（默认 STALL_IDLE_MS；仅测试用）
+ */
+async function downloadAttempt({ fullUrl, partFile, destFile, signal, onProgress, stallMs }) {
+  // 续传起点：已有半成品就接着下
+  let have = 0;
+  try {
+    have = fs.existsSync(partFile) ? fs.statSync(partFile).size : 0;
+  } catch {}
+
+  const ctl = new AbortController();
+  const onUserAbort = () => ctl.abort();
+  if (signal) {
+    if (signal.aborted) return { ok: false, canceled: true, error: "下载已取消" };
+    signal.addEventListener("abort", onUserAbort, { once: true });
+  }
+
+  // 空闲看门狗：每收到一批字节就重新计时；到期 abort → reader.read() 报错退出
+  const idleMs = Number(stallMs) > 0 ? Number(stallMs) : STALL_IDLE_MS;
+  let idleTimer = null;
+  const armIdle = () => {
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => ctl.abort(), idleMs);
+  };
+
+  let fd = null;
+  try {
+    armIdle();
+    const headers = { Accept: "application/octet-stream" };
+    if (have > 0) headers.Range = `bytes=${have}-`;
+    const res = await fetch(fullUrl, { redirect: "follow", signal: ctl.signal, headers });
+
+    // 416：请求的 Range 越界 → 本地半成品与远端对不上，丢弃重来
+    if (res.status === 416) {
+      try {
+        fs.rmSync(partFile, { force: true });
+      } catch {}
+      return { ok: false, error: "断点与远端不一致，已重置（下次从头下载）" };
+    }
+    if (!res.ok && res.status !== 206) throw new Error(`HTTP ${res.status}`);
+
+    // 镜像偶尔在出错时返回 200 + HTML 错误页 —— 绝不能当安装包写进去
+    const ctype = String(res.headers.get("content-type") || "").toLowerCase();
+    if (ctype.includes("text/html")) throw new Error("镜像返回了网页而非安装包（错误页）");
+
+    // 206 = 支持续传；200 = 镜像忽略 Range → 这次从头写
+    const isPartial = res.status === 206;
+    if (!isPartial) have = 0;
+
+    // 总大小：206 优先取 Content-Range 的 total；否则 content-length（206 时是剩余量）
+    const cr = res.headers.get("content-range") || "";
+    const crTotal = Number((cr.match(/\/(\d+)/) || [])[1]) || 0;
+    const len = Number(res.headers.get("content-length")) || 0;
+    let total = crTotal || (isPartial ? have + len : len);
+    if (isPartial) {
+      // Range 起点必须等于本地已有字节，否则拼接出的是坏文件
+      const crStart = Number((cr.match(/bytes\s+(\d+)-/) || [])[1]);
+      if (Number.isFinite(crStart) && crStart !== have) {
+        try {
+          fs.rmSync(partFile, { force: true });
+        } catch {}
+        return { ok: false, error: "镜像续传起点与本地断点不一致，已重置" };
+      }
+    }
+
+    // 续传前先验本地半成品确实起始于 MZ：挡住上次写进来的垃圾（如错误页）
+    if (have > 0) {
+      try {
+        const fdr = fs.openSync(partFile, "r");
+        const head = Buffer.alloc(2);
+        fs.readSync(fdr, head, 0, 2, 0);
+        fs.closeSync(fdr);
+        if (head[0] !== 0x4d || head[1] !== 0x5a) throw new Error("bad");
+      } catch {
+        try {
+          fs.rmSync(partFile, { force: true });
+        } catch {}
+        have = 0;
+      }
+    }
+
+    const reader = res.body.getReader();
+    fd = fs.createWriteStream(partFile, { flags: isPartial && have > 0 ? "a" : "w" });
+    // ⚠️ fd 必须有**常驻** error 监听：只在 write 时挂临时监听，分片间隙出错
+    //    会以「未处理 error 事件」直接崩掉主进程；常驻监听 + 门闩竞速，
+    //    既不崩进程，又能让写盘错误立即失败（而不是永远等一个不会来的 drain）。
+    let rejectGate = null;
+    const gate = new Promise((_, rej) => {
+      rejectGate = rej;
+    });
+    gate.catch(() => {}); // 防「未处理的 Promise 拒绝」告警
+    fd.on("error", (e) => rejectGate(e));
+    const writeChunk = (chunk) =>
+      new Promise((resolve, reject) => {
+        const race = Promise.race([
+          new Promise((r) => {
+            if (fd.write(chunk)) r();
+            else fd.once("drain", r);
+          }),
+          gate,
+        ]);
+        race.then(resolve, reject);
+      });
+
+    const start = Date.now();
+    const startLoaded = have;
+    let loaded = have;
+    let lastPct = -1;
+    let lastPush = 0;
+    // 文件头校验：从头下载时攒够 2 字节就验 MZ 魔数（挡住「200 + 错误页」假安装包）；
+    // 续传（have>0）已在上面验过本地 .part 的头部，这里不再验（首个分片是文件中段）。
+    let headChecked = have > 0;
+    const headAcc = [];
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      armIdle();
+      loaded += value.length;
+      if (!headChecked) {
+        headAcc.push(value);
+        const cat = Buffer.concat(headAcc);
+        if (cat.length >= 2) {
+          headChecked = true;
+          if (cat[0] !== 0x4d || cat[1] !== 0x5a) {
+            throw new Error("下载内容不是 Windows 可执行文件（疑似镜像错误页）");
+          }
+        }
+      }
+      await writeChunk(value);
+      if (onProgress) {
+        const now = Date.now();
+        const pct = total > 0 ? Math.floor((loaded / total) * 100) : 0;
+        if (pct !== lastPct || now - lastPush >= 500) {
+          lastPct = pct;
+          lastPush = now;
+          const secs = (now - start) / 1000;
+          onProgress({
+            loaded,
+            total,
+            pct,
+            // 段平均速度：只算本次尝试的增量，续传后不会被历史字节稀释
+            speed: secs > 0 ? Math.round((loaded - startLoaded) / secs) : 0,
+          });
+        }
+      }
+    }
+    await Promise.race([
+      new Promise((resolve) => fd.end(resolve)),
+      gate,
+    ]);
+    fd = null;
+
+    const bytes = fs.statSync(partFile).size;
+    if (total > 0 && bytes !== total) {
+      if (bytes > total) {
+        // 比宣称的还大：内容不可信，丢弃
+        try {
+          fs.rmSync(partFile, { force: true });
+        } catch {}
+        return { ok: false, error: "下载内容与宣称大小不符，已丢弃" };
+      }
+      // 截断：保留断点，下一条镜像续传
+      return { ok: false, error: `下载不完整（${bytes}/${total} 字节），将自动续传` };
+    }
+
+    // 完整 → 转正（Windows 上 rename 到已存在的目标会失败，先清掉旧的）
+    try {
+      fs.rmSync(destFile, { force: true });
+    } catch {}
+    fs.renameSync(partFile, destFile);
+
+    // 顺手记下哈希：安装前用它做「再次校验完整性」的基准。
+    // 算 200MB 约 1 秒，值得（用户明确要求点安装时再校验一次）。
+    let sha256 = "";
+    try {
+      sha256 = await sha256File(destFile);
+    } catch {}
+    return { ok: true, path: destFile, bytes, sha256 };
+  } catch (e) {
+    if (signal && signal.aborted) return { ok: false, canceled: true, error: "下载已取消" };
+    // 半成品保留供续传；但若首个数据块就不是 MZ（错误页），上面已 rm
+    const reason = (e && e.message) || String(e);
+    return { ok: false, error: /停滞|abort/i.test(reason) ? "网络停滞，自动切换下载源" : reason };
+  } finally {
+    clearTimeout(idleTimer);
+    if (signal) signal.removeEventListener("abort", onUserAbort);
+    if (fd) {
+      try {
+        fd.destroy();
+      } catch {}
+    }
+  }
 }
 
 /** 流式算 sha256（202MB 安装包不能整个读进内存） */
@@ -397,8 +569,8 @@ const MIN_SETUP_BYTES = 20 * 1024 * 1024;
 /**
  * 清理更新目录里的旧安装包（用户要求：自动清理）。
  *
- * 只删 `MS-Rewards-Auto-Setup-*.exe` 及其 .blockmap，**保留** keepFile 指定的那个
- * （通常是刚下好待安装的），其余按 mtime 保留最近 keep 个。
+ * 只删 `MS-Rewards-Auto-Setup-*.exe` 及其 .blockmap / .part（断点半成品），
+ * **保留** keepFile 指定的那个（通常是刚下好待安装的），其余按 mtime 保留最近 keep 个。
  */
 function cleanupOldSetups(dir, keepFile, keep = 1) {
   const removed = [];
@@ -407,7 +579,7 @@ function cleanupOldSetups(dir, keepFile, keep = 1) {
     const keepAbs = keepFile ? path.resolve(keepFile) : "";
     const ents = fs
       .readdirSync(dir)
-      .filter((f) => /^MS-Rewards-Auto-Setup-.*\.(exe|exe\.blockmap)$/i.test(f))
+      .filter((f) => /^MS-Rewards-Auto-Setup-.*\.(exe|exe\.blockmap|exe\.part)$/i.test(f))
       .map((f) => {
         const p = path.join(dir, f);
         let mtime = 0;
@@ -423,10 +595,25 @@ function cleanupOldSetups(dir, keepFile, keep = 1) {
       try {
         fs.rmSync(ents[i].p, { force: true });
         removed.push(ents[i].p);
-        // 连带删掉同名 blockmap（AutoUpdate 用，留着是垃圾）
+        // 连带删掉同名 blockmap / part（AutoUpdate 用与断点续传的残留，留着是垃圾）
         try {
           fs.rmSync(ents[i].p + ".blockmap", { force: true });
         } catch {}
+        try {
+          fs.rmSync(ents[i].p + ".part", { force: true });
+        } catch {}
+      } catch {}
+    }
+
+    // 孤儿残留：.exe 已不在、只剩 .part / .blockmap 的（下载中断后没再重试）。
+    // 调用时机只在「一次下载成功之后」，此刻没有正在进行的下载，全删是安全的。
+    for (const f of fs.readdirSync(dir)) {
+      if (!/^MS-Rewards-Auto-Setup-.*\.exe\.(part|blockmap)$/i.test(f)) continue;
+      const base = path.join(dir, f.replace(/\.(part|blockmap)$/i, ""));
+      if (fs.existsSync(base)) continue;
+      try {
+        fs.rmSync(path.join(dir, f), { force: true });
+        removed.push(path.join(dir, f));
       } catch {}
     }
   } catch {}
@@ -437,6 +624,8 @@ module.exports = {
   OWNER,
   REPO,
   UPDATE_SUBDIR,
+  PART_SUFFIX,
+  STALL_IDLE_MS,
   resolveUpdateDir,
   verifyUpdateFile,
   cleanupOldSetups,
@@ -444,4 +633,5 @@ module.exports = {
   checkAppUpdate,
   fetchReleaseNotes,
   downloadUpdate,
+  downloadAttempt,
 };

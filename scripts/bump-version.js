@@ -29,6 +29,11 @@ const path = require("path");
 
 const ROOT = path.resolve(__dirname, "..");
 
+/** 完整转义正则元字符（只转义点号是不够的，CodeQL js/incomplete-sanitization / js/regex-injection） */
+function escapeRegExp(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /* ---------------- 参数解析 ---------------- */
 const argv = process.argv.slice(2);
 const dry = argv.includes("--dry") || argv.includes("--dry-run");
@@ -103,7 +108,7 @@ if (checkOnly) {
   // 用「全局替换」bump lock 文件会把 531 个依赖版本一起改掉，
   // 届时 `npm ci` 报 EUSAGE、Docker 构建直接失败（0.13.10 发版时踩过）。
   const lockRaw = fs.readFileSync(path.join(ROOT, "package-lock.json"), "utf8");
-  const depVerMatches = (lockRaw.match(new RegExp(`"version":\\s*"${expected.replace(/\./g, "\\.")}"`, "g")) || [])
+  const depVerMatches = (lockRaw.match(new RegExp(`"version":\\s*"${escapeRegExp(expected)}"`, "g")) || [])
     .length;
   add(
     "package-lock.json 依赖版本未被污染",
@@ -153,7 +158,7 @@ if (checkOnly) {
   );
 
   const changelogSrc = fs.readFileSync(path.join(ROOT, "CHANGELOG.md"), "utf8");
-  const clOk = new RegExp(`^## ${expected.replace(/\./g, "\\.")}\\s*$`, "m").test(changelogSrc);
+  const clOk = new RegExp(`^## ${escapeRegExp(expected)}\\s*$`, "m").test(changelogSrc);
   add("CHANGELOG.md 新版本章节", clOk, clOk ? `## ${expected}` : `未找到「## ${expected}」`);
 
   const bad = items.filter((i) => !i.ok);
@@ -260,7 +265,7 @@ rep("README.md", "版本横幅", oldVersion, targetVersion, (s) => {
 {
   const abs = path.join(ROOT, "CHANGELOG.md");
   const src = fs.readFileSync(abs, "utf8");
-  const hasSection = new RegExp(`^## ${targetVersion.replace(/\./g, "\\.")}\\s*$`, "m").test(src);
+  const hasSection = new RegExp(`^## ${escapeRegExp(targetVersion)}\\s*$`, "m").test(src);
   if (hasSection) {
     log.push({ file: "CHANGELOG.md", label: `## ${targetVersion}`, status: "SAME", note: "章节已存在" });
   } else {
