@@ -38,25 +38,6 @@ async function copyText(text: string): Promise<boolean> {
   }
 }
 
-/* 当前版本号（2026-10-07 改为运行时读取主进程 package.json）。
-   之前是自声明的 const APP_VERSION = "0.14.8"（编译期烧进 JS），
-   与窗口标题（displayVersion()）分叉——用户实测「标题栏 v0.14.6.1、侧边栏 0.14.5」。
-   现在统一问主进程拿真值，取不到时回落编译期常量（预览 / mock）。 */
-const [appVersion, setAppVersion] = useState(APP_VERSION);
-useEffect(() => {
-  let alive = true;
-  Promise.resolve(api.getRuntimeVersion?.())
-    .then((v) => {
-      if (alive && v && typeof v.version === "string" && v.version) setAppVersion(v.version);
-    })
-    .catch(() => {
-      /* 预览模式 / IPC 不可用时保留编译期常量 */
-    });
-  return () => {
-    alive = false;
-  };
-}, []);
-
 /** 直接依赖（package.json 中声明的运行时依赖） */
 const DIRECT_DEPS: { name: string; version: string; license: string; desc: string; url: string }[] = [
   {
@@ -240,6 +221,30 @@ const LINKS: {
 export function About() {
   const { hitokoto } = useAppState();
   const [quoteCopied, setQuoteCopied] = useState(false);
+
+  /* 当前版本号（2026-10-07 改为运行时读取主进程 package.json）。
+     之前是自声明的 const APP_VERSION = "0.14.8"（编译期烧进 JS），
+     与窗口标题（displayVersion()）分叉——用户实测「标题栏 v0.14.6.1、侧边栏 0.14.5」。
+     现在统一问主进程拿真值，取不到时回落编译期常量（预览 / mock）。
+
+     ⚠️ 这段**必须**在组件函数体内。2026-10-07 首次改动时它被误放在模块顶层，
+     React 立刻抛 `Cannot read properties of null (reading 'useState')`
+     （顶层没有 dispatcher），整棵 App 树不渲染 ⇒ **启动即黑屏**。
+     selfcheck 有守卫钉住「顶层不得出现 hook 调用」。 */
+  const [appVersion, setAppVersion] = useState(APP_VERSION);
+  useEffect(() => {
+    let alive = true;
+    Promise.resolve(api.getRuntimeVersion?.())
+      .then((v) => {
+        if (alive && v && typeof v.version === "string" && v.version) setAppVersion(v.version);
+      })
+      .catch(() => {
+        /* 预览模式 / IPC 不可用时保留编译期常量 */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const onCopy = async (text: string, label: string) => {
     const ok = await copyText(text);

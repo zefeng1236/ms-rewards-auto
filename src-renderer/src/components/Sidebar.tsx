@@ -344,24 +344,27 @@ export function Sidebar({
   };
 
   /* 当前版本号（2026-10-07 改为运行时读取）。
-   之前直接用编译期常量 DISPLAY_VERSION（vite 把 version.ts 烧进 JS），
-   改了版本号没重新 build:web 时就会与窗口标题分叉——用户实测「标题栏
-   v0.14.6.1、侧边栏 0.14.5」。现在统一问主进程拿 package.json 真值，
-   与标题栏（displayVersion()）同源。取不到时回落编译期常量（预览/mock 场景）。 */
-const [runtimeVer, setRuntimeVer] = useState(DISPLAY_VERSION);
-useEffect(() => {
-  let alive = true;
-  Promise.resolve(api.getRuntimeVersion?.())
-    .then((v) => {
-      if (alive && v && typeof v.version === "string" && v.version) setRuntimeVer(v.version);
-    })
-    .catch(() => {
-      /* 预览模式 / IPC 不可用时保留编译期常量 */
-    });
-  return () => {
-    alive = false;
-  };
-}, []);
+     之前直接用编译期常量 DISPLAY_VERSION（vite 把 version.ts 烧进 JS），
+     改了版本号没重新 build:web 时就会与窗口标题分叉——用户实测「标题栏
+     v0.14.6.1、侧边栏 0.14.5」。现在统一问主进程拿 package.json 真值，
+     与标题栏（displayVersion()）同源。取不到时回落编译期常量（预览/mock 场景）。
+
+     ⚠️ 必须留在组件函数体内 —— 放模块顶层会让 React 抛
+     `Cannot read properties of null (reading 'useState')` 而整棵树不渲染（黑屏）。 */
+  const [runtimeVer, setRuntimeVer] = useState(DISPLAY_VERSION);
+  useEffect(() => {
+    let alive = true;
+    Promise.resolve(api.getRuntimeVersion?.())
+      .then((v) => {
+        if (alive && v && typeof v.version === "string" && v.version) setRuntimeVer(v.version);
+      })
+      .catch(() => {
+        /* 预览模式 / IPC 不可用时保留编译期常量 */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
 return (
     <GlassSurface className="sidenav" radius={0}>

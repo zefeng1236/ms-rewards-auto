@@ -5053,6 +5053,85 @@ checkTrue(
   "写成「未运行」会让用户以为程序根本没执行，而实际是被接口挡住了"
 );
 
+// ====================== 【0.14.9】模块顶层禁止 React hook（黑屏根因） ======================
+// 2026-10-07 用户报「启动黑屏」。根因：`About.tsx` 里`const [appVersion] = useState(...)`
+// 被放在**模块顶层**（不是组件体内），而 React 只在组件渲染期间提供 dispatcher，
+// 顶层调用直接抛 `Cannot read properties of null (reading 'useState')`
+// → 整棵 App 树不渲染 → 窗口只剩 CSS 背景色（纯黑）。
+//
+// ⚠️ 这类错误 **tsc 不报**、**eslint 没配**、**selfcheck 原本完全没有覆盖** ——
+//    它只在运行时炸，且表现为「黑屏」这种不好定位的症状。
+//
+// 判据：组件体内的代码**必然有缩进**，所以「行首零空白 + 含 hook 调用」= 顶层 hook。
+// 反过来组件体内的 hook 一定被缩进 ⇒ 不会假阳性。
+console.log("\n【0.14.9】模块顶层禁止 React hook（黑屏根因）");
+{
+  const RENDERER_SRC = path.join(ROOT, "src-renderer", "src");
+  const HOOKS = [
+    "useState",
+    "useEffect",
+    "useLayoutEffect",
+    "useMemo",
+    "useCallback",
+    "useRef",
+    "useContext",
+    "useReducer",
+    "useSyncExternalStore",
+    "useTransition",
+    "useDeferredValue",
+    "useImperativeHandle",
+    "useId",
+  ];
+  const hookRe = new RegExp("\\b(" + HOOKS.join("|") + ")\\s*[(\\>]");
+
+  const walkRender = (dir, out = []) => {
+    for (const f of require("fs").readdirSync(dir)) {
+      const p = path.join(dir, f);
+      if (require("fs").statSync(p).isDirectory()) walkRender(p, out);
+      else if (/\.tsx?$/.test(f)) out.push(p);
+    }
+    return out;
+  };
+
+  const offenders = [];
+  for (const f of walkRender(RENDERER_SRC)) {
+    const rel = path.relative(RENDERER_SRC, f);
+    require("fs")
+      .readFileSync(f, "utf8")
+      .split(/\r?\n/)
+      .forEach((line, i) => {
+        // 行首**零空白**是关键：组件体内的 hook 一定被缩进
+        if (!/^\s/.test(line) && /^\S/.test(line) && hookRe.test(line)) {
+          offenders.push(`${rel}:${i + 1}  ${line.trim().slice(0, 60)}`);
+        }
+      });
+  }
+  checkTrue(
+    `模块顶层无 React hook 调用（已扫${require("fs").readdirSync(RENDERER_SRC).length} 个顶层目录）`,
+    offenders.length === 0,
+    `顶层 hook → React dispatcher 为 null → 启动即黑屏：\n${offenders.join("\n")}`
+  );
+
+  // About.tsx / Sidebar.tsx 是本次踩坑的两个文件，额外钉死「hook 必须在组件体内」——
+  // 光靠缩进不够（有人可能把 hook 写在一个零缩进的 IIFE 里）。
+  const aboutFp = require("fs").readFileSync(path.join(RENDERER_SRC, "views", "About.tsx"), "utf8");
+  const aboutFnAt = aboutFp.indexOf("export function About()");
+  checkTrue(
+    "About.tsx 的 appVersion useState 在组件函数体内（export function About 之后）",
+    aboutFnAt > 0 &&
+      aboutFp.indexOf("const [appVersion, setAppVersion] = useState(", aboutFnAt) > aboutFnAt,
+    "放回顶层会黑屏 —— 2026-10-07 实测"
+  );
+  const sideFp = require("fs").readFileSync(path.join(RENDERER_SRC, "components", "Sidebar.tsx"), "utf8");
+  const sideFnAt = sideFp.indexOf("export function Sidebar(");
+  checkTrue(
+    "Sidebar.tsx 的 runtimeVer useState 在组件函数体内（export function Sidebar 之后）",
+    sideFnAt > 0 &&
+      sideFp.indexOf("const [runtimeVer, setRuntimeVer] = useState(", sideFnAt) > sideFnAt,
+    "放回顶层会黑屏"
+  );
+}
+
 // ====================== 【0.14.7】版本号单一来源（运行时真值） ======================
 // 用户实测「窗口标题 v0.14.6.1、侧边栏 0.14.5」——两处版本号来源不同：
 //   标题栏 ← 主进程 src/version.js 的 displayVersion()，**运行时读 package.json**
