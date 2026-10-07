@@ -4061,6 +4061,36 @@ checkTrue(
     /累计完成/.test(calSrc) && /最长连续/.test(calSrc) && /总积分/.test(calSrc) &&
     /\.cal-stats/.test(calCss) && /\.cal-stat-value/.test(calCss) && /\.cal-stat-label/.test(calCss)
 );
+// 2026-10-07 用户要求：目标达成后的文案要带「距离下一阶段还差多少」，
+// 且文案变长后自动缩字号保证格子放得下。
+// ⚠️ 缩放判据必须是「离屏探针量单行总宽」，不能是 scrollWidth/clientWidth ——
+//    .goal-card-value 允许换行（word-break:break-all），永远不会横向溢出，
+//    据此算出的比值恒为 1 ⇒ 字号永不缩小（实测 15px 不动、占 2.9 行、撑高卡片）。
+const accountDetailSrc = require("fs").readFileSync(
+  path.join(ROOT, "src-renderer", "src", "views", "AccountDetail.tsx"),
+  "utf8"
+);
+checkTrue(
+  "目标达成文案带「距离下一阶段还差 X 积分」",
+  // ⚠️ 必须匹配**模板字符串里的真实文案**，不能只匹配全文出现次数 ——
+  // 否则把代码里的文案删掉、只留注释里的说明文字，守卫照样绿（实测踩过：
+  // 注入反例后仍是 836/0）。要求「距离下一阶段还差」与 ${fmtNum(remain)} 同段出现。
+  /倍目标，距离下一阶段还差\s*\$\{fmtNum\(remain\)\}\s*积分/.test(accountDetailSrc),
+  "只写「已达成 N 倍目标」看不出还要攒多少 → 用户会以为到顶了"
+);
+checkTrue(
+  "目标卡字号按可用宽度自动缩放（离屏探针量单行总宽 ÷ 可用宽度 = 所需行数）",
+  /goal-card-measure/.test(accountDetailSrc) &&
+    /GOAL_MAX_LINES/.test(accountDetailSrc) &&
+    /GOAL_MIN_FONT/.test(accountDetailSrc) &&
+    /goal-card-measure/.test(globalCss) &&
+    /\.goal-card-measure\s*\{[\s\S]*?position:\s*absolute[\s\S]*?white-space:\s*nowrap/.test(globalCss) &&
+    // ⚠️ 探针必须显式 word-break: normal —— 它是 .goal-card-value 的子元素，
+    //   会继承 break-all，那样中文在探针里也断行，量出来的「单行总宽」偏小，
+    //   缩放就不到位（实测 15px 只缩到 11px 仍占 2.9 行）。这条已单独注入验证过。
+    /\.goal-card-measure\s*\{[\s\S]*?word-break:\s*normal/.test(globalCss),
+  "缺探针/缺行数上限 → 文案变长会撑高单个卡片，同排卡片高低不齐；探针漏 word-break:normal → 量宽偏小缩不到位"
+);
 const compactAchievements = [
   /:root\[data-web="1"\]\s+\.achievements-view \.cal-stat-value\s*\{[^}]*font-size:\s*clamp\(18px,\s*1\.7cqw,\s*26px\)/,
   /:root\[data-web="1"\]\s+\.achievements-view \.cal-cell\s*\{[^}]*aspect-ratio:\s*auto[^}]*height:\s*clamp\(68px,\s*6\.5cqw,\s*96px\)[^}]*min-height:\s*0/,

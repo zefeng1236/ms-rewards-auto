@@ -1092,6 +1092,23 @@ button.nav-version-btn:hover {
   word-break: break-all;
 }
 
+/* 目标卡自动缩字的离屏探针（2026-10-07）：与目标文本同字体同字号，
+   但 white-space:nowrap + position:absolute，量到的就是「整段字不折行的单行总宽」。
+   不能靠目标元素自己的 scrollWidth/clientWidth 判断 —— 它允许换行，
+   永远不会横向溢出，据此算出的缩放比恒为 1（字号永远不缩）。 */
+.goal-card-measure {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+  white-space: nowrap;
+  word-break: normal; /* 必须关掉，否则中文仍会在探针里断行，量出来的宽度偏小 */
+  line-height: 1;
+  font-weight: 600;
+  top: 0;
+  left: 0;
+  z-index: -1;
+}
+
 .card-inner {
   padding: 13px 15px;
 }

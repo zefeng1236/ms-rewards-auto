@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { GlassButton, GlassSwitch, GlassSurface } from "@ttqtt/liquid-glass-react";
 import { AppCard, Empty, Modal, Select, Tag, toast } from "../components/liquidGlassCompat";
 import { api, IS_WEB } from "../api/ipc";
@@ -129,22 +129,101 @@ function AccountLogPanel({ accountId, accountName }: { accountId: string; accoun
 /** 千分位格式化（卡片大数字每三位加逗号；强制 en-US 分组，不随系统 locale 变化） */
 const fmtNum = (n: number | null | undefined) => (n ?? 0).toLocaleString("en-US");
 
-/** 今日任务卡片 */
+/** 目标卡文案可用的最小字号（再小就读不清了，宁可多一行也不更小） */
+const GOAL_MIN_FONT = 10.5;
+/** 目标卡文案的理想字号（= .card-value.small 的 15px） */
+const GOAL_IDEAL_FONT = 15;
+/** 目标卡文案最多占几行：超过就自动缩字号（保证格子不被单个卡片撑高） */
+const GOAL_MAX_LINES = 2;
+
+/**
+ * 今日任务卡片。
+ *
+ * 目标达成后的文案**必须带「距离下一阶段还差多少」**（2026-10-07 用户要求）：
+ * 只写「当前已达成 1.1 倍目标」看不出接下来要攒多少，容易让人以为已经到顶了。
+ * 典型如「当前已达成 1.1 倍目标，距离下一阶段还差 10,000 积分」。
+ *
+ * ⚠️ 文案变长后格子放不下（.cards 是 minmax(132px, 1fr) 的自适应栅格，窄窗口时
+ * 单格只有 132px 宽），所以要**按实际可用高度自动缩放字号**：
+ * 用二分法找「不溢出」的最大字号，而不是写死 clamp() —— 写死的字号在不同
+ * DPI/窗口宽度/字体下还是会溢出，而实测法能覆盖所有组合。
+ * minFont 兜底：到最小字号仍放不下就让它换行（white-space: normal 已允许）。
+ */
 function GoalCard({ goal, balance }: { goal: GoalItem; balance: number }) {
   const target = Math.max(1, Number(goal.target) || 1);
   const current = Math.max(0, Number(balance) || 0);
   const reward = String(goal.rewardName || "").trim();
   const count = Math.floor(current / target);
+  // 距下一个整数倍还差多少：整除时（如 36000 / 18000）说明正好达标，要算整整一个 target
   const remain = target - (current % target || target);
   const text = current < target
     ? `已获得 ${fmtNum(current)}，还差 ${fmtNum(target - current)} 积分`
     : reward
-    ? `当前已可兑换${fmtNum(count)}个${reward}，距离下一个还剩${fmtNum(remain)}积分`
-    : `当前已达成${Math.round((current / target) * 10) / 10}倍目标`;
+    ? `当前已可兑换 ${fmtNum(count)} 个${reward}，距离下一个还差 ${fmtNum(remain)} 积分`
+    : `当前已达成 ${Math.round((current / target) * 10) / 10} 倍目标，距离下一阶段还差 ${fmtNum(remain)} 积分`;
+
+  // 自动缩放字号：让长文案在有限行数内放得下。
+  //
+  // ⚠️ 判据**不能**用 scrollWidth/clientWidth（2026-10-07 实测踩过）：
+  //   .goal-card-value 是 `white-space: normal + word-break: break-all`，
+  //   文字**靠换行**收纳，永远不会横向溢出 ⇒ scrollWidth 恒等于 clientWidth，
+  //   按溢出算出来的比值恒为 1，字号永远不缩（实测 15px 不动、占 2.9 行）。
+  // 正确判据是「这串字不折行时有多宽 / 可用宽度 = 需要几行」，
+  // 超过 MAX_LINES 就按比例缩。缩放对宽度是线性的，行数也随之线性下降。
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  const txtRef = useRef<HTMLDivElement | null>(null);
+  const measureRef = useRef<HTMLSpanElement | null>(null);
+  const [fontPx, setFontPx] = useState<number>(GOAL_IDEAL_FONT);
+
+  const fit = useCallback(() => {
+    const box = boxRef.current;
+    const txt = txtRef.current;
+    const probe = measureRef.current;
+    if (!box || !txt || !probe) return;
+    // 用 offscreen 探针量「整段文字不折行时的宽度」——探针与目标同字体同字号，
+    // 但 white-space:nowrap + position:absolute，所以拿到的是单行总宽。
+    probe.style.fontSize = `${GOAL_IDEAL_FONT}px`;
+    const full = probe.getBoundingClientRect().width;
+    const avail = txt.clientWidth || box.clientWidth || 1;
+    if (!full || !avail) return;
+    const need = full / avail; // 需要的行数
+    const scale = need > GOAL_MAX_LINES ? need / GOAL_MAX_LINES : 1;
+    const next = Math.max(GOAL_MIN_FONT, Math.floor(GOAL_IDEAL_FONT / scale));
+    setFontPx((prev) => (Math.abs(prev - next) < 0.5 ? prev : next));
+  }, []);
+
+  useLayoutEffect(() => {
+    fit();
+    // 窗口尺寸变化会改变栅格列宽 ⇒ 必须跟着重算
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => fit()) : null;
+    if (ro && boxRef.current) ro.observe(boxRef.current);
+    window.addEventListener("resize", fit);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener("resize", fit);
+    };
+  }, [fit, text]);
+
   return (
-    <GlassSurface className="card-inner goal-dashboard-card" radius={14} title={`${goal.name}：${text}`}>
+    <GlassSurface
+      className="card-inner goal-dashboard-card"
+      radius={14}
+      title={`${goal.name}：${text}`}
+      ref={boxRef as never}
+    >
+      {/* 离屏量宽探针：不参与布局，只为拿「不折行的单行总宽」 */}
+      <span ref={measureRef} className="goal-card-measure" aria-hidden="true">
+        {text}
+      </span>
       <div className="card-label goal-card-label" title={goal.name}>{goal.name}</div>
-      <div className="card-value small goal-card-value" title={text}>{text}</div>
+      <div
+        ref={txtRef}
+        className="card-value small goal-card-value"
+        title={text}
+        style={{ fontSize: `${fontPx}px` }}
+      >
+        {text}
+      </div>
     </GlassSurface>
   );
 }
