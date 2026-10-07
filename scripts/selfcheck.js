@@ -5283,6 +5283,24 @@ console.log("\n【0.14.7】CodeQL 安全告警修复守卫");
       "CI 不认某个占位符 → 正文里留着 {{XXX}} 发出去了"
     );
   }
+  // ⑧ 代码扫描配置不能两种setup 并存（2026-10-07 实测连续两次红）
+  //
+  // 报错原文：`CodeQL analyses from advanced configurations cannot be processed
+  // when the default setup is enabled`。
+  // 本仓库用 GitHub 的 **default setup**（服务端配置，Security → Code scanning
+  // 里启用），它自动跑 push/PR/定时，不需要仓库里有 workflow 文件。
+  // 一旦又提交 `.github/workflows/codeql.yml`（advanced setup），两者互斥，
+  // **每次跑都失败**，而且失败原因跟代码质量毫无关系 —— 纯浪费排查时间。
+  {
+    const wfDir = path.join(ROOT, ".github", "workflows");
+    const hasAdvanced = fs.existsSync(path.join(wfDir, "codeql.yml"));
+    checkTrue(
+      "仓库里没有 advanced setup 的 codeql.yml（与 default setup 互斥）",
+      !hasAdvanced,
+      "default setup 与 advanced setup 互斥 → CodeQL 每次必失败：" +
+        "去 Security → Code scanning 确认用的是 default setup，然后删掉本文件"
+    );
+  }
 }
 
 /* ============ 汇总 ============ */
