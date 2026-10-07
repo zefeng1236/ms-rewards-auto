@@ -33,13 +33,18 @@ const assets = [...html.matchAll(/assets\/([^"']+)/g)].map((m) => m[1]);
 const listed = asar.listPackage(asarPath);
 const has = (name) => listed.some((p) => p.split(/[\\/]/).pop() === name);
 
-const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "asar-verify-"));
-asar.extractAll(asarPath, outDir);
+// 被核对的内容根目录。默认解包 app.asar；
+// 设 VERIFY_PACK_SRC=1 时直接读工作区源码树 —— 用途是「反例验证」：
+// app.asar 无法可靠重打包（extractAll 出来的空目录会让 asar 的 lstat 遍历报错），
+// 所以反例脚本靠这个开关在源码上注入缺陷来验证断言，而不是去伪造 asar。
+const useSrc = process.env.VERIFY_PACK_SRC === "1";
+const outDir = useSrc ? process.cwd() : fs.mkdtempSync(path.join(os.tmpdir(), "asar-verify-"));
+if (!useSrc) asar.extractAll(asarPath, outDir);
 const cssDir = path.join(outDir, "gui-react", "assets");
 const cssName = assets.find((a) => a.endsWith(".css"));
 const css = fs.readFileSync(path.join(cssDir, cssName), "utf8");
 const js = fs.readFileSync(
-  path.join(outDir, "gui-react", "assets", assets.find((a) => a.endsWith(".js"))),
+  path.join(cssDir, assets.find((a) => a.endsWith(".js"))),
   "utf8"
 );
 const exe = fs.statSync(exePath);
@@ -170,7 +175,14 @@ jsHasHaloSelector:
     if (!fs.existsSync(p)) return false;
     const t = fs.readFileSync(p, "utf8");
     return (
-      /PINNED_VERSION\s*=\s*"\d+\.\d+\.\d+\.\d+"/.test(t) &&
+      // 0.14.6 起 PINNED_VERSION 是从 ENGINES 注册表派生的常量
+      // （`PINNED_VERSION = ENGINES[DEFAULT_ENGINE].version`），不再是字面量。
+      // 派生写法额外要求 ENGINES 是个**真对象字面量**：
+      // 只判 `/const ENGINES\s*=/` 会被 `const ENGINES = undefined` 蒙混过关
+      //（反例验证实测踩到 —— 注入 undefined 后断言仍为绿，等于没守）。
+      (/PINNED_VERSION\s*=\s*"\d+\.\d+\.\d+\.\d+"/.test(t) ||
+        (/PINNED_VERSION\s*=\s*ENGINES\[/.test(t) &&
+          /const ENGINES\s*=\s*\{[\s\S]*?chromix[\s\S]*?\};/.test(t))) &&
       ["gh-proxy.com/", "v4.gh-proxy.org/", "v6.gh-proxy.org/", "cdn.gh-proxy.org/", "axisnow.gh-proxy.org/", "gh-proxy.org/"].every((n) =>
         t.includes(`"https://${n}"`)
       ) &&
@@ -200,7 +212,15 @@ jsHasHaloSelector:
     if (!fs.existsSync(p)) return false;
     const t = fs.readFileSync(p, "utf8");
     const i = t.indexOf("browser: {");
-    const block = i < 0 ? "" : t.slice(i, i + 700);
+    if (i < 0) return false;
+    // ⚠️ 不能用 `slice(i, i + 700)` 这种固定长度窗口：
+    // 0.14.6 给 fingerprint 段加了 engine / singleEngineOnly 的说明注释，
+    // 固定窗口会把后面的 hardwareConcurrency / mirror 挤出去 → 断言误报，
+    // 看起来像「字段没打进包」，实际是窗口不够。改为按下一个顶层段
+    // （缩进 2 空格的 `}:` 或 `},`）截取真正的 browser 段，与注释长度无关。
+    const after = t.slice(i);
+    const m = after.slice(1).match(/\n {2}\}[,:]/);
+    const block = m ? after.slice(0, m.index + 1) : after.slice(0, 4000);
     return (
       block.includes("fingerprint: {") &&
       block.includes("enable:") &&
@@ -208,7 +228,12 @@ jsHasHaloSelector:
       block.includes("brand:") &&
       block.includes("hardwareConcurrency:") &&
       // 0.10.1：新字段 mirror 必须也在默认值里（旧配置升级后渲染层读不到就会白屏）
-      block.includes("mirror:")
+      block.includes("mirror:") &&
+      // 0.14.6：多内核改造新增的两个字段同样必须有默认值。
+      // 漏掉任一个，旧配置升级后读到 undefined —— singleEngineOnly 变 undefined
+      // 会让「单内核模式」静默失效、两个内核一直占着磁盘，且没有任何报错。
+      block.includes("engine:") &&
+      block.includes("singleEngineOnly:")
     );
   })(),
   // 0.9.4.16：致谢区（四位参考脚本作者）进了前端 bundle
@@ -391,7 +416,8 @@ jsHasHaloSelector:
   jsHasHkFriendLink: jsFlat.includes("hitokoto.cn") && jsFlat.includes("favicon.ico"),
 };
 console.log(JSON.stringify(result, null, 2));
-fs.rmSync(outDir, { recursive: true, force: true });
+// 只清理自己解包出来的临时目录；源码模式下 outDir 就是工作区根，绝不能删
+if (!useSrc) fs.rmSync(outDir, { recursive: true, force: true });
 
 const checks = {
   exeNameMatchesScheme: path.basename(exePath) === expectedName,
