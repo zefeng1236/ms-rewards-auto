@@ -263,14 +263,3 @@ jobs:
           docker tag ms-rewards-auto:ci "${IMG}:latest"
           docker push "${IMG}:${VERSION}"
           docker push "${IMG}:latest"
-
-      - name: 镜像包设为公开可见
-        # ghcr 包默认 private；公开仓库的镜像要能被 Watchtower / 普通用户匿名拉取，
-        # 必须显式置 public（首次推送会自动创建包）。
-        if: github.event_name != 'pull_request'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh api --method PATCH "/user/packages/container/ms-rewards-auto/visibility" \
-            -f visibility=public \
-            || echo "⚠️ 设置公开可见失败（可能权限不足或已公开），不影响推送，可稍后手动设置"
