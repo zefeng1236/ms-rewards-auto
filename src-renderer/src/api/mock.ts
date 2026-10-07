@@ -643,6 +643,32 @@ export function createMockApi(): ElectronApi {
       version: mockFpReady ? "148.0.7778.215" : null,
       pinned: "148.0.7778.215",
       installDir: "<storage>/fingerprint-chromium",
+      // 内核清单与主进程 fingerprint-browser.js 的 ENGINES 对齐（2026-10-07 补：
+      // 之前 mock 不下发 engines，UI 走「只含默认内核」回落，预览里永远只有
+      // 一张卡片，双卡并排布局根本测不到 —— 真实主进程是两个内核）。
+      engines: [
+        {
+          key: "chromix",
+          label: "Chromix 154",
+          version: "154.0.8037.57",
+          available: true,
+          unavailableReason: "",
+          notes: "默认内核。canvas / WebGL / 时区语言伪装完整，实测零崩溃。",
+          installed: mockFpReady,
+          default: true,
+        },
+        {
+          key: "fp150",
+          label: "fingerprint-chromium 150",
+          version: "150.0.7871.186",
+          available: false,
+          unavailableReason:
+            "存在已知崩溃缺陷：开启 canvas 伪装时，页面读取像素（getImageData / WebGL readPixels）会导致浏览器渲染进程崩溃（上游 issue #94，暂无补丁）。项目每天访问的登录与 Bing 页面正落在触发路径上，可能出现随机闪退。",
+          notes: "旧内核，备用保留。等上游修好 canvas 崩溃后开放选择。",
+          installed: false,
+          default: false,
+        },
+      ],
       // 预览模式按桌面版（运行时下载）呈现；Docker 版由真实后端返回 preinstalled: true
       preinstalled: false,
       downloadUrl: null,

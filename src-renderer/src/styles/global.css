@@ -1382,6 +1382,24 @@ button.nav-version-btn:hover {
   gap: 10px;
   margin-top: 4px;
 }
+/* 指纹面板里要占满整行的两块（2026-10-07 用户重排）：
+   ① 内核二选一卡片 —— 两张卡必须**同排并列**，挤成一列后
+      「二选一」就看不出来了；
+   ② 「只保留单个内核」开关 —— 单独一行，不与任何字段并排。
+   form-grid 是 auto-fit 多列栅格，加 span 全宽即可脱离列宽约束。 */
+.fp-span-full {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+/* 开关独占整行时不再按「列右缘」对齐（form-grid > .field-row 那条规则
+   的前提已不成立），改回标签在左、开关在右的常规行式。 */
+.fp-span-full > .field-row {
+  justify-content: flex-start;
+}
+.fp-span-full > .field-row > div:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
 .fp-engine-card {
   font-family: inherit;
   width: 100%;

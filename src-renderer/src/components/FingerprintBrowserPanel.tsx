@@ -296,8 +296,10 @@ export function FingerprintBrowserPanel() {
               {/* —— 内核选择（2026-10-06 多内核，0.14.7 重排为卡片视图）——
                   两个内核做成「当前/备用」一眼看到的卡片：选中的高亮、不可用的灰显。
                   之前是个普通 SelectField，混在「拟真种子 / CPU 核数 / 操作系统 /
-                  镜像源」里看不出来「这是切内核」，用户反馈"找不到切换"。 */}
-              <div className="form-field">
+                  镜像源」里看不出来「这是切内核」，用户反馈"找不到切换"。
+                  2026-10-07：改占满整行 —— 两张卡片并排同一行（二选一一眼可见），
+                  不再被 form-grid 的列宽挤成上下两张。 */}
+              <div className="form-field fp-span-full">
                 <div className="form-label">环境拟真内核</div>
                 <div className="form-hint" style={{ marginBottom: 6 }}>
                   {engineOpts.length
@@ -356,39 +358,33 @@ export function FingerprintBrowserPanel() {
                   })}
                 </div>
               </div>
-              <SwitchField
-                label="只保留单个内核"
-                hint={
-                  cfg.singleEngineOnly === false
-                    ? "两个内核都会保留（约各 500MB），可随时来回切换"
-                    : "切换内核时自动卸载旧的，只占用一个内核的空间（约 500MB）。想让两个都留着可随时切换就关掉它"
-                }
-                checked={cfg.singleEngineOnly !== false}
-                disabled={!st?.preinstalled && engineOpts.filter((e) => e.installed).length < 2}
-                onChange={(v) => void patch({ singleEngineOnly: v })}
-              />
+              {/* 只保留单个内核 —— 2026-10-07 用户要求**单独一行**：
+                  之前它混在「内核卡片 / 浏览器品牌 / 拟真种子」同一行里，
+                  开关既不像开关组的一部分，也不属于内核卡片，看着最突兀。 */}
+              <div className="fp-span-full">
+                <SwitchField
+                  label="只保留单个内核"
+                  hint={
+                    cfg.singleEngineOnly === false
+                      ? "两个内核都会保留（约各 500MB），可随时来回切换"
+                      : "切换内核时自动卸载旧的，只占用一个内核的空间（约 500MB）。想让两个都留着可随时切换就关掉它"
+                  }
+                  checked={cfg.singleEngineOnly !== false}
+                  disabled={!st?.preinstalled && engineOpts.filter((e) => e.installed).length < 2}
+                  onChange={(v) => void patch({ singleEngineOnly: v })}
+                />
+              </div>
+
+              {/* —— 下拉三件套（2026-10-07 用户要求**放一起**）——
+                  品牌 / 操作系统 / 镜像源都是「点开选一项」的下拉，
+                  之前中间插着两个数字输入（拟真种子、CPU 核数），
+                  用户要把下拉归到一处，数字输入留在下一行。 */}
               <SelectField
                 label="浏览器品牌"
                 hint="UA 与 Client Hints 声明的品牌，必须与内核一致才不会自相矛盾"
                 value={cfg.brand}
                 options={BRAND_OPTIONS}
                 onChange={(v) => void patch({ brand: v })}
-              />
-              <NumberField
-                label="拟真种子"
-                hint="0 = 按账号 ID 自动派生（同一账号长期稳定，不同账号互不相同）"
-                value={cfg.seed}
-                min={0}
-                max={4294967295}
-                onChange={(v) => void patch({ seed: Math.max(0, Math.floor(v) || 0) })}
-              />
-              <NumberField
-                label="CPU 核数"
-                hint="0 = 由拟真种子生成"
-                value={cfg.hardwareConcurrency}
-                min={0}
-                max={256}
-                onChange={(v) => void patch({ hardwareConcurrency: Math.max(0, Math.floor(v) || 0) })}
               />
               <SelectField
                 label="声明操作系统"
@@ -408,6 +404,24 @@ export function FingerprintBrowserPanel() {
                   onChange={(v) => void patch({ mirror: v })}
                 />
               )}
+
+              {/* —— 数字输入两件套（下拉组之后、单独一行）—— */}
+              <NumberField
+                label="拟真种子"
+                hint="0 = 按账号 ID 自动派生（同一账号长期稳定，不同账号互不相同）"
+                value={cfg.seed}
+                min={0}
+                max={4294967295}
+                onChange={(v) => void patch({ seed: Math.max(0, Math.floor(v) || 0) })}
+              />
+              <NumberField
+                label="CPU 核数"
+                hint="0 = 由拟真种子生成"
+                value={cfg.hardwareConcurrency}
+                min={0}
+                max={256}
+                onChange={(v) => void patch({ hardwareConcurrency: Math.max(0, Math.floor(v) || 0) })}
+              />
             </div>
 
             {/* 不可用内核的完整原因放在卡片的 title 提示里（hover 可见），
