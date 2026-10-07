@@ -9,7 +9,7 @@
 [![Platform](https://img.shields.io/badge/%E5%B9%B3%E5%8F%B0-Windows%20%C2%B7%20Docker-0078d4)](https://github.com/zefeng1236/ms-rewards-auto)
 [![License](https://img.shields.io/badge/%E8%AE%B8%E5%8F%AF%E8%AF%81-MIT-green)](LICENSE)
 
-**当前版本：V0.14.6（正式版）** · [下载安装包](https://github.com/zefeng1236/ms-rewards-auto/releases) · [Docker 部署](docker/README.md) · [完整更新日志](CHANGELOG.md)
+**当前版本：V0.14.7（正式版）** · [下载安装包](https://github.com/zefeng1236/ms-rewards-auto/releases) · [Docker 部署](docker/README.md) · [完整更新日志](CHANGELOG.md)
 
 基于 Electron 44 + Playwright，提供多账户隔离、环境拟真浏览器、液态玻璃图形界面与定时自动运行；同时提供 **Docker / Web 版**（kasmVNC 图形栈 + HTTPS + Passkey），可在无桌面环境的服务器上运行。
 
