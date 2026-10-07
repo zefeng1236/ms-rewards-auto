@@ -1548,6 +1548,15 @@ function registerIpc() {
   // 应用本身更新检查：查询 GitHub Releases 最新正式版（自动走 gh-proxy 加速），只查不下载。
   ipcMain.handle("app:checkAppUpdate", () => appUpdate.checkAppUpdate(displayVersion()));
 
+  // 运行时版本号（与窗口标题同源，读 package.json）。
+  // 渲染层 version.ts 是编译期常量，改了不重新 build:web 就会与标题栏分叉。
+  ipcMain.handle("app:getRuntimeVersion", () => ({
+    version: displayVersion(),
+    base: String(require("../package.json").version),
+    buildNumber: String(require("../package.json").buildNumber ?? ""),
+    electron: process.versions.electron,
+  }));
+
   // 取**指定版本**的更新日志（设置页「当前版本更新日志」按钮）
   ipcMain.handle("app:releaseNotes", (_e, version) =>
     appUpdate.fetchReleaseNotes(String(version || displayVersion()))

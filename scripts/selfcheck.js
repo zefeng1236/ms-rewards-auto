@@ -5011,7 +5011,54 @@ checkTrue(
   "写成「未运行」会让用户以为程序根本没执行，而实际是被接口挡住了"
 );
 
-// ====================== 【0.14.7】用户体验回归守卫 ======================
+// ====================== 【0.14.7】版本号单一来源（运行时真值） ======================
+// 用户实测「窗口标题 v0.14.6.1、侧边栏 0.14.5」——两处版本号来源不同：
+//   标题栏 ← 主进程 src/version.js 的 displayVersion()，**运行时读 package.json**
+//   侧边栏 ← 渲染层 src-renderer/src/version.ts 的 DISPLAY_VERSION，
+//            **vite 打包时烧进 JS 的常量**（改了不重新 build:web 就还是旧值）
+// 修法：所有「当前版本是多少」的展示都走 getRuntimeVersion IPC 问主进程拿真值，
+// 编译期常量只作**取不到时的回落**（预览 / mock 场景没有主进程）。
+console.log("\n【0.14.7】版本号单一来源（运行时真值）");
+{
+  const preloadFp = require("fs").readFileSync(path.join(ROOT, "src", "electron-preload.js"), "utf8");
+  const mainFp2 = require("fs").readFileSync(path.join(ROOT, "src", "electron-main.js"), "utf8");
+  const webApiFp = require("fs").readFileSync(path.join(ROOT, "src", "web-api.js"), "utf8");
+
+  // ① IPC 通道三端齐备（Electron preload / 主进程 handler / Web RPC / mock）
+  checkTrue(
+    "getRuntimeVersion 通道四端齐备（preload 暴露 + 主进程 handler + web-api）",
+    /getRuntimeVersion:\s*\(\)\s*=>\s*ipcRenderer\.invoke\("app:getRuntimeVersion"\)/.test(preloadFp) &&
+      /ipcMain\.handle\("app:getRuntimeVersion"/.test(mainFp2) &&
+      /getRuntimeVersion\(\)\s*\{/.test(webApiFp),
+    "少一端 → 桌面/Web/预览三处行为不一致"
+  );
+  // ② 主进程 handler 必须读运行时 package.json，不能写死
+  checkTrue(
+    "主进程 getRuntimeVersion 返回 displayVersion()（运行时读 package.json，非写死）",
+    /ipcMain\.handle\("app:getRuntimeVersion"[\s\S]{0,300}displayVersion\(\)/.test(mainFp2),
+    "写死版本号 → 与窗口标题又变成两套真值"
+  );
+  // ③ 四个展示位都必须用 runtimeVer，不能直接渲染编译期常量
+  const versionViews = [
+    ["Sidebar", "src-renderer/src/components/Sidebar.tsx", "{runtimeVer}"],
+    ["About", "src-renderer/src/views/About.tsx", "v{appVersion}"],
+    ["UpdatePanel", "src-renderer/src/components/UpdatePanel.tsx", "<strong>{runtimeVer}</strong>"],
+    ["UpdateDialog", "src-renderer/src/components/UpdateDialog.tsx", 'className="upd-checking-ver">{runtimeVer}'],
+  ];
+  for (const [name, rel, needle] of versionViews) {
+    const src = require("fs").readFileSync(path.join(ROOT, ...rel.split("/")), "utf8");
+    checkTrue(
+      `${name} 的版本号展示走运行时真值（不直接渲染编译期常量）`,
+      src.includes(needle) &&
+        /getRuntimeVersion\?\.\(\)/.test(src) &&
+        // 渲染处的 {DISPLAY_VERSION} 必须已被 runtimeVer 取代（import 与 useState 初始值允许存在）
+        !/\{DISPLAY_VERSION\}/.test(src.replace(/useState\(DISPLAY_VERSION\)/g, "")),
+      `直接渲染 {DISPLAY_VERSION} → 改了版本号没重新 build:web 时与窗口标题分叉`
+    );
+  }
+}
+
+// ====================== 【0.14.7】UX 回归守卫 ======================
 // 用户报的 4 件事（README 域名泄密+格式破损 / 弹窗不居中 / 更新侧栏缺位 /
 // 智能应用控制拦截安装包）的防回潮。每条对应一个真实可观察的 bug，被
 // 误删/回退时必须变红。
@@ -5085,9 +5132,13 @@ console.log("\n【0.14.7】CodeQL 安全告警修复守卫");
 {
   const guiSrc = require("fs").readFileSync(path.join(ROOT, "gui", "renderer.js"), "utf8");
   // ① 原型链污染：mergeInto 必须跳过危险键（js/prototype-pollution-utility）
+  //    CodeQL 判定的是「从 patch 读值 → 往 base 写属性」这一对，光在循环里
+  //    continue 不够（实测仍报 open），必须同时显式判 hasOwnProperty。
   checkTrue(
-    "gui/mergeInto 阻断原型链污染（__proto__/constructor/prototype 一律不合并）",
-    /FORBIDDEN_KEYS/.test(guiSrc) && /FORBIDDEN_KEYS\.has\(k\)/.test(guiSrc),
+    "gui/mergeInto 阻断原型链污染（黑名单 + hasOwnProperty 双防护）",
+    /FORBIDDEN_KEYS = new Set\(\["__proto__", "constructor", "prototype"\]\)/.test(guiSrc) &&
+      /FORBIDDEN_KEYS\.has\(k\)/.test(guiSrc) &&
+      /Object\.prototype\.hasOwnProperty\.call\(patch, k\)/.test(guiSrc),
     "mergeInto 无键名过滤 → 恶意 patch 可污染全局原型，所有对象行为被劫持"
   );
   // ② XSS：主题色进 innerHTML 模板前必须过 safeAccent 白名单（js/xss-through-dom）

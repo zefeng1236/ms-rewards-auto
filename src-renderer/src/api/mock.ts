@@ -14,7 +14,7 @@ import type {
   VaultStatus,
 } from "../types";
 import type { ElectronApi } from "../types/electron";
-import { DISPLAY_VERSION } from "../version";
+import { DISPLAY_VERSION, APP_VERSION, BUILD_NUMBER } from "../version";
 import { mergeDeep } from "../utils";
 
 /**
@@ -697,6 +697,13 @@ export function createMockApi(): ElectronApi {
       pinned: "148.0.7778.215",
       updateAvailable: false,
       reinstallAvailable: true,
+    }),
+    // 预览模式：运行时版本号与 DISPLAY_VERSION 同源（预览模式没有主进程可问）
+    getRuntimeVersion: async () => ({
+      version: DISPLAY_VERSION,
+      base: APP_VERSION,
+      buildNumber: String(BUILD_NUMBER ?? ""),
+      electron: "",
     }),
     // 预览模式：伪造一个比当前版本新的正式版，方便直接看到 NEW 徽标与更新弹窗样式。
     // currentVersion 直接从 DISPLAY_VERSION 取（package.json 单源），避免 mock 写死

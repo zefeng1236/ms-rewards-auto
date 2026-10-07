@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { GlassButton, GlassSurface } from "@ttqtt/liquid-glass-react";
 import { AppCard, Tag, toast } from "../components/liquidGlassCompat";
 import { useAppState } from "../hooks/useAppState";
+import { api } from "../api/ipc";
+import { DISPLAY_VERSION as APP_VERSION } from "../version";
 
 /**
  * 关于页面：版本信息 + 第三方依赖清单 + 友情链接。
@@ -36,7 +38,24 @@ async function copyText(text: string): Promise<boolean> {
   }
 }
 
-const APP_VERSION = "0.14.7";
+/* 当前版本号（2026-10-07 改为运行时读取主进程 package.json）。
+   之前是自声明的 const APP_VERSION = "0.14.7"（编译期烧进 JS），
+   与窗口标题（displayVersion()）分叉——用户实测「标题栏 v0.14.6.1、侧边栏 0.14.5」。
+   现在统一问主进程拿真值，取不到时回落编译期常量（预览 / mock）。 */
+const [appVersion, setAppVersion] = useState(APP_VERSION);
+useEffect(() => {
+  let alive = true;
+  Promise.resolve(api.getRuntimeVersion?.())
+    .then((v) => {
+      if (alive && v && typeof v.version === "string" && v.version) setAppVersion(v.version);
+    })
+    .catch(() => {
+      /* 预览模式 / IPC 不可用时保留编译期常量 */
+    });
+  return () => {
+    alive = false;
+  };
+}, []);
 
 /** 直接依赖（package.json 中声明的运行时依赖） */
 const DIRECT_DEPS: { name: string; version: string; license: string; desc: string; url: string }[] = [
@@ -250,7 +269,7 @@ export function About() {
             <div className="block-sub">版本信息、开源依赖与友情链接</div>
           </div>
           <Tag color="accent" size="sm">
-            v{APP_VERSION}
+            v{appVersion}
           </Tag>
         </div>
 
@@ -259,7 +278,7 @@ export function About() {
             <img className="about-logo" src="./icon.png" alt="" draggable={false} />
             <div style={{ minWidth: 0 }}>
               <div className="about-name">MS Rewards Auto</div>
-              <div className="about-ver">版本 v{APP_VERSION} · MIT License</div>
+              <div className="about-ver">版本 v{appVersion} · MIT License</div>
               <div className="hint" style={{ marginTop: 6 }}>
                 Electron + Playwright 多账户自动任务工具。本软件为个人学习交流用途的开源项目，
                 <b>非MS官方授权产品</b>，与 Microsoft Corporation 无任何关联。

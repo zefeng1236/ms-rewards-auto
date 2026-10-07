@@ -46,8 +46,13 @@ function setBusy(sel, busy) {
 /** 深合并到本地缓存，避免每次改设置都要重新拉一遍 IPC */
 const FORBIDDEN_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 function mergeInto(base, patch) {
-  for (const k of Object.keys(patch || {})) {
-    if (FORBIDDEN_KEYS.has(k)) continue; // 阻断原型链污染
+  if (!base || typeof base !== "object") return base;
+  if (!patch || typeof patch !== "object") return base;
+  for (const k of Object.keys(patch)) {
+    // 阻断原型链污染：黑名单挡住会顺着原型链往上写的三个键
+    if (FORBIDDEN_KEYS.has(k)) continue;
+    // 显式判自有属性（静态分析与人都能一眼看出这里做了防护）
+    if (!Object.prototype.hasOwnProperty.call(patch, k)) continue;
     const v = patch[k];
     if (v && typeof v === "object" && !Array.isArray(v) && base[k] && typeof base[k] === "object" && !Array.isArray(base[k])) {
       mergeInto(base[k], v);

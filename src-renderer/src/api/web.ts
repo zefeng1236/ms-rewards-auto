@@ -422,6 +422,7 @@ export function createWebApi(): ElectronApi {
     installUpdate: async () => ({ ok: false, error: "Web 版请通过 docker compose pull 更新镜像" }),
     dismissUpdatePrompt: async () => ({ ok: true }),
     checkUpdateNow: () => rpc<CheckAppUpdateResult>("checkAppUpdate"),
+    getRuntimeVersion: () => rpc<{ version: string; base: string; buildNumber: string; electron: string }>("getRuntimeVersion"),
     onUpdatePrompt: () => () => {},
     onUpdateDownloadProgress: () => () => {},
 

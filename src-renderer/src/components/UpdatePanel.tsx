@@ -31,6 +31,24 @@ export function UpdatePanel({ onShowNotes }: { onShowNotes?: (notes: ReleaseNote
   const [notesLoading, setNotesLoading] = useState(false);
   const [busy, setBusy] = useState(false);
 
+  // 当前版本号：运行时问主进程拿 package.json 真值（与窗口标题同源）。
+  // DISPLAY_VERSION 是 vite 编译期烧进 JS 的常量，改了不重新 build:web
+  // 就会与标题栏分叉（用户实测「标题栏 0.14.6.1、设置页 0.14.5」）。
+  const [runtimeVer, setRuntimeVer] = useState(DISPLAY_VERSION);
+  useEffect(() => {
+    let alive = true;
+    Promise.resolve(api.getRuntimeVersion?.())
+      .then((v) => {
+        if (alive && v && typeof v.version === "string" && v.version) setRuntimeVer(v.version);
+      })
+      .catch(() => {
+        /* 预览模式 / IPC 不可用时保留编译期常量 */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   // 自己读一次全局配置：省得父组件层层透传，也避免首帧读到 undefined
   useEffect(() => {
     let alive = true;
@@ -77,7 +95,7 @@ export function UpdatePanel({ onShowNotes }: { onShowNotes?: (notes: ReleaseNote
       const r = await api.checkAppUpdate();
       setResult(r || null);
     } catch {
-      setResult({ ok: false, updateAvailable: false, currentVersion: DISPLAY_VERSION, latestVersion: "", downloadUrl: "", assetName: "", pageUrl: "", releaseNotes: "", publishedAt: "", error: "网络异常，无法连接更新服务器" });
+      setResult({ ok: false, updateAvailable: false, currentVersion: runtimeVer, latestVersion: "", downloadUrl: "", assetName: "", pageUrl: "", releaseNotes: "", publishedAt: "", error: "网络异常，无法连接更新服务器" });
     } finally {
       setChecking(false);
     }
@@ -122,7 +140,7 @@ export function UpdatePanel({ onShowNotes }: { onShowNotes?: (notes: ReleaseNote
       {/* ② 版本与平台 */}
       <div className="field-row">
         <div style={{ flex: 1 }}>
-          <div className="hint">当前版本：<strong>{DISPLAY_VERSION}</strong></div>
+          <div className="hint">当前版本：<strong>{runtimeVer}</strong></div>
           <div className="hint">运行平台：{platformLabel}</div>
           {update?.readyVersion ? (
             <div className="hint" style={{ marginTop: 4 }}>

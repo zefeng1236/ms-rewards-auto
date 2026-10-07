@@ -535,6 +535,15 @@ function createApi({ emit }) {
     releaseNotes(version) {
       return appUpdate.fetchReleaseNotes(String(version || displayVersion()));
     },
+    // 运行时版本号（与窗口标题同源；渲染层那份是编译期常量，会分叉）
+    getRuntimeVersion() {
+      return {
+        version: displayVersion(),
+        base: String(require("../package.json").version),
+        buildNumber: String(require("../package.json").buildNumber ?? ""),
+        electron: "",
+      };
+    },
 
     /* --------------------------- Web 专属 --------------------------- */
     /** 登出：只销毁本浏览器会话，保险库保持解锁，后台任务不受影响 */

@@ -180,6 +180,13 @@ export interface ElectronApi {
   setFingerprintEngine(key: string): Promise<{ ok: boolean; engine?: string; removed?: string[]; error?: string }>;
   /** 检查更新：只查询上游版本，不下载不安装 */
   checkFingerprintUpdate(): Promise<CheckFingerprintUpdateResult>;
+  /**
+   * 运行时版本号（主进程读 package.json，与窗口标题同源）。
+   * ⚠️ 渲染层自己的 version.ts 是**打包时编译进 JS 的常量**，改了不重新 build:web
+   * 就仍是旧值 —— 曾出现「标题栏 0.14.6.1、侧边栏 0.14.5」的分叉。
+   * 「当前版本是多少」的展示一律走这条通道。
+   */
+  getRuntimeVersion(): Promise<{ version: string; base: string; buildNumber: string; electron: string }>;
   /** 应用本身更新检查：查询 GitHub Releases 最新正式版（自动加速），只查不下载 */
   checkAppUpdate(): Promise<CheckAppUpdateResult>;
   /** 内置下载安装包到系统「下载」目录，进度经 onUpdateDownloadProgress 推送 */

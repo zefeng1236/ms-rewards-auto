@@ -343,7 +343,27 @@ export function Sidebar({
     }
   };
 
-  return (
+  /* 当前版本号（2026-10-07 改为运行时读取）。
+   之前直接用编译期常量 DISPLAY_VERSION（vite 把 version.ts 烧进 JS），
+   改了版本号没重新 build:web 时就会与窗口标题分叉——用户实测「标题栏
+   v0.14.6.1、侧边栏 0.14.5」。现在统一问主进程拿 package.json 真值，
+   与标题栏（displayVersion()）同源。取不到时回落编译期常量（预览/mock 场景）。 */
+const [runtimeVer, setRuntimeVer] = useState(DISPLAY_VERSION);
+useEffect(() => {
+  let alive = true;
+  Promise.resolve(api.getRuntimeVersion?.())
+    .then((v) => {
+      if (alive && v && typeof v.version === "string" && v.version) setRuntimeVer(v.version);
+    })
+    .catch(() => {
+      /* 预览模式 / IPC 不可用时保留编译期常量 */
+    });
+  return () => {
+    alive = false;
+  };
+}, []);
+
+return (
     <GlassSurface className="sidenav" radius={0}>
       <div className="nav-brand">
         <img className="nav-logo-img" src="./icon.png" alt="" draggable={false} />
@@ -557,17 +577,16 @@ export function Sidebar({
           </div>
         )}
 
-        {/* 左下角版本号（v 主版本.交付号，与安装包文件名一致）；点击也可打开自动更新弹窗
-            DISPLAY_VERSION 自带完整展示文案（见 src/version.ts），UI 不再硬拼前缀 v——
-            否则一旦上游接口漏剥前导 v，UI 会拼出 "VV0.13.15" 这种双 V bug（2026-10-03
-            用户反馈，selfcheck 守卫不准 UI 拼 v）。 */}
+        {/* 左下角版本号（运行时读主进程，与窗口标题同源；点它打开自动更新弹窗）。
+            UI 不拼前缀 v —— 上游接口漏剥前导 v 时会拼出 "VV0.13.15" 双 V
+            （2026-10-03 用户反馈，selfcheck 守卫不准 UI 拼 v）。*/}
         <button
           type="button"
           className="nav-version hint nav-version-btn"
           title="当前软件版本 · 点击检查更新"
           onClick={() => setUpdateOpen(true)}
         >
-          {DISPLAY_VERSION}
+          {runtimeVer}
         </button>
       </div>
 

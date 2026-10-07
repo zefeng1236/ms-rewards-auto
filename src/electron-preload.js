@@ -133,6 +133,11 @@ contextBridge.exposeInMainWorld("api", {
   dismissUpdatePrompt: (version) => ipcRenderer.invoke("app:dismissUpdatePrompt", version),
   // 手动检查更新（忽略「当天已弹过」）
   checkUpdateNow: () => ipcRenderer.invoke("app:checkUpdateNow"),
+  // 运行时版本号（读主进程 package.json，与窗口标题同源）。
+  // ⚠️ 渲染层自己的 version.ts 是**打包时编译进 JS 的常量**，改了不重新
+  // build:web 就还是旧值 —— 曾出现「标题栏 0.14.6.1、侧边栏 0.14.5」的分叉。
+  // 凡是「当前版本是多少」的展示都必须走这条通道，别用 DISPLAY_VERSION。
+  getRuntimeVersion: () => ipcRenderer.invoke("app:getRuntimeVersion"),
   // 主进程推更新提示：{ mode: "ready"|"available", version, notes?, file? }
   onUpdatePrompt: (cb) => {
     const handler = (_e, v) => cb(v);

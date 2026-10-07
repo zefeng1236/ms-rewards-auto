@@ -54,6 +54,23 @@ export function UpdateDialog({
     return off;
   }, []);
 
+  // 当前版本号：运行时问主进程拿真值（DISPLAY_VERSION 是编译期常量，
+  // 与窗口标题分叉会让「已是最新版本」误判 —— 用户实测标题栏 0.14.6.1 / 侧边栏 0.14.5）
+  const [runtimeVer, setRuntimeVer] = useState(DISPLAY_VERSION);
+  useEffect(() => {
+    let alive = true;
+    Promise.resolve(api.getRuntimeVersion?.())
+      .then((v) => {
+        if (alive && v && typeof v.version === "string" && v.version) setRuntimeVer(v.version);
+      })
+      .catch(() => {
+        /* 预览模式 / IPC 不可用时保留编译期常量 */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   useEffect(() => {
     const dialog = dialogRef.current;
     if (!dialog) return;
@@ -79,7 +96,7 @@ export function UpdateDialog({
       })
       .catch(() => {
         if (!alive) return;
-        setInfo({ ok: false, updateAvailable: false, currentVersion: DISPLAY_VERSION, latestVersion: "", downloadUrl: "", assetName: "", pageUrl: "", releaseNotes: "", publishedAt: "", error: "网络异常，无法连接更新服务器" });
+        setInfo({ ok: false, updateAvailable: false, currentVersion: runtimeVer, latestVersion: "", downloadUrl: "", assetName: "", pageUrl: "", releaseNotes: "", publishedAt: "", error: "网络异常，无法连接更新服务器" });
         setPhase("result");
       });
     return () => {
@@ -91,7 +108,7 @@ export function UpdateDialog({
 
   const checking = phase === "checking";
   const hasUpdate = !!info && info.ok && info.updateAvailable;
-  const channel = isPrereleaseChannel(checking ? DISPLAY_VERSION : info?.latestVersion || DISPLAY_VERSION);
+  const channel = isPrereleaseChannel(checking ? runtimeVer : info?.latestVersion || runtimeVer);
 
   const onDownload = async () => {
     if (!info || !info.downloadUrl) return;
@@ -219,7 +236,7 @@ export function UpdateDialog({
             <div className="upd-checking">
               <div className="upd-spinner" aria-hidden />
               <div className="upd-checking-text">正在检查更新...</div>
-              <div className="upd-checking-ver">{DISPLAY_VERSION}</div>
+              <div className="upd-checking-ver">{runtimeVer}</div>
             </div>
           ) : hasUpdate && info ? (
             <>
@@ -233,7 +250,7 @@ export function UpdateDialog({
                 <div>
                   <div className="upd-hero-title">版本更新可用</div>
                   <div className="upd-hero-ver">
-                    <span className="upd-ver-old">{info.currentVersion || DISPLAY_VERSION}</span>
+                    <span className="upd-ver-old">{info.currentVersion || runtimeVer}</span>
                     <span className="upd-ver-arrow">→</span>
                     <span className="upd-ver-new">{info.latestVersion}</span>
                   </div>
@@ -266,7 +283,7 @@ export function UpdateDialog({
                 {info && !info.ok ? "检查更新失败" : "已是最新版本"}
               </div>
               <div className="upd-checking-ver">
-                {info && !info.ok ? info.error || "请稍后重试" : `v${DISPLAY_VERSION}`}
+                {info && !info.ok ? info.error || "请稍后重试" : `v${runtimeVer}`}
               </div>
             </div>
           )}
