@@ -1516,6 +1516,33 @@ checkTrue(
   "少了同步 → 用户选了 fp150、界面也变了，但 openContext 仍用默认 chromix（无报错、结果不对，最难自查）"
 );
 checkTrue(
+  "README 的默认内核与 ENGINES 一致（0.14.6 起默认为 Chromix，不是 fp150）",
+  (() => {
+    const rd = require("fs").readFileSync(path.join(ROOT, "README.md"), "utf8");
+    const cv = /chromix:\s*\{[\s\S]{0,400}?version:\s*"([^"]+)"/.exec(fpSrc);
+    const fv = /fp150:\s*\{[\s\S]{0,400}?version:\s*"([^"]+)"/.exec(fpSrc);
+    if (!cv || !fv) return false;
+    // 两个版本号都要出现在 README，且默认内核必须写的是 chromix
+    if (!rd.includes(cv[1]) || !rd.includes(fv[1])) return false;
+    const defLine = (rd.match(/本软件默认使用[^\n]*/) || [""])[0];
+    return /Chromix/.test(defLine) && /xiaozhou26\/Chromix/.test(defLine);
+  })(),
+  "README 还写着「默认使用 fingerprint-chromium 150」→ 与代码（默认 chromix）矛盾，用户会以为装错了内核"
+);
+checkTrue(
+  "README 的上游链接均指向真实仓库（防止文档腐坏）",
+  (() => {
+    const rd = require("fs").readFileSync(path.join(ROOT, "README.md"), "utf8");
+    // 两个上游仓库 + fp150 的缺陷追踪 issue，三者缺一文档就不可信
+    return (
+      rd.includes("https://github.com/xiaozhou26/Chromix") &&
+      rd.includes("https://github.com/adryfish/fingerprint-chromium") &&
+      rd.includes("https://github.com/adryfish/fingerprint-chromium/issues/94")
+    );
+  })(),
+  "上游链接缺失 → 用户找不到 issue #94，也就看不到 fp150 为何不可选"
+);
+checkTrue(
   "【多内核】两个内核的安装目录/staging 目录物理隔离（防止互相覆盖）",
   /e\.key === DEFAULT_ENGINE \? base : path\.join\(base, e\.key\)/.test(fpSrc) &&
     /e\.key === DEFAULT_ENGINE \? base : `\$\{base\}-\$\{e\.key\}`/.test(fpSrc),

@@ -25,12 +25,12 @@
 
 | | 特性 | 说明 |
 |---|---|---|
-| 🧬 | **环境拟真浏览器** | 默认浏览器内核，见下方[专节](#-默认浏览器环境拟真浏览器) |
+| 🧬 | **环境拟真浏览器** | 双内核可自选（[Chromix 154](https://github.com/xiaozhou26/Chromix) / [fingerprint-chromium 150](https://github.com/adryfish/fingerprint-chromium)），见下方[专节](#-默认浏览器环境拟真浏览器) |
 | 👥 | **多账户隔离** | 每个账户独立的 `storage/accounts/<id>/` 目录（配置、登录态、Cookie、浏览器 profile），互不干扰 |
 | 🖥 | **液态玻璃 GUI** | React + TypeScript 重写的全新界面：毛玻璃质感、壁纸环境色自适应、主题色可换 |
 | 🧭 | **首次启动向导** | 欢迎（多语言）→ 协议 → 风险告知 → 个性化设置，四步完成初始配置 |
 | 🧩 | **三层配置模型** | 全局设置 → 账户覆盖（可选），账户可一键切换「遵循全局 / 独立设置」 |
-| ⚡ | **HTTP 驱动任务** | 签入、阅读、每日活动、每周可领取积分、PC/移动端搜索上报，全程 fetch 模拟，仅登录需要浏览器 |
+| ⚡ | **HTTP 驱动任务** | 签入、阅读、每日活动、定期收取积分（可设「每隔 N 天」或「每天定点」）、PC/移动端搜索上报，全程 fetch 模拟，仅登录需要浏览器 |
 | ⏰ | **定时自动运行** | 单次循环 / 每日定时 / 多时间段三种调度模式，可设每日开始时间与随机启动延迟 |
 | 🔐 | **加密保险库** | Cookie / 令牌 scrypt + AES-256-GCM 加密存储（磁盘无明文），系统钥匙串免密解锁、恢复密钥、Passkey 登录 |
 | 🎯 | **积分目标** | 按账户设置目标与自定义奖品名，达成后在仪表盘显示完成倍数 / 可兑换数量 |
@@ -40,9 +40,29 @@
 
 ## 🧬 默认浏览器：环境拟真浏览器
 
-本软件默认使用 **[fingerprint-chromium](https://github.com/adryfish/fingerprint-chromium)** —— 由 **[@adryfish](https://github.com/adryfish)** 维护的指纹一致性 patch 版 Chromium（基于 [Ungoogled Chromium](https://github.com/ungoogled-software/ungoogled-chromium)），当前钉定版本 **150.0.7871.186**。
+本软件默认使用 **[Chromix](https://github.com/xiaozhou26/Chromix)** —— 一个 216 个 patch 的指纹一致性 Chromium，当前钉定版本 **154.0.8037.57**。canvas / WebGL / 时区语言伪装完整，实测在登录与 Bing 目标域零崩溃。
 
-> 感谢 adryfish 的出色工作 —— 本项目的反检测能力很大程度建立在这个内核之上。**如果你觉得本项目有用，也请给 [上游仓库](https://github.com/adryfish/fingerprint-chromium) 一个 Star。**
+自 **0.14.6** 起支持**双内核并存**，可在「环境拟真浏览器」面板自选、分别安装与卸载：
+
+| 内核 | 版本 | 状态 | 说明 |
+|---|---|---|---|
+| **[Chromix](https://github.com/xiaozhou26/Chromix)** | 154.0.8037.57 | ✅ 默认可用 | 活跃维护，实测零崩溃 |
+| **[fingerprint-chromium](https://github.com/adryfish/fingerprint-chromium)** | 150.0.7871.186 | ⚠️ 可见但暂不可选 | 由 [@adryfish](https://github.com/adryfish) 维护（基于 [Ungoogled Chromium](https://github.com/ungoogled-software/ungoogled-chromium)）。存在已知崩溃缺陷，见下 |
+
+> 💡 两个内核均由个人开发者无偿维护。如果它们对你有用，欢迎去点个 **Star** 支持上游：
+> [xiaozhou26/Chromix](https://github.com/xiaozhou26/Chromix) · [adryfish/fingerprint-chromium](https://github.com/adryfish/fingerprint-chromium)
+
+<details>
+<summary><b>fingerprint-chromium 150 为何暂不可选（点开查看）</b></summary>
+
+开启 canvas 伪装时，页面调用 `getImageData` / WebGL `readPixels` 读回像素会让渲染进程 `SIGSEGV` 崩溃
+（PC 固定在 `chromium+0xf2da5fb`，fault addr 是 tagged V8 heap 指针）。
+
+崩溃有**概率性**，单次测试不作数 —— 本项目每天真实访问的 `login.live.com` / `rewards.bing.com` / `rewards.bing.com/earn` 正好落在触发路径上，会出现随机闪退。
+
+追踪中：[adryfish/fingerprint-chromium#94](https://github.com/adryfish/fingerprint-chromium/issues/94)。上游修好后，把代码里的 `available` 置为 `true` 即可开放选择，无需其他改动。
+
+</details>
 
 它在本软件中是这样工作的：
 
@@ -50,12 +70,13 @@
 |---|---|
 | **指纹一致性** | UA / Client Hints / 指纹种子 / CPU 核数 / 声明的操作系统，全部由同一随机种子生成、彼此一致，不会出现「UA 说 Windows、平台接口说 Linux」的自相矛盾 |
 | **与系统浏览器完全隔离** | 不继承系统 Edge / Chrome 的任何数据与特征 |
-| **首次启动自动下载** | 约 181MB，多连接分片并发（4~16 线程自适应）+ GitHub hosts 优选 IP + 镜像源自动测速切换，下载完成校验官方 sha256 |
+| **首次启动自动下载** | 约 202MB，多连接分片并发（4~16 线程自适应）+ GitHub hosts 优选 IP + 镜像源自动测速切换，下载完成校验官方 sha256 |
 | **后台静默升级** | 新版本先下载到独立 staging 目录，等没有任务在使用旧内核时才切换，替换过程不影响正在执行的任务 |
+| **内核自选与卸载** | 两个内核可分别安装、切换、卸载；默认开启「只保留单个内核」，切换时自动卸载旧的（各占约 500MB），关掉才能两个常驻随时切 |
 | **普通 Chromium 回落** | 可随时在「软件设置 → 浏览器」切回 Playwright 自带 Chromium，不影响登录与任务 |
 
 <details>
-<summary><b>已知上游限制（点开查看）</b></summary>
+<summary><b>已知限制（点开查看）</b></summary>
 
 - GPU 环境特征仅在 Linux 生效；Windows 上 WebGL 由本软件自己的补丁兜底
 - headless 模式只把 UA 的 `HeadlessChrome` 改成 `Chrome`，其余 headless 特征不变
@@ -181,7 +202,7 @@ GUI 运行期间由主进程守护（每 30 秒巡检）；Docker / 服务器场
 | 层 | 技术 |
 | --- | --- |
 | **桌面框架** | Electron 44 · electron-builder 26（NSIS 安装包） |
-| **浏览器引擎** | [fingerprint-chromium 150](https://github.com/adryfish/fingerprint-chromium)（默认）· playwright-core 1.45（普通 Chromium 回落） |
+| **浏览器引擎** | [Chromix](https://github.com/xiaozhou26/Chromix) 154（默认）· [fingerprint-chromium](https://github.com/adryfish/fingerprint-chromium) 150（备用，暂不可选）· playwright-core 1.45（普通 Chromium 回落） |
 | **渲染层** | React 19 + TypeScript 5.9 + Vite 8 |
 | **UI 组件** | [@ttqtt/liquid-glass-react](https://www.npmjs.com/package/@ttqtt/liquid-glass-react)（液态玻璃质感） |
 | **样式** | CSS 设计 token + `backdrop-filter` 毛玻璃 + 壁纸环境色自适应，固定深色主题 |
