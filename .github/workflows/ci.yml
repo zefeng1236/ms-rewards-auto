@@ -195,6 +195,25 @@ jobs:
                         .Replace('{{SHA256_BLOCKMAP}}', $env:BM_SHA).
                         .Replace('{{BYTES_BLOCKMAP}}', $env:BM_BYTES).
                         .Replace('{{BLOCKMAP_NAME}}', $env:BM_NAME)
+
+          # ⚠️ 替换后必须自查还有没有残留占位符（2026-10-07 踩到）。
+          # v0.14.9 线上正文里SHA256 全是 `{{SHA256_EXE}}` 字面量 —— 上一步的
+          # $env:EXE_SHA 等变量为空（steps.sha.outputs 没传过来 / 上游 job 失败
+          # 后仍在跑），.Replace 把占位符替换成了**空串**或原样保留，而整条流水线
+          # 一路绿灯，没有任何一处会喊「产物表是空的」。
+          # 这里显式断言：正文里不允许再出现任何 {{占位符}}，出现即失败，
+          # 让「产物表缺值」在发版这一步就红，而不是等用户校验哈希才发现。
+          $left = [regex]::Matches($body, '\{\{[A-Za-z_0-9]+\}\}')
+          if ($left.Count -gt 0) {
+            $names = ($left | ForEach-Object { $_.Value } | Sort-Object -Unique) -join ', '
+            throw "发布说明里仍有未替换的占位符：$names —— 检查 steps.sha.outputs 是否为空（dist 里有没有匹配版本号的 exe）"
+          }
+          foreach ($pair in @(@('EXE_SHA','SHA256_EXE'), @('EXE_BYTES','BYTES_EXE'),
+                              @('EXE_NAME','EXE_NAME'), @('BM_SHA','SHA256_BLOCKMAP'),
+                              @('BM_BYTES','BYTES_BLOCKMAP'), @('BM_NAME','BLOCKMAP_NAME'))) {
+            if (-not $env:($pair[0])) { throw "步骤变量 $($pair[0]) 为空，对应占位符 $($pair[1]) 没被真正替换" }
+          }
+
           $body | Out-File -FilePath release-notes-rendered.md -Encoding utf8 -NoNewline
           "path=release-notes-rendered.md" | Out-File -Append $env:GITHUB_OUTPUT -Encoding utf8
 
