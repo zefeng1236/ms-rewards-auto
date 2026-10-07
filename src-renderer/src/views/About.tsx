@@ -223,7 +223,7 @@ export function About() {
   const [quoteCopied, setQuoteCopied] = useState(false);
 
   /* 当前版本号（2026-10-07 改为运行时读取主进程 package.json）。
-     之前是自声明的 const APP_VERSION = "0.14.11"（编译期烧进 JS），
+     之前是自声明的 const APP_VERSION = "0.14.12"（编译期烧进 JS），
      与窗口标题（displayVersion()）分叉——用户实测「标题栏 v0.14.6.1、侧边栏 0.14.5」。
      现在统一问主进程拿真值，取不到时回落编译期常量（预览 / mock）。
 
