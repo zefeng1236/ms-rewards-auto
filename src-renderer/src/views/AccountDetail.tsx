@@ -137,7 +137,7 @@ function GoalCard({ goal, balance }: { goal: GoalItem; balance: number }) {
   const count = Math.floor(current / target);
   const remain = target - (current % target || target);
   const text = current < target
-    ? `已获得${fmtNum(current)}还差${fmtNum(target - current)}积分`
+    ? `已获得 ${fmtNum(current)}，还差 ${fmtNum(target - current)} 积分`
     : reward
     ? `当前已可兑换${fmtNum(count)}个${reward}，距离下一个还剩${fmtNum(remain)}积分`
     : `当前已达成${Math.round((current / target) * 10) / 10}倍目标`;
