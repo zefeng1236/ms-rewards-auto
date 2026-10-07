@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { GlassButton } from "@ttqtt/liquid-glass-react";
 import { api } from "../api/ipc";
+import { renderNotes } from "../utils/releaseNotes";
 import { DISPLAY_VERSION } from "../version";
 import type { CheckAppUpdateResult, UpdateDownloadProgress, UpdateDownloadResult } from "../types";
 
@@ -31,73 +32,6 @@ function fmtBytes(n?: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / 1024 / 1024).toFixed(1)} MB`;
-}
-
-/* ---------------- Markdown-lite 渲染（纯 React 节点，不走 innerHTML） ---------------- */
-
-function renderInline(text: string, keyBase: string): ReactNode[] {
-  const out: ReactNode[] = [];
-  // 交替切分 `code` 与 **bold**
-  const re = /(`[^`]+`|\*\*[^*]+\*\*)/g;
-  let last = 0;
-  let m: RegExpExecArray | null;
-  let i = 0;
-  while ((m = re.exec(text))) {
-    if (m.index > last) out.push(text.slice(last, m.index));
-    const tok = m[0];
-    if (tok.startsWith("`")) {
-      out.push(<code key={`${keyBase}-c${i++}`}>{tok.slice(1, -1)}</code>);
-    } else {
-      out.push(<strong key={`${keyBase}-b${i++}`}>{tok.slice(2, -2)}</strong>);
-    }
-    last = m.index + tok.length;
-  }
-  if (last < text.length) out.push(text.slice(last));
-  return out;
-}
-
-function renderNotes(md: string): ReactNode {
-  const lines = (md || "").replace(/\r/g, "").split("\n");
-  const blocks: ReactNode[] = [];
-  let list: ReactNode[] = [];
-  let key = 0;
-  const flushList = () => {
-    if (list.length) {
-      blocks.push(<ul key={`ul${key++}`}>{list}</ul>);
-      list = [];
-    }
-  };
-  for (const raw of lines) {
-    const line = raw.trimEnd();
-    const t = line.trim();
-    if (!t) {
-      flushList();
-      continue;
-    }
-    const h = /^(#{1,4})\s+(.*)$/.exec(t);
-    if (h) {
-      flushList();
-      blocks.push(
-        <h4 key={`h${key++}`} className="upd-note-h">
-          {renderInline(h[2], `h${key}`)}
-        </h4>
-      );
-      continue;
-    }
-    const li = /^[-*•]\s+(.*)$/.exec(t);
-    if (li) {
-      list.push(<li key={`li${key++}`}>{renderInline(li[1], `li${key}`)}</li>);
-      continue;
-    }
-    flushList();
-    blocks.push(
-      <p key={`p${key++}`} className="upd-note-p">
-        {renderInline(t, `p${key}`)}
-      </p>
-    );
-  }
-  flushList();
-  return blocks;
 }
 
 export function UpdateDialog({

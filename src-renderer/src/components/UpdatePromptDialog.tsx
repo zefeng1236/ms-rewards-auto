@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { GlassButton } from "@ttqtt/liquid-glass-react";
 import { api } from "../api/ipc";
+import { renderNotes } from "../utils/releaseNotes";
 import type { UpdatePromptPayload } from "../types";
 
 /**
@@ -87,16 +88,8 @@ export function UpdatePromptDialog({
         </div>
 
         {payload.notes ? (
-          <div
-            style={{
-              maxHeight: "48vh",
-              overflowY: "auto",
-              whiteSpace: "pre-wrap",
-              fontSize: 13,
-              lineHeight: 1.65,
-            }}
-          >
-            {payload.notes}
+          <div className="upd-notes upd-notes-tall" tabIndex={0}>
+            {renderNotes(payload.notes)}
           </div>
         ) : null}
 

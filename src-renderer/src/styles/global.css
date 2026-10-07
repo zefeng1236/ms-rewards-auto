@@ -532,6 +532,129 @@ body::before {
   border-radius: 4px;
   padding: 1px 5px;
 }
+/* ---- 以下为 0.14.6 新增：Markdown-lite 扩展语法的样式 ---- */
+
+/* 只读展示用的较高容器（ReleaseNotesDialog / UpdatePromptDialog）
+   ⚠️ 类名必须与 tsx 里的 className 逐字一致 ——「加个副类名改高度」的做法很脆弱：
+   拼错一个字母（updd-）样式就静默失效，高度回落到 .upd-notes 的 260px，
+   正文被压进极小框里要滚 1700px，而页面上看不出任何异常。
+   selfcheck 有一条守卫比对 tsx 里用到的 upd-note* 类名是否都在 CSS 里有定义。 */
+.upd-notes-tall {
+  max-height: 58vh;
+}
+/* 弹窗标题里的版本号：弱化，避免和「更新日志」标题抢眼 */
+.upd-notes-ver {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--lg-text-secondary, rgba(255, 255, 255, 0.6));
+  font-family: "Cascadia Mono", Consolas, ui-monospace, monospace;
+}
+/* 正文里的链接：必须能一眼看出可点 */
+.upd-notes a,
+.upd-note-link {
+  color: var(--lg-accent, #4a9eff);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(74, 158, 255, 0.4);
+  transition: border-color 0.15s ease;
+}
+.upd-notes a:hover,
+.upd-note-link:hover {
+  border-bottom-color: currentColor;
+}
+.upd-note-link {
+  display: inline-block;
+  margin-top: 2px;
+  font-size: 12.5px;
+}
+/* 标题层级：h1最大，逐级收窄；h4/h5/h6 统一按 h4 处理 */
+.upd-note-h1 {
+  font-size: 16px;
+  font-weight: 700;
+  margin: 16px 0 8px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+}
+.upd-note-h2 {
+  font-size: 14.5px;
+}
+.upd-note-h3 {
+  font-size: 13.5px;
+}
+.upd-note-h4 {
+  font-size: 13.5px;
+}
+/* 嵌套列表：缩进用 padding 而非 margin，避免与外层 ul 的 padding 叠加 */
+.upd-notes .upd-note-list-nested {
+  margin: 3px 0 3px 4px;
+  padding-left: 16px;
+  list-style: circle;
+}
+/* 引用块：左侧竖线 + 弱化文字，常用于「注意 / 前提说明」 */
+.upd-note-q {
+  margin: 8px 0;
+  padding: 2px 0 2px 12px;
+  border-left: 3px solid var(--lg-accent, #4a9eff);
+  color: var(--lg-text-secondary, rgba(255, 255, 255, 0.72));
+}
+.upd-note-q .upd-note-p {
+  margin: 4px 0;
+}
+.upd-note-q:first-child > :first-child {
+  margin-top: 0;
+}
+/* 围栏代码块：保留缩进与换行，绝不塌成一行 */
+.upd-note-pre {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  overflow-x: auto;
+  font-family: "Cascadia Mono", Consolas, ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.upd-note-pre code {
+  background: none;
+  padding: 0;
+  font-size: inherit;
+  white-space: pre;
+}
+/* 表格：更新日志里用来放文件大小 / SHA256 这类键值 */
+.upd-note-table {
+  width: 100%;
+  margin: 8px 0;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  display: block;
+  overflow-x: auto;
+}
+.upd-note-table th,
+.upd-note-table td {
+  padding: 5px 10px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
+  text-align: left;
+  vertical-align: top;
+}
+.upd-note-table th {
+  background: rgba(255, 255, 255, 0.05);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.upd-note-table tbody tr:nth-child(even) {
+  background: rgba(255, 255, 255, 0.02);
+}
+/* 表格里的长串（SHA256）要能断行，否则会把卡片撑得很宽 */
+.upd-note-table td code {
+  word-break: break-all;
+  white-space: normal;
+}
+/* 分隔线 */
+.upd-note-hr {
+  margin: 12px 0;
+  border: none;
+  border-top: 1px solid var(--border, rgba(255, 255, 255, 0.1));
+}
 .upd-foot {
   display: flex;
   justify-content: flex-end;

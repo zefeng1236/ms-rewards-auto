@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { GlassButton } from "@ttqtt/liquid-glass-react";
+import { renderNotes } from "../utils/releaseNotes";
 import type { ReleaseNotesResult } from "../types";
 
 /**
@@ -9,6 +10,9 @@ import type { ReleaseNotesResult } from "../types";
  * 与 UpdateDialog 的区别：那个是「检查更新 + 下载 + 安装」的完整流程，
  * 这个**只展示某一版的正文**，不下载、不安装 —— 用户只是想回看
  * 「我装的这一版改了什么」。所以要单独一个，不能复用那个。
+ *
+ * 正文渲染复用 utils/releaseNotes（Markdown-lite）：GitHub Release 正文是
+ * Markdown，纯文本显示会满屏 `##` / `|` / `**`，且上游仓库链接点不动。
  *
  * 用原生 <dialog> + showModal()：焦点 containment / top layer / Escape
  * 由平台提供（与 UpdateDialog 同一套路）。
@@ -35,10 +39,11 @@ export function ReleaseNotesDialog({
 
   return createPortal(
     <dialog ref={ref} className="compat-modal" onCancel={onClose} onClose={onClose}>
-      <div className="compat-modal-panel" style={{ maxWidth: 640, padding: 20 }}>
-        <div style={{ display: "flex", alignItems: "center", marginBottom: 12 }}>
+      <div className="compat-modal-panel" style={{ maxWidth: 680, padding: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", marginBottom: 12, gap: 8 }}>
           <div style={{ flex: 1, fontSize: 16, fontWeight: 600 }}>
-            更新日志{data?.version ? ` · ${data.version}` : ""}
+            更新日志
+            {data?.version ? <span className="upd-notes-ver"> {data.version}</span> : null}
           </div>
           <GlassButton variant="plain" controlSize="small" onClick={onClose}>
             关闭
@@ -50,23 +55,19 @@ export function ReleaseNotesDialog({
         ) : !data.ok ? (
           <div className="hint">读取失败：{data.error || "未知错误"}</div>
         ) : (
-          <div
-            style={{
-              maxHeight: "52vh",
-              overflowY: "auto",
-              whiteSpace: "pre-wrap",
-              fontSize: 13,
-              lineHeight: 1.65,
-            }}
-          >
-            {data.notes || "（该版本没有填写更新日志）"}
+          <div className="upd-notes upd-notes-tall" tabIndex={0}>
+            {data.notes?.trim() ? (
+              renderNotes(data.notes)
+            ) : (
+              <p className="upd-note-p">该版本没有填写更新日志。</p>
+            )}
           </div>
         )}
 
         {data?.pageUrl ? (
           <div style={{ marginTop: 12 }}>
-            <a href={data.pageUrl} target="_blank" rel="noreferrer" className="hint">
-              在 GitHub 上查看此版本
+            <a href={data.pageUrl} target="_blank" rel="noreferrer" className="upd-note-link">
+              在 GitHub 上查看此版本 ↗
             </a>
           </div>
         ) : null}

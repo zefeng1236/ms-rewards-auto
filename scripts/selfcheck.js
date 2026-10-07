@@ -43,6 +43,46 @@ const os = require("os");
 let pass = 0;
 let fail = 0;
 
+/**
+ * 加载一个 TSX 渲染器并返回其导出。
+ *
+ * 与 requireTs 的区别有两处（缺一都跑不起来）：
+ *   ① compilerOptions 必须开 `jsx: ReactJSX` —— 否则转译出来的代码里
+ *      还留着 `_jsx(...)` 调用但没有 jsx-runtime 的引入信息；
+ *   ② require 要能解析 `react` 与相对路径 —— 直接透传 require 会让
+ *      模块顶层的 `import type` 之类在沙盒里找不到 react 而抛错。
+ *
+ * 用于「渲染器不能被畸形输入搞崩」这类需要真跑一遍的断言：
+ * 光看源码判断不出 `renderNotes(null)` 会不会抛。
+ */
+function requireTsxSafe(root, relPath) {
+  const abs = path.join(root, ...relPath.split("/"));
+  const js = ts.transpileModule(fs.readFileSync(abs, "utf8"), {
+    compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2022,
+      jsx: ts.JsxEmit.ReactJSX,
+      esModuleInterop: true,
+    },
+    fileName: abs,
+  }).outputText;
+  const mod = { exports: {} };
+  const nodeModules = path.join(root, "node_modules");
+  const req = (id) => {
+    if (id.startsWith(".")) return require(id);
+    return require(path.join(nodeModules, id));
+  };
+  // eslint-disable-next-line no-new-func
+  new Function("exports", "require", "module", "__filename", "__dirname", js)(
+    mod.exports,
+    req,
+    mod,
+    abs,
+    path.dirname(abs)
+  );
+  return mod.exports;
+}
+
 function check(name, actual, expected) {
   const ok = JSON.stringify(actual) === JSON.stringify(expected);
   if (ok) pass++;
@@ -1542,6 +1582,175 @@ checkTrue(
   })(),
   "上游链接缺失 → 用户找不到 issue #94，也就看不到 fp150 为何不可选"
 );
+
+// ====================== 【0.14.6】更新日志渲染 ======================
+// 背景：0.14.7 之前，Release 正文（Markdown）在三处界面里两种渲染方式：
+//   - UpdateDialog 有个只支持「标题/列表/行内代码/加粗」的本地解析器
+//   - ReleaseNotesDialog / UpdatePromptDialog 直接 whiteSpace:pre-wrap 纯文本
+// 后果：满屏 `##` / `|` / `**`，上游链接点不动；且两套实现必然漂移。
+// 现已统一到 src-renderer/src/utils/releaseNotes.tsx。
+const notesUtilFp = require("fs").readFileSync(
+  path.join(ROOT, "src-renderer", "src", "utils", "releaseNotes.tsx"),
+  "utf8"
+);
+const updDialogFp = require("fs").readFileSync(
+  path.join(ROOT, "src-renderer", "src", "components", "UpdateDialog.tsx"),
+  "utf8"
+);
+const relNotesDlgFp = require("fs").readFileSync(
+  path.join(ROOT, "src-renderer", "src", "components", "ReleaseNotesDialog.tsx"),
+  "utf8"
+);
+const updPromptFp = require("fs").readFileSync(
+  path.join(ROOT, "src-renderer", "src", "components", "UpdatePromptDialog.tsx"),
+  "utf8"
+);
+const globalCssFp = require("fs").readFileSync(
+  path.join(ROOT, "src-renderer", "src", "styles", "global.css"),
+  "utf8"
+);
+
+// ① 三处必须共用同一个渲染器（不许再冒出一份本地实现）
+checkTrue(
+  "更新日志三处界面共用 utils/releaseNotes（消除双份实现）",
+  /import \{ renderNotes \} from "\.\.\/utils\/releaseNotes"/.test(updDialogFp) &&
+    /import \{ renderNotes \} from "\.\.\/utils\/releaseNotes"/.test(relNotesDlgFp) &&
+    /import \{ renderNotes \} from "\.\.\/utils\/releaseNotes"/.test(updPromptFp) &&
+    // 三处都不得再有 pre-wrap 纯文本渲染
+    !/whiteSpace:\s*"pre-wrap"/.test(relNotesDlgFp) &&
+    !/whiteSpace:\s*"pre-wrap"/.test(updPromptFp),
+  "纯文本渲染 Markdown → 满屏 ##/|/** 语法；两份实现 → 一处修了另一处仍坏"
+);
+checkTrue(
+  "UpdateDialog 里的本地解析器已删除（不再有第二份实现）",
+  !/function renderNotes\(md: string\)/.test(updDialogFp) &&
+    !/function renderInline\(text: string/.test(updDialogFp),
+  "本地那份只支持 标题/列表/行内代码/加粗，表格与链接全不支持"
+);
+
+// ② 渲染器必须支持真实 Release 正文里出现的语法（用实测计数，不猜）
+{
+  const relBody = fs.existsSync(path.join(ROOT, ".workbuddy/tmp/rel-body-real.md"))
+    ? fs.readFileSync(path.join(ROOT, ".workbuddy/tmp/rel-body-real.md"), "utf8")
+    : "";
+  const lines = relBody.replace(/\r/g, "").split("\n");
+  const c = { h: 0, li: 0, tb: 0, q: 0, link: 0, fence: 0 };
+  for (const raw of lines) {
+    const t = raw.trim();
+    if (!t) continue;
+    if (/^```/.test(t)) c.fence++;
+    else if (/^#{1,6}\s*\S/.test(t)) c.h++;
+    else if (/^>\s?/.test(t)) c.q++;
+    else if (/^[-*•]\s+/.test(t)) c.li++;
+    else if (t.startsWith("|")) c.tb++;
+    if (/\[[^\]]+\]\(https?:\/\//.test(t)) c.link++;
+  }
+  console.log(
+    `  ·真实 Release 正文：标题 ${c.h} / 列表 ${c.li} / 表格 ${c.tb} / 引用 ${c.q} / 链接 ${c.link} / 围栏 ${c.fence}`
+  );
+checkTrue(
+  "真实 Release 正文里出现的语法渲染器都认得（表格/引用/链接/围栏/标题/列表）",
+  relBody !== "" &&
+    c.tb > 0 &&
+    notesUtilFp.includes('t.startsWith("|")') &&
+    c.q > 0 &&
+    notesUtilFp.includes("/^>\\s?(.*)$/") &&
+    c.link > 0 &&
+    // 行内链接语法 `\[...\](...)` 必须存在（用 includes 避开转义地狱）
+    notesUtilFp.includes("\\[") &&
+    c.fence > 0 &&
+    notesUtilFp.includes("/^```+\\s*") &&
+    c.h > 0 &&
+    notesUtilFp.includes("/^(#{1,6})\\s*(.+)$/") &&
+    c.li > 0 &&
+    notesUtilFp.includes("/^([-*•])\\s+(.*)$/"),
+  "解析器漏了某种语法 → 该语法以原始 Markdown 文本显示"
+);
+}
+
+// ③ XSS 面：绝不 innerHTML；href 只放行 http/https
+// ⚠️ 必须**先剥掉注释行**再判定：渲染器的文档注释里就写着
+//    「绝不 innerHTML / dangerouslySetInnerHTML」这句话，
+//    直接全文 grep 会命中注释自己 → 假红（这个坑今天已踩过一次）。
+const notesCodeFp = notesUtilFp
+  .split("\n")
+  .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+  .join("\n");
+checkTrue(
+  "更新日志渲染器不走 innerHTML（内容即使含 HTML 也只当文本）",
+  !/dangerouslySetInnerHTML/.test(notesCodeFp) && !/\.innerHTML/.test(notesCodeFp),
+  "innerHTML + 远端 Release 正文 = XSS；更新日志内容来自 GitHub，不能当可信"
+);
+// ⚠️ 这里刻意用「字符串包含」而不是正则：
+//    正则里要同时表达「协议白名单」和「末尾 return null」，转义层级一多就
+//    容易写成 /\^https\?:\\/.../ 这种非法 flag，把整个 selfcheck 弄崩
+//    （本次就这么崩过一次，表现为 Invalid regular expression flags）。
+checkTrue(
+  "链接 href 经协议白名单过滤（javascript:/data: 一律降级为纯文本）",
+  notesUtilFp.includes("function safeHref") &&
+    notesUtilFp.includes("https?:\\/\\/")
+    // 白名单只放行 http/https，且不匹配时必须返回 null（降级为纯文本）
+    &&
+    /return null;/.test(notesUtilFp) &&
+    // 降级分支必须真的把 token 当纯文本 push 回去，而不是丢内容
+    /pushPlain\(tok\)/.test(notesUtilFp),
+  "不过滤则 [点我](javascript:...) 会变成可点链接，点一下就执行脚本"
+);
+
+// ④ 类名与 CSS 必须逐字一致（拼错一个字母样式静默失效）
+{
+  const used = new Set();
+  for (const src of [updDialogFp, relNotesDlgFp, updPromptFp]) {
+    // 只认普通字符串字面量里的类名。**不能用 `["\`]([^"`]*upd-note...)` 这种** ——
+    // 渲染器里有模板字符串 `className={`upd-note-h upd-note-h${level}`}`，
+    // 会被当成字面类名 `upd-note-h${level}` 误报缺失。
+    for (const m of src.matchAll(/["'](upd-note-[a-z0-9-]+)["']/g)) used.add(m[1]);
+    for (const m of src.matchAll(/className="([^"]*)"/g)) {
+      for (const c of m[1].split(/\s+/)) if (c.startsWith("upd-note")) used.add(c);
+    }
+  }
+  // 渲染器里的动态类名：按 `upd-note-h1..4` 逐一登记（模板字符串产出物）
+  for (const c of ["upd-note-h1", "upd-note-h2", "upd-note-h3", "upd-note-h4"]) used.add(c);
+
+  const missing = [...used].filter((c) => !globalCssFp.includes(`.${c}`));
+  checkTrue(
+    "tsx 里用到的 upd-note* 类名都在 CSS 里有定义",
+    used.size > 0 && missing.length === 0,
+    `CSS 里缺：${missing.join(", ")} → 拼错一个字母样式就静默失效（实测 updd- 踩过，高度回落 260px 且页面无任何异常）`
+  );
+}
+
+// ⑤ 空/异常输入不崩（更新日志是远端内容，必须能扛住畸形输入）
+{
+  const mk = requireTsxSafe(ROOT, "src-renderer/src/utils/releaseNotes.tsx");
+  const cases = [
+    ["空串", ""],
+    ["null", null],
+    ["undefined", undefined],
+    ["未闭合围栏", "```js\nconst a=1;"],
+    ["未闭合表格", "| a | b"],
+    ["只有分隔线", "|---|"],
+    ["链接套粗体", "- **[name](https://a.com)** —— 说明"],
+    ["HTML 注入", "<script>alert(1)</script>"],
+    ["图片语法", "![x](y)"],
+    ["深缩进", "      - 深\n  - 中\n- 浅"],
+    ["Windows 路径", "C:\\Users\\test\\f.txt"],
+    ["CRLF", "## A\r\n- b\r\n"],
+  ];
+  const crashed = [];
+  for (const [name, input] of cases) {
+    try {
+      mk.renderNotes(input);
+    } catch (e) {
+      crashed.push(`${name}: ${e.message}`);
+    }
+  }
+  checkTrue(
+    "更新日志渲染器扛得住畸形输入（远端内容不可信）",
+    crashed.length === 0,
+    `崩溃：${crashed.join(" | ")}`
+  );
+}
 checkTrue(
   "【多内核】两个内核的安装目录/staging 目录物理隔离（防止互相覆盖）",
   /e\.key === DEFAULT_ENGINE \? base : path\.join\(base, e\.key\)/.test(fpSrc) &&
