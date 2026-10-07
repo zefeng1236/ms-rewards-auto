@@ -1371,6 +1371,46 @@ button.nav-version-btn:hover {
   margin-top: 3px;
 }
 
+/* ---- 环境拟真内核卡片（0.14.7）----
+   复用 .theme-card 的边框/active 样式，但作为单选按钮组（role=radio）。
+   - 默认布局是两列 auto-fit，引擎多时自动换行
+   - 「当前」用 accent 边 + 背景高亮；「默认」/「当前」用小角标
+   - 不可选（上游缺陷）整体灰显 + cursor not-allowed */
+.fp-engine-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+  margin-top: 4px;
+}
+.fp-engine-card {
+  font-family: inherit;
+  width: 100%;
+  text-align: left;
+}
+.fp-engine-card.is-blocked {
+  opacity: 0.55;
+  cursor: not-allowed;
+  background: var(--panel-2);
+}
+.fp-engine-card.is-blocked:hover {
+  border-color: var(--border);
+}
+.fp-engine-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--lg-text-secondary);
+  vertical-align: 1px;
+}
+.fp-engine-tag.is-active {
+  background: rgb(59 130 246 / 0.22);
+  color: var(--accent);
+}
+
 /* 开关圆形滑块加深，提升深色玻璃主题下的辨识度 */
 .lg-switch {
   --lg-switch-thumb-color: rgb(57 91 119 / 0.92);

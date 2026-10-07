@@ -733,12 +733,13 @@ checkTrue(
 );
 checkTrue(
   "UI 切换内核走 setFingerprintEngine IPC（主进程才能卸载旧内核 + 触发下载）",
-  // ⚠️ 钉的是**下拉的 onChange**，不是 onSwitchEngine 函数体内有没有那个调用 ——
-  //    函数在但下拉没接上，一样是坏的（旧内核会留在磁盘上且新内核不会自动下载）。
-  /onChange=\{\(v\) => void onSwitchEngine\(v\)\}/.test(fpPanelSrc2) &&
+  // ⚠️ 钉的是**内核卡片组的点击回调**，不是 onSwitchEngine 函数体内有没有那个调用 ——
+  //    函数在但卡片没接上，一样是坏的（旧内核会留在磁盘上且新内核不会自动下载）。
+  // 0.14.7 内核选择从 SelectField 改成卡片组（role=radio），锚点随之改成 onClick。
+  /onClick=\{\(\) => \{[\s\S]{0,100}?void onSwitchEngine\(e\.key\)/.test(fpPanelSrc2) &&
     /api\.setFingerprintEngine\(key\)/.test(fpPanelSrc2) &&
     // 不能只 patch 配置
-    !/onChange=\{\(v\) => void patch\(\{ engine: v \}\)\}/.test(fpPanelSrc2),
+    !/void patch\(\{ engine: e\.key \}\)/.test(fpPanelSrc2),
   "只改配置 → 旧内核目录留在磁盘上（500MB），且新内核不会自动下载"
 );
 checkTrue(
@@ -4615,10 +4616,14 @@ checkTrue(
   "写死单一上游名 → 切换内核后界面文案仍是另一个内核的名字"
 );
 checkTrue(
-  "设置页有内核选择下拉，且不可用内核是 disabled 而不是隐藏",
-  /label="环境拟真内核"/.test(fpPanelR) &&
-    /disabled: !e\.available/.test(fpPanelR) &&
-    /engineOpts\.some\(\(e\) => !e\.available\)/.test(fpPanelR),
+  "设置页有内核选择卡片组，且不可用内核是 disabled 而不是隐藏",
+  // 0.14.7 从下拉改成卡片组（role=radio）：下拉混在「拟真种子 / CPU 核数 /
+  // 操作系统 / 镜像源」里看不出来「这是切内核」，用户反馈找不到切换。
+  // 语义不变：两个内核都要列出来，不可用的**灰显 + disabled**，不是隐藏。
+  /role="radiogroup"[\s\S]{0,80}aria-label="环境拟真内核选择"/.test(fpPanelR) &&
+    /disabled=\{blocked\}/.test(fpPanelR) &&
+    /const blocked = !e\.available/.test(fpPanelR) &&
+    /theme-card fp-engine-card/.test(fpPanelR),
   "隐藏不可用内核 → 用户以为没这个内核，看不到「修好就能用」；不 disabled → 用户能选中会崩的"
 );
 checkTrue(

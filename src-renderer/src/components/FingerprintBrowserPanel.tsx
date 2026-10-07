@@ -293,15 +293,14 @@ export function FingerprintBrowserPanel() {
             />
 
             <div className="form-grid" style={{ marginTop: 12 }}>
-              {/* —— 内核选择（2026-10-06 多内核）——
-                  两个内核并存，用户可自选。fp150 当前不可选（上游 issue #94 崩溃缺陷），
-                  但**要显示出来并写明原因** —— 隐藏会让用户以为「没这个内核」，
-                  看不到「等上游修好就能用」这条路径。
-                  unavailableReason 由主进程原样下发（那是实测结论，别在前端编措辞）。 */}
-              <SelectField
-                label="环境拟真内核"
-                hint={
-                  engineOpts.length
+              {/* —— 内核选择（2026-10-06 多内核，0.14.7 重排为卡片视图）——
+                  两个内核做成「当前/备用」一眼看到的卡片：选中的高亮、不可用的灰显。
+                  之前是个普通 SelectField，混在「拟真种子 / CPU 核数 / 操作系统 /
+                  镜像源」里看不出来「这是切内核」，用户反馈"找不到切换"。 */}
+              <div className="form-field">
+                <div className="form-label">环境拟真内核</div>
+                <div className="form-hint" style={{ marginBottom: 6 }}>
+                  {engineOpts.length
                     ? engineOpts
                         .map(
                           (e) =>
@@ -309,18 +308,54 @@ export function FingerprintBrowserPanel() {
                             `${e.available ? "" : " · 暂不可选"}`
                         )
                         .join("　/　")
-                    : "内核清单加载中…"
-                }
-                value={currentEngineKey}
-                options={engineOpts.map((e) => ({
-                  value: e.key,
-                  // 不可用的**列出来但 disabled** —— 用户能在下拉里看到它存在，
-                  // 并且通过下方的说明块读到为什么暂不可选（Select 原生支持 disabled）
-                  label: e.available ? e.label : `${e.label}（暂不可选）`,
-                  disabled: !e.available,
-                }))}
-                onChange={(v) => void onSwitchEngine(v)}
-              />
+                    : "内核清单加载中…"}
+                </div>
+                <div className="fp-engine-grid" role="radiogroup" aria-label="环境拟真内核选择">
+                  {engineOpts.map((e) => {
+                    const active = e.key === currentEngineKey;
+                    const blocked = !e.available;
+                    return (
+                      <button
+                        key={e.key}
+                        type="button"
+                        role="radio"
+                        aria-checked={active}
+                        disabled={blocked}
+                        title={
+                          blocked
+                            ? e.unavailableReason || "上游存在问题，修复后即可选择"
+                            : `切换到 ${e.label}${e.installed ? "（已装）" : "（将自动下载）"}`
+                        }
+                        onClick={() => {
+                          if (blocked) return;
+                          void onSwitchEngine(e.key);
+                        }}
+                        className={
+                          "theme-card fp-engine-card" +
+                          (active ? " active" : "") +
+                          (blocked ? " is-blocked" : "")
+                        }
+                      >
+                        <div className="theme-card-name">
+                          {e.label}
+                          {e.default ? <span className="fp-engine-tag">默认</span> : null}
+                          {active ? <span className="fp-engine-tag is-active">当前</span> : null}
+                        </div>
+                        <div className="theme-card-desc">
+                          {blocked
+                            ? "暂不可选 · 上游缺陷"
+                            : e.installed
+                              ? "已安装，点此切换并保留此内核"
+                              : "未安装，切换时会自动下载"}
+                        </div>
+                        <div className="theme-card-desc" style={{ marginTop: 2, opacity: 0.75 }}>
+                          {e.notes || (e.key === "chromix" ? "216 个 patch 的指纹一致性 Chromium" : "")}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
               <SwitchField
                 label="只保留单个内核"
                 hint={
@@ -375,22 +410,8 @@ export function FingerprintBrowserPanel() {
               )}
             </div>
 
-            {/* 不可用内核的已知问题说明（2026-10-06）。
-                把所有 available:false 的内核都列出来，而不是只列「当前选中的那个」——
-                用户在看到下拉里那项标着「暂不可选」时，需要在这里读到原因。
-                措辞直接用主进程下发的 unavailableReason（实测结论，前端不自己编）。 */}
-            {engineOpts.some((e) => !e.available) && (
-              <div className="hint fp-note" style={{ marginTop: 4 }}>
-                {engineOpts
-                  .filter((e) => !e.available)
-                  .map((e) => (
-                    <div key={e.key} style={{ marginTop: 4 }}>
-                      <strong>{e.label} 暂不可选</strong>：{e.unavailableReason || "上游存在问题，修复后即可选择"}
-                      {e.notes ? `（${e.notes}）` : ""}
-                    </div>
-                  ))}
-              </div>
-            )}
+            {/* 不可用内核的完整原因放在卡片的 title 提示里（hover 可见），
+                卡片本身只显示一句"暂不可选 · 上游缺陷"，避免与卡片描述重复。 */}
 
             {/* 防御：若配置里存了不可用/已下架的内核，明确告知「本轮不会用」，
                 别让用户以为界面改了但浏览器没换（这种错位没有报错，最难自查）。 */}

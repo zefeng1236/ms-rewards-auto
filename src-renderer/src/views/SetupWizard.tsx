@@ -961,7 +961,8 @@ function PageFingerprint({ onCanProceed }: { onCanProceed: (v: boolean) => void 
       <p className="wz-lead">
         用 patch 过源码的 Chromium 统一生成 UA / Client Hints / 插件 / CPU 等环境特征，
         能显著降低被识别为自动化的概率。需要单独下载约 181MB，
-        <strong>不想装就在下面勾选跳过</strong>，之后随时能在「软件设置 → 环境拟真浏览器」里下载开启。
+        <strong>不想装就在下面勾选跳过</strong>，之后随时能在「软件设置 → 浏览器」里下载开启
+        （内核选择也在那里，两个内核可随时切换）。
       </p>
 
       {!supported ? (
