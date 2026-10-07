@@ -1,13 +1,15 @@
 name: CI
 
-# 触发时机：推 main / 提 PR / 手动。
+# 触发时机：推 main / 提 PR / 手动 / 推 vX.Y.Z tag。
 # verify = 门禁（类型检查 + 自检 + 前端构建）；desktop = 产出 Windows 安装包；
 # docker = 构建镜像并推送 ghcr（版本 tag + latest，供 Watchtower 自动更新）。
-# 安装包从 Actions 的 artifacts 里下载，正式发 Release 仍由维护者手动执行
-# （见 CONTRIBUTING.md）。
+#安装包平时从 Actions 的 artifacts 里下载（保留 14 天）；
+# 推版本 tag 时 desktop 会额外建一个**草稿 Release** 并挂上安装包，
+# 维护者核对字节数/SHA256 后点 publish —— 见 CONTRIBUTING.md。
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -67,12 +69,11 @@ jobs:
     name: Windows 桌面安装包（NSIS）
     runs-on: windows-latest
     timeout-minutes: 45
-    # 最小权限：打包只读代码 + 上传产物，不需要任何写权限
-    # （CodeQL actions/missing-workflow-permissions）
+    # 最小权限：这个 job 只打包 + 传 artifact，不碰 Release → contents: read 足够
     permissions:
       contents: read
     # PR 不打包：安装包要下载 Electron / NSIS / winCodeSign 资源，耗时较长，
-    # 门禁交给 verify 就够了；推 main 与手动触发才产出可下载的安装包。
+    # 门禁交给 verify 就够了；推 main、推 tag 与手动触发才产出安装包。
     if: github.event_name != 'pull_request'
     needs: verify
 
@@ -103,8 +104,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: MS-Rewards-Auto-Setup
-          # blockmap 与 latest.yml 是 electron-builder 的增量更新元数据，
-          # 发 Release 时正文要写它们的 SHA256，所以一起带上。
+          # blockmap 是 electron-builder 的增量更新元数据，发 Release 时正文要写它的
+          # SHA256，所以一起带上。latest.yml 只在配了 publish 字段时才生成
+          # （本项目 publish=null，所以实际没有这个文件，故用 warn 而非 error）。
           path: |
             dist/*.exe
             dist/*.blockmap
@@ -112,6 +114,113 @@ jobs:
           retention-days: 14
           # 找不到 exe 直接判失败：静默跳过会让「打包其实早坏了」一直没人发现
           if-no-files-found: error
+
+
+  release:
+    name: 自动建草稿 Release（仅版本tag）
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # 只有这个 job 需要写权限（建 Release）。desktop / verify 仍是 read ——
+    # 拆成独立 job 就是为了「推 main 时没人持有写权限」。
+    permissions:
+      contents: write
+    # 仅版本 tag：推 main 只更新 artifact，不碰 Release。
+    # 草稿而非直接发布 —— 维护者核对字节数/SHA256 后点publish，人工这关不能丢。
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: desktop
+
+    steps:
+      # 复用 desktop 已打的包，不再重复 pack（省一次 5 分钟构建）。
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 下载安装包
+        uses: actions/download-artifact@v4
+        with:
+          name: MS-Rewards-Auto-Setup
+          path: dist
+
+      - name: 安装 Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: 计算安装包 SHA256
+        id: sha
+        shell: pwsh
+        run: |
+          # 按版本号精确匹配而不是「取第一个 exe」：本机 dist/ 会堆积历史产物
+          # （实测能到 13 个），取第一个很可能把旧包挂到 Release 上。
+          # 产物名规则：MS-Rewards-Auto-Setup-<version>.<buildNumber>.exe
+          $ver = node -p "require('./package.json').version"
+          $exe = Get-ChildItem "dist/MS-Rewards-Auto-Setup-$ver.*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          $bm  = Get-ChildItem "dist/MS-Rewards-Auto-Setup-$ver.*.blockmap" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $exe) { throw "dist 里找不到版本 $ver 的安装包（打包异常）" }
+          "ver=$ver"                | Out-File -Append $env:GITHUB_OUTPUT -Encoding utf8
+          "exename=$($exe.Name)"    | Out-File -Append $env:GITHUB_OUTPUT -Encoding utf8
+          "exebytes=$($exe.Length)" | Out-File -Append $env:GITHUB_OUTPUT -Encoding utf8
+          "exesha=$((Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLower())" | Out-File -Append $env:GITHUB_OUTPUT -Encoding utf8
+          if ($bm) {
+            "bmname=$($bm.Name)"    | Out-File -Append $env:GITHUB_OUTPUT -Encoding utf8
+            "bmbytes=$($bm.Length)" | Out-File -Append $env:GITHUB_OUTPUT -Encoding utf8
+            "bmsha=$((Get-FileHash $bm.FullName -Algorithm SHA256).Hash.ToLower())" | Out-File -Append $env:GITHUB_OUTPUT -Encoding utf8
+          }
+
+      - name: 渲染发布说明（替换占位符）
+        id: notes
+        shell: pwsh
+        env:
+          EXE_SHA: ${{ steps.sha.outputs.exesha }}
+          EXE_BYTES: ${{ steps.sha.outputs.exebytes }}
+          EXE_NAME: ${{ steps.sha.outputs.exename }}
+          BM_SHA: ${{ steps.sha.outputs.bmsha }}
+          BM_BYTES: ${{ steps.sha.outputs.bmbytes }}
+          BM_NAME: ${{ steps.sha.outputs.bmname }}
+          VER: ${{ steps.sha.outputs.ver }}
+        run: |
+          # 说明正文放release-notes/<版本>.md；缺失则退回骨架，
+          # **不因缺文件而失败** —— 发版不该被一个可选文件卡住。
+          $f = "release-notes/$env:VER.md"
+          if (Test-Path $f) {
+            $body = Get-Content $f -Raw -Encoding utf8
+          } else {
+            $body = "# $env:VER`n`n> 自动生成 —— 未找到 release-notes/$env:VER.md，补正文后重推tag 可覆盖"
+            "⚠️ 未找到 $f，已用骨架说明" | Write-Output
+          }
+          # 占位符全量替换（PowerShell 的 .Replace 换全部出现处，非仅首个）
+          $body = $body.Replace('{{VERSION}}', $env:VER).
+                        .Replace('{{SHA256_EXE}}', $env:EXE_SHA).
+                        .Replace('{{BYTES_EXE}}', $env:EXE_BYTES).
+                        .Replace('{{EXE_NAME}}', $env:EXE_NAME).
+                        .Replace('{{SHA256_BLOCKMAP}}', $env:BM_SHA).
+                        .Replace('{{BYTES_BLOCKMAP}}', $env:BM_BYTES).
+                        .Replace('{{BLOCKMAP_NAME}}', $env:BM_NAME)
+          $body | Out-File -FilePath release-notes-rendered.md -Encoding utf8 -NoNewline
+          "path=release-notes-rendered.md" | Out-File -Append $env:GITHUB_OUTPUT -Encoding utf8
+
+      - name: 建草稿 Release 并挂安装包
+        env:
+          # 内置 GITHUB_TOKEN（contents: write 已在本 job 声明），无需配置 secret。
+          # tag 取自 GitHub 上下文而非用户输入，脚本里无字符串拼接进命令的注入面。
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          NOTES: ${{ steps.notes.outputs.path }}
+          EXE_NAME: ${{ steps.sha.outputs.exename }}
+          BM_NAME: ${{ steps.sha.outputs.bmname }}
+          VER: ${{ steps.sha.outputs.ver }}
+        shell: pwsh
+        run: |
+          $assets = @("dist/$env:EXE_NAME")
+          if ($env:BM_NAME) { $assets += "dist/$env:BM_NAME" }
+          gh release create $env:TAG --draft --title "$env:VER" --notes-file $env:NOTES @assets
+          if ($LASTEXITCODE -ne 0) {
+            Write-Output "自动创建失败（tag 可能已有 Release），改为补挂："
+            gh release view $env:TAG *> $null
+            if ($LASTEXITCODE -ne 0) { throw "tag $env:TAG 的 Release 不存在，且自动创建失败" }
+            gh release edit $env:TAG --draft=true --title "$env:VER" --notes-file $env:NOTES
+            gh release upload $env:TAG @assets --clobber
+          }
+          Write-Output "草稿 Release 已就绪：$env:TAG —— 请核对字节数/SHA256 后点 publish"
 
   docker:
     name: Docker 镜像构建并推送 ghcr

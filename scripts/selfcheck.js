@@ -5181,11 +5181,76 @@ console.log("\n【0.14.7】CodeQL 安全告警修复守卫");
   // ⑤ workflow 最小权限（actions/missing-workflow-permissions）
   const ciSrcGuard = require("fs").readFileSync(path.join(ROOT, ".github", "workflows", "ci.yml"), "utf8");
   checkTrue(
-    "ci.yml 三个 job 都显式声明 permissions（最小权限原则）",
-    (ciSrcGuard.match(/^\s{4}permissions:/gm) || []).length >= 3 &&
-      !/permissions:\s*\n\s*contents:\s*write/.test(ciSrcGuard),
+    "ci.yml 每个 job 都显式声明 permissions（最小权限原则）",
+    (ciSrcGuard.match(/^\s{4}permissions:/gm) || []).length >= 4,
     "缺 permissions 声明 → job 默认拿 GITHUB_TOKEN 全量写权限"
   );
+  // ⑥ 写权限只属于 release job（2026-10-07 引入「tag 自动建草稿 Release」时拆出）。
+  //
+  // ⚠️ 为什么必须钉这么死：建 Release 需要 contents: write，而 GitHub 的权限只能
+  //在 **job 级**声明、**不能按 step 条件化**。若图省事把 write 挂到 desktop 上，
+  // 后果是「推 main 也持有写权限」——desktop 在 main 推送时也会跑，等于长期开写。
+  // 正确形态是拆 job：desktop 只 read（打包 + 传 artifact），release 仅 tag 触发。
+  {
+    const ciJobs = require("js-yaml").load(ciSrcGuard);
+    const writeJobs = Object.entries(ciJobs.jobs)
+      .filter(([, j]) => j.permissions && j.permissions.contents === "write")
+      .map(([k]) => k)
+      .sort();
+    checkTrue(
+      "ci.yml 只有 release job 持contents: write（推 main 时无写权限）",
+      writeJobs.length === 1 && writeJobs[0] === "release",
+      `写权限 job = [${writeJobs.join(", ")}] —— desktop/verify/docker 持写权限等于长期开写`
+    );
+    checkTrue(
+      "release job 仅在版本 tag 触发（推 main 不建 Release）",
+      String(ciJobs.jobs.release.if || "").includes("startsWith(github.ref, 'refs/tags/v')"),
+      "未限制 tag → 每次推 main 都会建/覆盖草稿 Release"
+    );
+    checkTrue(
+      "release 建的是**草稿**（人工核对后才发布）",
+      /--draft/.test(ciSrcGuard),
+      "直接发布 → 没人核对 SHA256 就发出去，坏包会流到用户手里"
+    );
+  }
+  // ⑦ 发布说明占位符契约：CI 会替换 {{...}}，正文里若有不认识的占位符会原样发出去
+  {
+    const notesDir = path.join(ROOT, "release-notes");
+    const KNOWN = [
+      "VERSION",
+      "EXE_NAME",
+      "BYTES_EXE",
+      "SHA256_EXE",
+      "BLOCKMAP_NAME",
+      "BYTES_BLOCKMAP",
+      "SHA256_BLOCKMAP",
+    ];
+    checkTrue(
+      "release-notes/ 目录存在且有说明（发版流程文档）",
+      fs.existsSync(path.join(notesDir, "README.md")),
+      "目录缺失 → 维护者不知道正文要放哪，CI 只能退回骨架"
+    );
+    const notesFiles = fs
+      .readdirSync(notesDir)
+      .filter((f) => /^\d+\.\d+\.\d+.*\.md$/.test(f));
+    let unknown = [];
+    for (const f of notesFiles) {
+      const body = fs.readFileSync(path.join(notesDir, f), "utf8");
+      for (const m of body.matchAll(/\{\{([A-Z_]+)\}\}/g)) {
+        if (!KNOWN.includes(m[1])) unknown.push(`${f}: {{${m[1]}}}`);
+      }
+    }
+    checkTrue(
+      "release-notes/*.md 的占位符全部是 CI 认识的那几个",
+      unknown.length === 0,
+      `出现无法替换的占位符（会原样发到用户眼前）：${unknown.join(", ")}`
+    );
+    checkTrue(
+      "ci.yml 声明的占位符与守卫一致（契约双向锁死）",
+      KNOWN.every((k) => ciSrcGuard.includes(`{{${k}}}`)),
+      "CI 不认某个占位符 → 正文里留着 {{XXX}} 发出去了"
+    );
+  }
 }
 
 /* ============ 汇总 ============ */
