@@ -190,7 +190,13 @@ export interface ElectronApi {
   /** 应用本身更新检查：查询 GitHub Releases 最新正式版（自动加速），只查不下载 */
   checkAppUpdate(): Promise<CheckAppUpdateResult>;
   /** 内置下载安装包到系统「下载」目录，进度经 onUpdateDownloadProgress 推送 */
-  downloadUpdate(url: string, assetName: string): Promise<UpdateDownloadResult>;
+  /**
+   * 内置下载更新安装包。
+   *
+   * ⚠️ version 必传：主进程写 `update.readyVersion`，而「已下好待装」的判定要求
+   * `readyFile && readyVersion` 都非空。漏传会让每次启动都重下同一个包。
+   */
+  downloadUpdate(url: string, assetName: string, version: string): Promise<UpdateDownloadResult>;
   /** 取消当前更新下载 */
   cancelUpdateDownload(): Promise<{ ok: boolean; error?: string }>;
   /** 运行下载好的安装包（NSIS 会覆盖本体，主进程随后退出应用） */

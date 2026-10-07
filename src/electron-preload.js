@@ -119,7 +119,13 @@ contextBridge.exposeInMainWorld("api", {
   // 应用本身更新检查（查询 GitHub Releases 最新正式版，自动加速）
   checkAppUpdate: () => ipcRenderer.invoke("app:checkAppUpdate"),
   // 内置下载安装包（不跳浏览器）到系统「下载」目录；进度经 onUpdateDownloadProgress 推送
-  downloadUpdate: (url, assetName) => ipcRenderer.invoke("app:downloadUpdate", { url, assetName }),
+  //
+  // ⚠️ version 必须传：主进程靠它写 `update.readyVersion`，而「已下好待装」的判定是
+  //    `readyFile && readyVersion` **两者都非空**。曾经这里只传 url/assetName，
+  //    渲染层也没传 version，导致 readyVersion 恒空 ⇒ 每次启动都判"没下好"
+  //    而重下一遍同一个安装包（用户实测 16:06 / 16:11 / 16:12 连下三次）。
+  downloadUpdate: (url, assetName, version) =>
+    ipcRenderer.invoke("app:downloadUpdate", { url, assetName, version }),
   cancelUpdateDownload: () => ipcRenderer.invoke("app:cancelUpdateDownload"),
   // 运行下载好的安装包（NSIS 会覆盖本体，主进程随后退出应用）
   runUpdateInstaller: (filePath) => ipcRenderer.invoke("app:runUpdateInstaller", filePath),

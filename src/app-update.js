@@ -567,6 +567,19 @@ async function verifyUpdateFile(info) {
 const MIN_SETUP_BYTES = 20 * 1024 * 1024;
 
 /**
+ * 从安装包文件名反解版本号：`MS-Rewards-Auto-Setup-0.14.8.1.exe` → `0.14.8.1`
+ *
+ * 用途（2026-10-07）：`update.readyVersion` 依赖渲染层把version 传进来，
+ * 漏传时为空。弹窗文案需要版本号，退回"重下 100MB"代价太大，
+ * 所以从文件名反解兜底。解析不出来就返回空串（调用方自己决定怎么兜）。
+ */
+function versionFromSetupFile(file) {
+  const name = path.basename(String(file || ""));
+  const m = name.match(/^MS-Rewards-Auto-Setup-(\d+(?:\.\d+)+)\.exe$/i);
+  return m ? m[1] : "";
+}
+
+/**
  * 清理更新目录里的旧安装包（用户要求：自动清理）。
  *
  * 只删 `MS-Rewards-Auto-Setup-*.exe` 及其 .blockmap / .part（断点半成品），
@@ -628,6 +641,7 @@ module.exports = {
   STALL_IDLE_MS,
   resolveUpdateDir,
   verifyUpdateFile,
+  versionFromSetupFile,
   cleanupOldSetups,
   sha256File,
   checkAppUpdate,

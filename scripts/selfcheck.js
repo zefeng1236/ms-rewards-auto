@@ -3856,13 +3856,45 @@ checkTrue("接口链路：类型声明含 getHistory", /getHistory\(id: string/.
 
 // —— 内置下载更新：downloadUpdate 六处同步（缺一处就是「点了下载没反应 / 静默失败」）——
 const appUpdateSrc = fs.readFileSync(path.join(ROOT, "src", "app-update.js"), "utf8");
-checkTrue("下载链路：preload 暴露 downloadUpdate + 进度订阅", /downloadUpdate: \(url, assetName\)/.test(preloadSrc) && /onUpdateDownloadProgress/.test(preloadSrc));
+// ⚠️ 签名必须含 version：主进程靠 payload.version 写 update.readyVersion，
+//漏传则 readyVersion 恒空，而「已下好待装」曾判定readyFile && readyVersion
+//    两者都非空 ⇒ 每次启动都重下同一个 100MB 安装包（用户实测连下三次）。
+checkTrue(
+  "下载链路：preload 暴露 downloadUpdate（含 version 参数）+ 进度订阅",
+  /downloadUpdate: \(url, assetName, version\)/.test(preloadSrc) &&
+    /version\s*\}\)/.test(preloadSrc) &&
+    /onUpdateDownloadProgress/.test(preloadSrc),
+  "漏传 version → readyVersion 恒空 → 每次启动重下同一个安装包"
+);
 checkTrue("下载链路：主进程注册 下载/取消/安装/打开文件夹 四 handler", /ipcMain\.handle\("app:downloadUpdate"/.test(mainSrcHist) && /ipcMain\.handle\("app:cancelUpdateDownload"/.test(mainSrcHist) && /ipcMain\.handle\("app:runUpdateInstaller"/.test(mainSrcHist) && /ipcMain\.handle\("app:revealUpdateFile"/.test(mainSrcHist));
 checkTrue("下载链路：主进程推送进度事件 update-download-progress", /"update-download-progress"/.test(mainSrcHist));
 checkTrue("下载链路：app-update 提供流式 downloadUpdate（走镜像链 + 空闲看门狗 + 断点续传）", /async function downloadUpdate/.test(appUpdateSrc) && /MIRROR_PREFIXES/.test(appUpdateSrc) && /STALL_IDLE_MS/.test(appUpdateSrc) && /PART_SUFFIX/.test(appUpdateSrc) && /headers\.Range = `bytes=\$\{have\}-`/.test(appUpdateSrc), "下载卡死三件套（空闲超时/断点续传/.part 半成品）任一缺失 → 弱网下下载会挂死或从 0 重来");
 checkTrue("下载链路：web.ts 提供 downloadUpdate（Docker 提示语义）", /downloadUpdate: async/.test(webTsSrc));
 checkTrue("下载链路：mock 提供 downloadUpdate（预览提示语义）", /downloadUpdate: async/.test(mockApiSrc));
-checkTrue("下载链路：类型声明含 downloadUpdate 与进度", /downloadUpdate\(url: string, assetName: string\)/.test(dtsSrc) && /UpdateDownloadProgress/.test(dtsSrc));
+checkTrue(
+  "下载链路：类型声明含 downloadUpdate（带 version）与进度",
+  /downloadUpdate\(url: string, assetName: string, version: string\)/.test(dtsSrc) && /UpdateDownloadProgress/.test(dtsSrc),
+  "签名少 version → 编译能过但运行时 readyVersion 为空"
+);
+
+// —— 「已下好待装」的判定与版本号兜底（2026-10-07 用户实测重复下载）——
+checkTrue(
+  "待装判定只看 readyFile（不要求 readyVersion 同时非空）",
+  /if \(up\.readyFile\) \{/.test(mainSrcHist) && !/if \(up\.readyFile && up\.readyVersion\)/.test(mainSrcHist),
+  "两个条件同时要求 → readyVersion 漏传时永远判「没下好」→ 每次启动重下100MB"
+);
+checkTrue(
+  "readyVersion 缺失时从文件名反解（versionFromSetupFile）",
+  /versionFromSetupFile/.test(mainSrcHist) &&
+    /function versionFromSetupFile/.test(appUpdateSrc) &&
+    /MS-Rewards-Auto-Setup-\(\\d\+\(\?:\\\.\\d\+\)\+\)\\?\\\.exe/.test(appUpdateSrc),
+  "版本号缺失时弹窗显示 undefined，比显示旧版本号更糟"
+);
+checkTrue(
+  "提权启动安装包有 stderr 监听（点安装无反应时能查原因）",
+  /stdio: \["ignore", "pipe", "pipe"\]/.test(mainSrcHist) && /child\.stderr\.on\("data"/.test(mainSrcHist),
+  "stdio:ignore → UAC 被拒/ SAC 拦截时静默失败，界面停在「点了没反应」且日志无记录"
+);
 
 // —— 日历界面静态守卫 ——
 const calSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "views", "CalendarPanel.tsx"), "utf8");

@@ -117,7 +117,8 @@ export function UpdateDialog({
     setDlResult(null);
     setDlError(null);
     try {
-      const r = await api.downloadUpdate(info.downloadUrl, info.assetName);
+      // version 必传：主进程靠它写 readyVersion，漏了每次启动都会重下同一个包
+      const r = await api.downloadUpdate(info.downloadUrl, info.assetName, info.latestVersion);
       if (r && r.ok) {
         setDlResult(r);
         setPhase("downloaded");

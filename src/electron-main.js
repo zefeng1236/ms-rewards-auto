@@ -895,7 +895,13 @@ async function maybePromptUpdate(force) {
     const today = todayStr();
 
     // ① 静默下载已完成 → 待装包优先，直接提示安装
-    if (up.readyFile && up.readyVersion) {
+    //
+    // ⚠️ 判定只看 `readyFile`，**不要**要求 readyVersion 同时非空（2026-10-07 修）：
+    //   两个条件曾经是「与」，而 readyVersion 依赖渲染层传version 进来，
+    //   一旦漏传就恒为空 ⇒ 明明有 107MB 的安装包躺在 updates/ 里，
+    //   每次启动都判「没下好」并重下一遍（用户实测 16:06/16:11/16:12 连下三次）。
+    //   版本号只是弹窗文案用的，缺了可以从文件名反解，犯不着因此重下 100MB。
+    if (up.readyFile) {
       const v = await appUpdate.verifyUpdateFile({
         path: up.readyFile,
         bytes: up.readyBytes,
@@ -903,7 +909,10 @@ async function maybePromptUpdate(force) {
       });
       // 下完到点安装可能隔好几天，文件可能已被清理/损坏 —— 校验不过就当没有
       if (v.ok) {
-        pushUpdatePrompt({ mode: "ready", version: up.readyVersion, file: up.readyFile });
+        // 版本号缺失时从文件名反解（…-Setup-<version>.<buildNumber>.exe），
+        // 否则弹窗显示「undefined」比显示旧版本号更糟。
+        const readyVersion = String(up.readyVersion || appUpdate.versionFromSetupFile(up.readyFile) || "");
+        pushUpdatePrompt({ mode: "ready", version: readyVersion, file: up.readyFile });
         return;
       }
       logger.warn(`待装更新包已失效（${v.reason}），清除待装标记`);
@@ -1668,9 +1677,47 @@ function registerIpc() {
     const child = spawn(
       "powershell",
       ["-NoProfile", "-NonInteractive", "-Command", ps],
-      { detached: true, windowsHide: true, stdio: "ignore" }
+      { detached: true, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] }
     );
+
+    // ⚠️ 为什么必须听 stderr（2026-10-07 用户实测「点立即安装打不开安装包」）：
+    //   Start-Process -Verb RunAs 的失败**不在子进程退出码上** —— 用户在 UAC 对话框
+    //   点「否」、或被 SAC 拦下时，PowerShell 本身是成功退出的（它只是没拉起目标）。
+    //   而原来 stdio:"ignore" 把一切输出都丢掉 ⇒ 界面永远停在「点了没反应」，
+    //   日志里也一个字都没有。
+    //
+    // ⚠️ detached + pipe 的第二个坑：detached 后子进程脱离父进程会话，pipe 必须被
+    //   消费，否则 Node 会一直等 EOF。所以下面既 on("data") 存内容（截断到 2KB，
+    //   防止无界增长），又 resume() 让数据流走。
+    let errOut = "";
+    try {
+      child.stderr.on("data", (d) => {
+        errOut += String(d);
+        if (errOut.length > 2000) errOut = errOut.slice(-2000);
+      });
+      child.stdout.on("data", () => {
+        /* Start-Process 正常无 stdout；消费掉即可，不记录 */
+      });
+      child.stderr.resume();
+      child.stdout.resume();
+      child.on("error", (e) => {
+        logger.error(`启动安装程序失败（无法拉起 PowerShell）: ${e.message}`);
+      });
+      child.on("exit", (code) => {
+        if (code !== 0) {
+          logger.error(`提权启动安装程序返回非零退出码 ${code}: ${errOut.trim() || "(无 stderr)"}`);
+        } else if (errOut.trim()) {
+          logger.warn(`提权启动安装程序有告警输出: ${errOut.trim()}`);
+        } else {
+          logger.info("已提权启动安装程序（若界面无反应，请检查 UAC 是否被拒绝 / 智能应用控制是否拦截）");
+        }
+      });
+    } catch {
+      /* 日志监听失败不影响安装流程 */
+    }
+
     child.unref();
+    return child;
   }
 
   // 用户要求（2026-10-06）：点安装 → 弹 UAC → 装完自动打开，全程不用手点。
