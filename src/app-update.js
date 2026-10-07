@@ -642,6 +642,7 @@ module.exports = {
   resolveUpdateDir,
   verifyUpdateFile,
   versionFromSetupFile,
+  compareVersion,
   cleanupOldSetups,
   sha256File,
   checkAppUpdate,

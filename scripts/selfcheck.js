@@ -5380,6 +5380,60 @@ console.log("\n【0.14.7】CodeQL 安全告警修复守卫");
         "去 Security → Code scanning 确认用的是 default setup，然后删掉本文件"
     );
   }
+
+  // ⑨ 待装包必须比当前版本新才弹窗（2026-10-07 用户实测踩到）
+  //
+  // 实测现象：已经装了 0.14.9，启动后仍弹「新版本 0.14.8.1 已就绪」。
+  // 根因：maybePromptUpdate 只判「readyFile 存在 + 校验通过」，
+  //       **从不比较它与当前版本的高低**。覆盖安装新版后 config 里的
+  //       readyFile 还指着被取代的旧包，于是每次启动都弹一个更低的版本号。
+  // 用户看到比自己版本还低的"新版本"，第一反应是装错了 / 被降级了。
+  {
+    const mainSrc = fs.readFileSync(path.join(ROOT, "src", "electron-main.js"), "utf8");
+    const auSrc = fs.readFileSync(path.join(ROOT, "src", "app-update.js"), "utf8");
+    checkTrue(
+      "待装包版本 ≤ 当前版本时判过期（覆盖安装后不再弹更低的'新版本'）",
+      /compareVersion\(\s*readyVersion\s*,\s*cur\s*\)\s*<=\s*0/.test(mainSrc),
+      "弹窗前必须比版本号：readyFile 可能是被覆盖安装取代的旧包，" +
+        "只判文件存在会让用户看到比自己当前版本还低的'新版本 X 已就绪'"
+    );
+    checkTrue(
+      "app-update 导出了 compareVersion（主进程判过期要用）",
+      /module\.exports\s*=\s*\{[\s\S]{0,400}compareVersion/.test(auSrc),
+      "compareVersion 未导出 → 主进程调不到，判过期逻辑会 TypeError"
+    );
+    // 实测：compareVersion 对「同版本 / 低版本 / 高版本」三种输入必须给对符号
+    let cmpOk = false;
+    let cmpDetail = "";
+    try {
+      const au = require(path.join(ROOT, "src", "app-update.js"));
+      const low = au.compareVersion("0.14.8.1", "0.14.9.1");
+      const eq = au.compareVersion("0.14.9.1", "0.14.9.1");
+      const high = au.compareVersion("0.14.9.1", "0.14.8.1");
+      cmpOk = low < 0 && eq === 0 && high > 0;
+      if (!cmpOk) cmpDetail = `实测 low=${low} eq=${eq} high=${high}，符号判定错`;
+    } catch (e) {
+      cmpDetail = `require 失败: ${e.message}`;
+    }
+    checkTrue(
+      "compareVersion 对低/等/高三种版本给出正确符号",
+      cmpOk,
+      cmpDetail || "版本比较符号不对 → 判过期会把该弹的压掉、不该弹的放出来"
+    );
+    // 反例锚点：版本号必须能从文件名反解（弹窗文案靠它，判过期也靠它）
+    let vfOk = false;
+    try {
+      const au = require(path.join(ROOT, "src", "app-update.js"));
+      vfOk = au.versionFromSetupFile("C:/x/MS-Rewards-Auto-Setup-0.14.8.1.exe") === "0.14.8.1";
+    } catch {
+      /* 上面那条已覆盖 require 失败 */
+    }
+    checkTrue(
+      "versionFromSetupFile 能从 …-Setup-<版本>.exe 反解出四段版本号",
+      vfOk,
+      "反解失败 → readyVersion 为空时弹窗显示 undefined，判过期也失效"
+    );
+  }
 }
 
 /* ============ 汇总 ============ */

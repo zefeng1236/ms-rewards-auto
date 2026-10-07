@@ -894,31 +894,53 @@ async function maybePromptUpdate(force) {
     const up = cfg.update || {};
     const today = todayStr();
 
-    // ① 静默下载已完成 → 待装包优先，直接提示安装
+    // 版本号优先从文件名反解：readyVersion 只是文案用的，缺失时不能因此重下 100MB
+    const readyVersion = String(up.readyVersion || appUpdate.versionFromSetupFile(up.readyFile) || "");
+
+    // ⚠️ 必须先比版本（2026-10-07 修）：
+    //   覆盖安装新版后，config 里的 readyFile 仍指向**旧版本**的安装包
+    //   （实测：已装 0.14.9，readyFile 却还是 MS-Rewards-Auto-Setup-0.14.8.1.exe）。
+    //   旧逻辑只判「文件存在且校验通过」⇒ 每次启动都弹「新版本 0.14.8.1 已就绪」，
+    //   而当前已经是更新的版本 —— 用户看着比自己版本还低的提示，怀疑装错了。
     //
-    // ⚠️ 判定只看 `readyFile`，**不要**要求 readyVersion 同时非空（2026-10-07 修）：
-    //   两个条件曾经是「与」，而 readyVersion 依赖渲染层传version 进来，
-    //   一旦漏传就恒为空 ⇒ 明明有 107MB 的安装包躺在 updates/ 里，
-    //   每次启动都判「没下好」并重下一遍（用户实测 16:06/16:11/16:12 连下三次）。
-    //   版本号只是弹窗文案用的，缺了可以从文件名反解，犯不着因此重下 100MB。
-    if (up.readyFile) {
-      const v = await appUpdate.verifyUpdateFile({
-        path: up.readyFile,
-        bytes: up.readyBytes,
-        sha256: up.readySha256,
-      });
-      // 下完到点安装可能隔好几天，文件可能已被清理/损坏 —— 校验不过就当没有
-      if (v.ok) {
-        // 版本号缺失时从文件名反解（…-Setup-<version>.<buildNumber>.exe），
-        // 否则弹窗显示「undefined」比显示旧版本号更糟。
-        const readyVersion = String(up.readyVersion || appUpdate.versionFromSetupFile(up.readyFile) || "");
-        pushUpdatePrompt({ mode: "ready", version: readyVersion, file: up.readyFile });
-        return;
-      }
-      logger.warn(`待装更新包已失效（${v.reason}），清除待装标记`);
+    //   待装包的版本 **≤ 当前版本** 就说明它已经过期（本次是被覆盖安装取代了），
+    //   直接清标记、不弹窗，顺手把文件删掉。
+    const cur = displayVersion();
+    if (readyVersion && appUpdate.compareVersion(readyVersion, cur) <= 0) {
+      const stale = up.readyFile;
+      logger.info(`待装包版本 ${readyVersion} 不高于当前版本 ${cur}，判为过期，清标记并删除`);
       try {
         globalConfig.set({ update: { ...up, readyFile: "", readyVersion: "" } });
       } catch {}
+      try {
+        appUpdate.cleanupOldSetups(path.dirname(stale), "", 0);
+      } catch {
+        /* 删不掉也不影响，只是不再弹窗 */
+      }
+    } else if (up.readyFile) {
+      // ① 静默下载已完成 → 待装包优先，直接提示安装
+      //
+      // ⚠️ 判定只看 `readyFile`，**不要**要求 readyVersion 同时非空（2026-10-07 修）：
+      //   两个条件曾经是「与」，而 readyVersion 依赖渲染层传 version 进来，
+      //   一旦漏传就恒为空 ⇒ 明明有 107MB 的安装包躺在 updates/ 里，
+      //   每次启动都判「没下好」并重下一遍（用户实测 16:06/16:11/16:12 连下三次）。
+      //   版本号只是弹窗文案用的，缺了可以从文件名反解，犯不着因此重下 100MB。
+      if (up.readyFile) {
+        const v = await appUpdate.verifyUpdateFile({
+          path: up.readyFile,
+          bytes: up.readyBytes,
+          sha256: up.readySha256,
+        });
+        // 下完到点安装可能隔好几天，文件可能已被清理/损坏 —— 校验不过就当没有
+        if (v.ok) {
+          pushUpdatePrompt({ mode: "ready", version: readyVersion, file: up.readyFile });
+          return;
+        }
+        logger.warn(`待装更新包已失效（${v.reason}），清除待装标记`);
+        try {
+          globalConfig.set({ update: { ...up, readyFile: "", readyVersion: "" } });
+        } catch {}
+      }
     }
 
     // ③ 当天已经弹过 → 不再弹（除非 force）
