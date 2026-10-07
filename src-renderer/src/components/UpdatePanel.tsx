@@ -64,13 +64,40 @@ export function UpdatePanel({ onShowNotes }: { onShowNotes?: (notes: ReleaseNote
   }, []);
 
   // 平台名：给中文展示用（与设置项 platform 的英文值区分开）
-  const platformLabel = (() => {
-    const p = typeof process !== "undefined" ? String((process as { platform?: string }).platform || "") : "";
-    if (p === "win32") return "Windows";
-    if (p === "darwin") return "macOS";
-    if (p === "linux") return "Linux";
-    return p || "未知";
-  })();
+  //
+  // ⚠️ 必须问主进程拿，**不能读渲染层的 process.platform**（2026-10-07 用户实测
+  //   「运行平台：未知」）：渲染层是 sandbox、nodeIntegration 关闭，压根没有
+  //   process 全局对象，那个 `typeof process !== "undefined"` 分支永远走不到，
+  //   于是一路落到 "未知"。与版本号同一个道理 —— 运行时真值只认主进程。
+  // 回落顺序：主进程下发 → 浏览器 navigator（Web 版容器内恒为 Linux，
+  //   照实显示 Linux 对 Web 用户毫无意义，故优先取 UA 里的客户端系统）→ 未知。
+  const [platformLabel, setPlatformLabel] = useState("未知");
+  useEffect(() => {
+    let alive = true;
+    const label = (p: string) =>
+      p === "win32" ? "Windows" : p === "darwin" ? "macOS" : p === "linux" ? "Linux" : p;
+    Promise.resolve(api.getRuntimeVersion?.())
+      .then((v) => {
+        if (!alive) return;
+        const fromMain = v && typeof v.platform === "string" ? v.platform : "";
+        if (fromMain) {
+          setPlatformLabel(label(fromMain));
+          return;
+        }
+        // Web 版没有主进程：按浏览器 UA 推客户端系统，推不出就留未知
+        const ua = typeof navigator !== "undefined" ? String(navigator.userAgent || "") : "";
+        if (/Windows/i.test(ua)) setPlatformLabel("Windows");
+        else if (/Mac OS X|Macintosh/i.test(ua)) setPlatformLabel("macOS");
+        else if (/Linux|X11/i.test(ua)) setPlatformLabel("Linux");
+      })
+      .catch(() => {
+        /* 预览 / IPC 不可用：保持"未知"，不猜 */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
 
   useEffect(() => {
     // 进页面不自动检查：检查要打网络，留给用户点。

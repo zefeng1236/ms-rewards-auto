@@ -186,7 +186,7 @@ export interface ElectronApi {
    * 就仍是旧值 —— 曾出现「标题栏 0.14.6.1、侧边栏 0.14.5」的分叉。
    * 「当前版本是多少」的展示一律走这条通道。
    */
-  getRuntimeVersion(): Promise<{ version: string; base: string; buildNumber: string; electron: string }>;
+  getRuntimeVersion(): Promise<{ version: string; base: string; buildNumber: string; electron: string; platform?: string }>;
   /** 应用本身更新检查：查询 GitHub Releases 最新正式版（自动加速），只查不下载 */
   checkAppUpdate(): Promise<CheckAppUpdateResult>;
   /** 内置下载安装包到系统「下载」目录，进度经 onUpdateDownloadProgress 推送 */

@@ -344,13 +344,27 @@ body::before {
 }
 
 /* 兜底所有 .compat-modal 弹窗的居中（按 UA stylesheet 应该是 absolute + margin:auto，
-   但 React 19 / 自定义容器偶尔会把 display: block 顶掉让 dialog 跑顶部，统一覆盖） */
+   但 React 19 / 自定义容器偶尔会把 display: block 顶掉让 dialog 跑顶部，统一覆盖）
+
+   ⚠️ 面板真正居中的关键（2026-10-07 用户实测「更新日志弹窗不居中」）：
+   dialog 是 fixed + inset:0 的**满屏容器**，它必然占满整幅（实测 1032px）；
+   真正决定视觉位置的是里面的 .compat-modal-panel。只写 max-width 时，
+   面板只有 680px 且 margin:0 ⇒ 被顶到左边缘，看起来就是「弹窗歪在左边」。
+   这里把 dialog 改成 flex 居中容器 + 自身宽度贴合内容（width: fit-content
+   会被 UA 的 dialog 宽度语义顶掉，故同时用 max-content 兜底），
+   面板由 justify/align-items 负责居中，不再靠 margin 猜位置。 */
 .compat-modal {
   position: fixed;
   inset: 0;
   margin: auto;
+  /* 宽度贴合内容：否则满屏 dialog + 窄面板 = 面板贴左（实测偏差 -176px） */
+  width: fit-content;
   max-width: calc(100vw - 48px);
   max-height: calc(100vh - 96px);
+  /* 面板在满屏容器里水平居中 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   background: transparent;
   color: inherit;

@@ -1586,6 +1586,10 @@ function registerIpc() {
     base: String(require("../package.json").version),
     buildNumber: String(require("../package.json").buildNumber ?? ""),
     electron: process.versions.electron,
+    // ⚠️ 渲染层**拿不到 process**（nodeIntegration 关闭，process 未注入），
+    //   所以「运行平台」以前在设置页恒为「未知」（2026-10-07 用户实测）。
+    //   平台必须由主进程下发 —— 与版本号同一个道理，都是运行时真值。
+    platform: process.platform,
   }));
 
   // 取**指定版本**的更新日志（设置页「当前版本更新日志」按钮）

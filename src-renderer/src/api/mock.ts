@@ -730,6 +730,16 @@ export function createMockApi(): ElectronApi {
       base: APP_VERSION,
       buildNumber: String(BUILD_NUMBER ?? ""),
       electron: "",
+      // platform 也得给：渲染层拿不到 process，不下发的话设置页「运行平台」
+      // 在预览里恒为「未知」。预览跑在浏览器里，按 UA 推一个；推不出就按
+      // 桌面版主平台 Windows 兜底（别让预览与真机显示不一致）。
+      platform: (() => {
+        const ua = typeof navigator !== "undefined" ? String(navigator.userAgent || "") : "";
+        if (/Windows/i.test(ua)) return "win32";
+        if (/Mac OS X/i.test(ua)) return "darwin";
+        if (/Linux|X11/i.test(ua)) return "linux";
+        return "win32";
+      })(),
     }),
     // 预览模式：伪造一个比当前版本新的正式版，方便直接看到 NEW 徽标与更新弹窗样式。
     // currentVersion 直接从 DISPLAY_VERSION 取（package.json 单源），避免 mock 写死

@@ -1220,6 +1220,34 @@ checkTrue(
   /html\[data-preset="opaque"\]\s*\.compat-modal-panel/.test(globalCss) &&
     /html\[data-preset="opaque"\]\s*\.compat-toast/.test(globalCss)
 );
+// 2026-10-07 用户实测「更新日志弹窗不居中」：dialog 是 fixed+inset:0 的**满屏容器**，
+// 自己必然占满整幅（实测 1032px），真正决定视觉位置的是里面的 .compat-modal-panel。
+// 只写 max-width 时面板 680px + margin:0 ⇒ 被顶到左边缘（实测居中偏差 -176px）。
+// 修法是让 dialog 自身做 flex 居中容器（justify-content:center）。
+// ⚠️ 必须断言「justify-content: center」而不是只断言 position/inset ——
+// 后者齐全但面板仍贴左，守卫会假绿（0.14.7 那次弹窗贴底就是同型教训）。
+checkTrue(
+  "弹窗面板真正居中（.compat-modal 作为 flex 容器居中 .compat-modal-panel）",
+  /\.compat-modal\s*\{[\s\S]*?display:\s*flex[\s\S]*?justify-content:\s*center/.test(globalCss),
+  "少了 flex + justify-content:center → 满屏 dialog 里的面板会贴到左边缘（实测偏差 -176px）"
+);
+checkTrue(
+  "「运行平台」由主进程下发（渲染层没有 process，恒为「未知」）",
+  /platform:\s*process\.platform/.test(
+    require("fs").readFileSync(path.join(ROOT, "src", "electron-main.js"), "utf8")
+  ) &&
+    /getRuntimeVersion[\s\S]{0,400}platform/.test(
+      require("fs").readFileSync(path.join(ROOT, "src", "electron-main.js"), "utf8")
+    ) &&
+    // 渲染层不准再读 process.platform（nodeIntegration 关闭，那分支永远走不到）
+    !/typeof process !== "undefined"[\s\S]{0,120}platform/.test(
+      require("fs").readFileSync(
+        path.join(ROOT, "src-renderer", "src", "components", "UpdatePanel.tsx"),
+        "utf8"
+      )
+    ),
+  "渲染层读不到 process.platform → 设置页「运行平台」恒为未知（用户实测）；应由主进程 app:getRuntimeVersion 下发"
+);
 
 /* ============ 19. 0.9.4.13：签入负分哨兵泄漏 + 卡片瞬时值兜底 ============ */
 console.log("\n【19】签入负分兜底 / 展示层自愈 / 聚焦刷新");
