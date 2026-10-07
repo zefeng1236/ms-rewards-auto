@@ -1638,10 +1638,14 @@ checkTrue(
 );
 
 // ② 渲染器必须支持真实 Release 正文里出现的语法（用实测计数，不猜）
+//
+// ⚠️ 样本必须**入库**（scripts/fixtures/release-body-0.14.7.md）。
+// 它原先放在 .workbuddy/tmp/rel-body-real.md —— 那个目录被 .gitignore 整个排除，
+// 于是 CI 上永远读不到（计数全 0），守卫红在一个与代码无关的原因上，
+// 而本地因为文件还在所以一直是绿的。**守卫的测试数据必须跟代码一起进版本库。**
 {
-  const relBody = fs.existsSync(path.join(ROOT, ".workbuddy/tmp/rel-body-real.md"))
-    ? fs.readFileSync(path.join(ROOT, ".workbuddy/tmp/rel-body-real.md"), "utf8")
-    : "";
+  const fixturePath = path.join(ROOT, "scripts", "fixtures", "release-body-0.14.7.md");
+  const relBody = fs.existsSync(fixturePath) ? fs.readFileSync(fixturePath, "utf8") : "";
   const lines = relBody.replace(/\r/g, "").split("\n");
   const c = { h: 0, li: 0, tb: 0, q: 0, link: 0, fence: 0 };
   for (const raw of lines) {
@@ -1657,6 +1661,12 @@ checkTrue(
   console.log(
     `  ·真实 Release 正文：标题 ${c.h} / 列表 ${c.li} / 表格 ${c.tb} / 引用 ${c.q} / 链接 ${c.link} / 围栏 ${c.fence}`
   );
+checkTrue(
+  "真实 Release 正文样本已入库（守卫的测试数据必须跟代码一起进版本库）",
+  relBody !== "" && c.h + c.li + c.tb + c.q + c.link + c.fence > 0,
+  "样本文件缺失或为空 → 下面那条语法守卫会因为「拿不到数据」而红，与代码质量无关" +
+    "（曾把样本放在被 .gitignore 排除的 .workbuddy/tmp/，导致 CI 恒红、本地恒绿）"
+);
 checkTrue(
   "真实 Release 正文里出现的语法渲染器都认得（表格/引用/链接/围栏/标题/列表）",
   relBody !== "" &&
