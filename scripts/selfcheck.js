@@ -4915,6 +4915,27 @@ checkTrue(
     /MSEDGEDRIVER\.exe|VERB\s*=\s*"runas"/i.test(mainSrcFp),
   "shell.openPath 提权不可靠 → Program Files 下安装会 ACCESS_DENIED"
 );
+// 2026-10-07 用户实测：带 /S 静默时出现「提权进程秒退、什么都没发生」——
+// 日志显示 PowerShell exit 0 且无 stderr，但安装目录文件时间戳仍是旧构建，
+// 安装根本没发生，用户全程零线索（无 UAC、无窗口、无报错）。
+// 静默失败的根因就是「没有任何窗口承载错误信息」，故必须保持交互式安装。
+// ⚠️ 用字面量 includes 而非正则：正则里的 /S 会被注释里的历史说明命中而假绿。
+const installerLaunchSrc = mainSrcFp.slice(
+  mainSrcFp.indexOf("function launchInstallerElevated"),
+  mainSrcFp.indexOf("function launchInstallerElevated") + 4000
+);
+const nsisLaunchSrc = require("fs").readFileSync(path.join(ROOT, "build", "installer.nsh"), "utf8");
+checkTrue(
+  "安装包走**交互式**安装：Start-Process 不带 /S（静默失败不可观测，用户零线索）",
+  installerLaunchSrc.includes("-Verb RunAs") &&
+    !/Start-Process[^\n]*-ArgumentList\s+'\/S'/.test(installerLaunchSrc),
+  "带 /S 会退回静默安装 → 实测出现过提权进程秒退、安装根本没发生、界面零反馈"
+);
+checkTrue(
+  "安装窗口默认展开文件列表（ShowInstDetails show），出错时能直接看到卡在哪个文件",
+  nsisLaunchSrc.includes("ShowInstDetails show"),
+  "细节面板折叠时 NSIS 只给一个进度条，文件占用/覆盖失败无任何线索"
+);
 checkTrue(
   "弹窗时按规则触发：静默下完 / 当天首次 / 未开启三种规则（dayBoundary 用本地日，避免 UTC 漂移）",
   /async function maybePromptUpdate/.test(mainSrcFp) &&

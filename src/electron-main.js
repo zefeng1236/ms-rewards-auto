@@ -1679,23 +1679,31 @@ function registerIpc() {
   // ---- 安装已下载的更新包 ----
 
   /**
-   * 提权启动安装包（弹 UAC），并以无人值守方式安装。
+   * 提权启动安装包（弹 UAC），**交互式**安装（有窗口、显示详细过程）。
    *
    * 为什么用 PowerShell 的 `Start-Process -Verb RunAs` 而不是 shell.openPath：
    *   - `shell.openPath` 用的是「默认动词」，不保证提权；装到 Program Files 时
    *     安装程序会因权限不足写到 VirtualStore 或直接失败。
    *   - `-Verb RunAs` 是 Windows 标准的提权方式，会正常弹 UAC 让用户确认。
    *
-   * 为什么带 `/S`（无人值守）：用户明确要求「直接开始安装，不需要手点」。
-   * 安装目录沿用上一次安装记录的 $INSTDIR（NSIS 静默会用注册表里的旧值），
-   * 所以升级场景不会装错位置。
+   * ⚠️ **不要再加 `/S`**（2026-10-07 用户实测后推翻 0.14.6 的决定）：
+   *   `/S` 静默模式在实机上出现过「提权进程秒退、什么都不发生」的组合 ——
+   *   日志显示 PowerShell exit 0 且无 stderr，但 `D:\Program Files\MS Rewards Auto`
+   *   里所有文件的时间戳仍是旧版本那次构建，**安装根本没发生**，而用户界面上
+   *   只看到「软件直接关闭」，既没有 UAC 也没有安装窗口，全程无任何线索。
+   *   静默失败不可观测是这类问题的根源：失败时没有任何窗口承载错误信息。
+   *   交互模式则天然可观测：安装进度、文件列表、错误对话框都在，装完由
+   *   electron-builder 的完成页「运行」按钮拉起新版（见 installer.nsh 注释）。
+   *   `ShowInstDetails show` 已让文件列表默认展开，出错时能直接看到卡在哪个文件。
    *
    * ⚠️ 只在**用户主动点安装**时调用。后台静默下载阶段绝不提权。
    */
   function launchInstallerElevated(exePath) {
     const exe = String(exePath || "").replace(/'/g, "''");
-    // -Verb RunAs 触发 UAC；/S 让 NSIS 无人值守；装完由 installer.nsh 拉起新版本
-    const ps = `Start-Process -FilePath '${exe}' -ArgumentList '/S' -Verb RunAs`;
+    // -Verb RunAs 触发 UAC；**不带 /S** → NSIS 走交互安装，有窗口有进度，
+    // 失败时会有错误对话框（静默失败才是最坏的：无窗口、无提示、无从排查）。
+    const ps = `Start-Process -FilePath '${exe}' -Verb RunAs`;
+
     const child = spawn(
       "powershell",
       ["-NoProfile", "-NonInteractive", "-Command", ps],
@@ -1743,7 +1751,7 @@ function registerIpc() {
   }
 
   // 用户要求（2026-10-06）：点安装 → 弹 UAC → 装完自动打开，全程不用手点。
-  // 步骤：① 校验文件确实存在 ② 校验完整性 ③ 提权启动安装包（/S 无人值守）
+  // 步骤：① 校验文件确实存在 ② 校验完整性 ③ 提权启动安装包（交互式，有窗口）
   //       ④ 本进程自动退出 ⑤ 安装包装完自动拉起新版本（见 installer.nsh）。
   //
   // ⚠️ 为什么这里**要**提权、而静默下载时**绝不**提权：
