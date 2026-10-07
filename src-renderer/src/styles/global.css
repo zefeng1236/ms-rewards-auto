@@ -343,6 +343,24 @@ body::before {
   animation: none;
 }
 
+/* 兜底所有 .compat-modal 弹窗的居中（按 UA stylesheet 应该是 absolute + margin:auto，
+   但 React 19 / 自定义容器偶尔会把 display: block 顶掉让 dialog 跑顶部，统一覆盖） */
+.compat-modal {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  max-width: calc(100vw - 48px);
+  max-height: calc(100vh - 96px);
+  border: none;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+}
+.compat-modal::backdrop {
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(2px);
+}
+
 /* 「自动更新」弹窗（对齐参考设计）：头部标题+频道 pill，主体检查中/结果两态，
    底部「关闭 / 下载更新」。更新日志正文可上下滚动。 */
 .upd-dialog {

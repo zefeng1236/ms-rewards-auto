@@ -94,8 +94,8 @@ const ENGINES = {
     // 已知缺陷（上游 issue #94，2026-10-03 报出未修）：开启 canvas 伪装时，
     // 页面调 getImageData / WebGL readPixels 读回像素会让渲染进程 SIGSEGV
     // （PC 固定在 chromium+0xf2da5fb，fault addr 是 tagged V8 heap 指针）。
-    // 崩溃有概率性，单次测试不作数 —— 项目每天真会访问的 login.live.com /
-    // rewards.bing.com / rewards.bing.com/earn 实测随机崩。
+    // 崩溃有概率性，单次测试不作数 —— 项目每天真会访问的 REQUIRED_HOSTS
+    // 实测随机崩（单一真源见文件末尾的 REQUIRED_HOSTS，避免各处散写漂移）。
     unavailableReason:
       "存在已知崩溃缺陷：开启 canvas 伪装时，页面读取像素（getImageData / WebGL readPixels）" +
       "会导致浏览器渲染进程崩溃（上游 issue #94，暂无补丁）。项目每天访问的登录与 Bing 页面" +
@@ -114,6 +114,22 @@ const ENGINES = {
 
 /** 默认内核 key（写进配置层的 engine 缺省值） */
 const DEFAULT_ENGINE = "chromix";
+
+/**
+ * 项目需要访问的必要域名（单一真源，README/文档/守卫都引用此处）。
+ *
+ * 顺序无关（set 比 array 更准确地表达「集合」语义），新增/删除只需改这一处。
+ * 写死的目的是：
+ *   ① 文档不再出现「具体域」泄密（README 只需说「项目需要访问的必要域名」即可）；
+ *   ② 守卫与诊断脚本能直接 require 这个常量做精确比对。
+ */
+const REQUIRED_HOSTS = Object.freeze([
+  "login.live.com", // 登录入口
+  "rewards.bing.com", // 仪表盘 + 任务中心
+  "www.bing.com", // 搜索任务
+  "cn.bing.com", // 区域锁定双站交叉验证
+  "prod.rewardsplatform.microsoft.com", // 兑换接口
+]);
 
 /** 校验 engine key 合法；非法/缺失回落默认内核。配置层与守卫都依赖它。 */
 function normalizeEngine(key) {
@@ -2299,6 +2315,7 @@ module.exports = {
   // —— 多内核（2026-10-06）——
   ENGINES,
   DEFAULT_ENGINE,
+  REQUIRED_HOSTS,
   engine,
   normalizeEngine,
   setEngine,

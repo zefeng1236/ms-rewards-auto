@@ -1712,11 +1712,20 @@ function registerIpc() {
   });
 
   // 运行下载好的安装包（NSIS 会覆盖正在运行的本体，先退出应用再启动安装器）
+  // 必须走 launchInstallerElevated：shell.openPath 用的是「默认动词」，不弹 UAC；
+  // 没数字签名的安装包因此被 Windows 智能应用控制（SAC）直接拦截，
+  // 用户在 SAC 弹窗里点「仍要运行」也只能单次放行，下次下载又要再点一次。
+  // 改走 Start-Process -Verb RunAs 既弹 UAC 让用户主动确认（与 SAC 不同，UAC 是
+  // 系统信任链的一环，配置一次后续始终信任），又让 NSIS 拿到管理员权限写到
+  // Program Files，而不是被 VirtualStore 截到 %LOCALAPPDATA%。
   ipcMain.handle("app:runUpdateInstaller", async (_e, filePath) => {
     const p = String(filePath || "");
     if (!p || !fs.existsSync(p)) return { ok: false, error: "安装包不存在" };
-    const err = await shell.openPath(p);
-    if (err) return { ok: false, error: err };
+    try {
+      launchInstallerElevated(p);
+    } catch (e) {
+      return { ok: false, error: e && e.message ? e.message : String(e) };
+    }
     // 稍等片刻让安装器进程接管，再退出本体，避免退出时把安装器一起带崩
     setTimeout(() => {
       forceQuit = true;

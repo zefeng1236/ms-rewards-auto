@@ -4848,12 +4848,12 @@ checkTrue(
   "必须实测可写：UAC 虚拟化会让写失败看似成功、用户事后找不到文件"
 );
 checkTrue(
-  "app:runUpdateInstaller 通道：先确认文件存在 + 启动后让本体退出（NSIS 卸载前要拿到锁）",
+  "app:runUpdateInstaller 通道：先确认文件存在 + 提权启动 + 启动后让本体退出（NSIS 卸载前要拿到锁）",
   /app:runUpdateInstaller/.test(mainSrcFp) &&
     /fs\.existsSync\(p\)/.test(mainSrcFp) &&
-    /shell\.openPath\(p\)/.test(mainSrcFp) &&
+    /launchInstallerElevated\(p\)/.test(mainSrcFp) &&
     /app\.quit\(\)/.test(mainSrcFp),
-  "缺校验/不退 → 半截文件启动即崩；不退出就启动 → 旧 exe 占着文件"
+  "缺校验/不提权/不退 → 半截文件启动即崩；不退出就启动 → 旧 exe 占着文件；不弹 UAC → 智能应用控制拦截"
 );
 checkTrue(
   "app:installUpdate: 启动安装程序前先把软件退干净（让 UAC 提升后的写文件无锁）",
@@ -5005,6 +5005,72 @@ checkTrue(
   /rRead\.status === "retry"/.test(runnerSrcFp2) && /rSign\.status === "retry"/.test(runnerSrcFp2),
   "写成「未运行」会让用户以为程序根本没执行，而实际是被接口挡住了"
 );
+
+// ====================== 【0.14.7】用户体验回归守卫 ======================
+// 用户报的 4 件事（README 域名泄密+格式破损 / 弹窗不居中 / 更新侧栏缺位 /
+// 智能应用控制拦截安装包）的防回潮。每条对应一个真实可观察的 bug，被
+// 误删/回退时必须变红。
+console.log("\n【0.14.7】用户体验回归守卫");
+{
+  const cssFp = require("fs").readFileSync(path.join(ROOT, "src-renderer", "src", "styles", "global.css"), "utf8");
+  const sidebarFp = require("fs").readFileSync(
+    path.join(ROOT, "src-renderer", "src", "components", "Sidebar.tsx"),
+    "utf8"
+  );
+  const mainFp = require("fs").readFileSync(path.join(ROOT, "src", "electron-main.js"), "utf8");
+  const readmeFp = require("fs").readFileSync(path.join(ROOT, "README.md"), "utf8");
+  const fbFp = require("fs").readFileSync(path.join(ROOT, "src", "fingerprint-browser.js"), "utf8");
+
+  // ① 弹窗居中：所有 .compat-modal 弹窗（UpdateDialog/UpdatePromptDialog/ModalBase/DisclaimerModal）
+  //    走 .compat-modal 类，CSS 必须显式 position:fixed + inset:0 + margin:auto，否则 React 19 /
+  //    自定义容器偶尔会把 dialog 默认的 absolute 顶掉让弹窗跑顶部。
+  checkTrue(
+    ".compat-modal 在 global.css 显式居中（防 React 19 容器吃掉 UA 默认 absolute）",
+    /\.compat-modal\s*\{[\s\S]{0,200}position:\s*fixed/.test(cssFp) &&
+      /\.compat-modal\s*\{[\s\S]{0,200}inset:\s*0/.test(cssFp) &&
+      /\.compat-modal\s*\{[\s\S]{0,200}margin:\s*auto/.test(cssFp),
+    "原生 <dialog> 默认 absolute 在自定义容器里偶尔失效 → 弹窗跑顶部偏左"
+  );
+  // ② 软件设置侧栏含「更新」分类（不再只有 4 个）
+  checkTrue(
+    "软件设置侧栏 SW_TABS 含「更新」分类（之前 4 个、用户找不到入口）",
+    /key:\s*"update"[\s\S]{0,40}label:\s*"更新"/.test(sidebarFp),
+    "软件设置里没有「更新」分类 → 用户找不到自动更新设置"
+  );
+  // ③ 智能应用控制拦截：app:runUpdateInstaller 必须走提权（Start-Process -Verb RunAs），
+  //    不能用 shell.openPath。shell.openPath 不弹 UAC，无签名安装包被 SAC 拦。
+  checkTrue(
+    "app:runUpdateInstaller 走提权（launchInstallerElevated），不再用 shell.openPath",
+    /ipcMain\.handle\("app:runUpdateInstaller"[\s\S]{0,800}launchInstallerElevated\(p\)/.test(mainFp) &&
+      !/ipcMain\.handle\("app:runUpdateInstaller"[\s\S]{0,800}shell\.openPath\(p\)/.test(mainFp),
+    "shell.openPath 不弹 UAC、无签名安装包被 Windows 智能应用控制拦截"
+  );
+  // ④ REQUIRED_HOSTS 是单一真源，README / fp150 unavailableReason 都引用它
+  //    （不该让具体域名散落在文档各处）
+  checkTrue(
+    "REQUIRED_HOSTS 是项目需要访问的必要域名的单一真源",
+    /const REQUIRED_HOSTS = Object\.freeze\(\[/.test(fbFp) &&
+      /login\.live\.com/.test(fbFp.REQUIRED_HOSTS || "") ||
+      /REQUIRED_HOSTS/.test(fbFp),
+    "文档里散落具体域名 → 改域名时容易漏改；统一从 REQUIRED_HOSTS 读取"
+  );
+  // ⑤ README 不再出现裸写的具体域名（统一改写为「项目需要访问的必要域名」）
+  checkTrue(
+    "README 的「网络可达」一段不再裸写 login.live.com / rewards.bing.com（避免泄密 + 改域名漏改）",
+    !/运行需网络可达\s+`?login\.live\.com`?/i.test(readmeFp) &&
+      !/运行需网络可达\s+`?rewards\.bing\.com`?/i.test(readmeFp),
+    "文档硬编码具体域名 = 改一处忘一处"
+  );
+  // ⑥ README 不可用 markup（用户截图里 `getImageData` / `readPixels` 那段反引号闭合丢了）
+  //    检测：典型 bug 形态是同段内同时出现 `getImageData` / `readPixels` 这两个代码段
+  //    且**用 `/` 直接相连**（而非顿号/换行/标点），这会被 markdown 引擎当斜体分割
+  checkTrue(
+    "README 不再出现「两个反引号代码段被 `/` 直接相连」的斜体分割陷阱",
+    !/`getImageData`\s*\/\s*WebGL\s+`readPixels`/i.test(readmeFp) &&
+      !/`getImageData`\s*\/\s*`/i.test(readmeFp),
+    "`getImageData` / WebGL `readPixels` 这种相邻代码段被 `/` 隔开会触发斜体语法，整段渲染错乱"
+  );
+}
 
 // ====================== 【0.14.7】CodeQL 安全告警修复守卫 ======================
 // GitHub Code scanning 15 条告警修复后的防回潮。每条都对应一个真实攻击面，

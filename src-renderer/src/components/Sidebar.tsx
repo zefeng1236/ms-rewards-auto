@@ -99,6 +99,14 @@ const ICONS: Record<string, React.ReactNode> = {
       <path d="M9 21a3 3 0 0 1 6 0" />
     </svg>
   ),
+  update: (
+    <svg {...ICON_PROPS}>
+      <path d="M21 12a9 9 0 0 1-15.5 6.3" />
+      <path d="M3 12a9 9 0 0 1 15.5-6.3" />
+      <path d="M21 4v6h-6" />
+      <path d="M3 20v-6h6" />
+    </svg>
+  ),
 };
 
 type NavEntry = { key: ViewKey; label: string; icon: React.ReactNode };
@@ -139,12 +147,14 @@ const SW_TABS: { key: string; label: string; icon: React.ReactNode }[] = IS_WEB
       { key: "personalize", label: "个性化", icon: ICONS.personalize },
       { key: "browser", label: "浏览器", icon: ICONS.browser },
       { key: "security", label: "安全", icon: ICONS.security },
+      { key: "update", label: "更新", icon: ICONS.update },
     ]
   : [
       { key: "personalize", label: "个性化", icon: ICONS.personalize },
       { key: "launch", label: "启动与托盘", icon: ICONS.launch },
       { key: "browser", label: "浏览器", icon: ICONS.browser },
       { key: "security", label: "安全", icon: ICONS.security },
+      { key: "update", label: "更新", icon: ICONS.update },
     ];
 
 export function Sidebar({

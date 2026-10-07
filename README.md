@@ -55,10 +55,9 @@
 <details>
 <summary><b>fingerprint-chromium 150 为何暂不可选（点开查看）</b></summary>
 
-开启 canvas 伪装时，页面调用 `getImageData` / WebGL `readPixels` 读回像素会让渲染进程 `SIGSEGV` 崩溃
-（PC 固定在 `chromium+0xf2da5fb`，fault addr 是 tagged V8 heap 指针）。
+开启 canvas 伪装时，页面调用 `getImageData`、WebGL `readPixels` 读回像素会让渲染进程 `SIGSEGV` 崩溃（PC 固定在 `chromium+0xf2da5fb`，fault addr 是 tagged V8 heap 指针）。
 
-崩溃有**概率性**，单次测试不作数 —— 本项目每天真实访问的 `login.live.com` / `rewards.bing.com` / `rewards.bing.com/earn` 正好落在触发路径上，会出现随机闪退。
+崩溃有**概率性**，单次测试不作数 —— 本项目每天真实访问的目标域（登录、领取、搜索）正好落在触发路径上，会出现随机闪退。
 
 追踪中：[adryfish/fingerprint-chromium#94](https://github.com/adryfish/fingerprint-chromium/issues/94)。上游修好后，把代码里的 `available` 置为 `true` 即可开放选择，无需其他改动。
 
@@ -263,7 +262,7 @@ node src/main.js browser        # 检查 Chromium
 
 ## ⚠️ 注意事项
 
-- 运行需网络可达 `login.live.com`、`rewards.bing.com`、`prod.rewardsplatform.microsoft.com`
+- 运行需网络可达**项目需要访问的必要域名**（登录 / 搜索 / 区域锁定 / 兑换，单一真源见 `src/fingerprint-browser.js` 的 `REQUIRED_HOSTS` 导出）
 - 建议保持默认「锁定国区」，非中国大陆 IP 会自动停止任务；判定为**多源保守取最坏**（`cn.bing.com` + `www.bing.com` 双站 + 第三方 GeoIP + 强制 ip.sb 交叉验证），任一源判境外即拦截，全部源不可用则放行
 - 自动运行可设「每天开始时间」（默认 `09:00`），该时刻之前不会启动
 - 搜索间隔建议 ≥ 20 秒，避免触发风控
