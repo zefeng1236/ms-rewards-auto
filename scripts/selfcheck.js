@@ -3309,6 +3309,55 @@ checkTrue(
     /FIELD_RANGE\[hasSeconds\s*\?\s*i\s*:\s*i\s*\+\s*1\]/.test(cronShallow),
   "薄壳只放行 5 段 → 6 段表达式被判非法写不进配置，重启后被normalizeCron 清空"
 );
+// —— cron 示例弹窗 + 在线生成器链接（用户要求）——
+// ⚠️ 「示例里的表达式全部可解析」这条最要紧：用户点一下就真的写进配置，
+//   一个写错的示例比没有示例更糟（错示例会静默生效，语义还不对）。
+// ⚠️ personalizeSrc 在本文件 973 行已声明过，**不要**重复声明（会 SyntaxError 直接崩）。
+const cronExampleBlock = (() => {
+  const i = personalizeSrc.indexOf("const CRON_EXAMPLES");
+  return i < 0 ? "" : personalizeSrc.slice(i, i + 3000);
+})();
+const cronExampleExprs = [
+  ...cronExampleBlock.matchAll(/expr:\s*"([^"]+)"/g),
+].map((m) => m[1]);
+checkTrue(
+  "cron：示例弹窗存在且行可点击填入（点击必须走 describeCron 校验，不能绕过）",
+  /const CRON_EXAMPLES/.test(personalizeSrc) &&
+    /cronHelpOpen/.test(personalizeSrc) &&
+    /cron-help-row/.test(personalizeSrc) &&
+    /onClick=\{\(\) => \{[\s\S]{0,260}?describeCron\(ex\.expr\)\.ok[\s\S]{0,160}?patchAppearance\(\{\s*bgRotateCron:\s*ex\.expr/.test(
+      personalizeSrc
+    ) &&
+    /cron-help-list/.test(globalCss),
+  "点示例直接 setState 绕过校验 → 用户点到一个错示例会静默写进配置，比没示例更糟"
+);
+checkTrue(
+  `cron：${cronExampleExprs.length} 条示例全部通过 isCronShallowValid（错示例 = 静默写坏配置）`,
+  cronExampleExprs.length >= 10 &&
+    require(path.join(ROOT, "src", "cron.js")).isCronShallowValid !== undefined &&
+    cronExampleExprs.every((e) => {
+      try {
+        return require(path.join(ROOT, "src", "cron.js")).isCronShallowValid(e);
+      } catch {
+        return false;
+      }
+    }),
+  "示例里混进非法表达式 → 用户点一下就写进配置，界面显示「有效」但语义不对"
+);
+checkTrue(
+  "cron：在线生成器链接在设置页（蓝字 + 新标签打开 + rel 防护）",
+  /https:\/\/cron\.ciding\.cc\//.test(personalizeSrc) &&
+    /className="cron-help-link"[\s\S]{0,200}?target="_blank"/.test(personalizeSrc) &&
+    /rel="noreferrer noopener"/.test(personalizeSrc) &&
+    /--lg-accent/.test(globalCss) &&
+    /\.cron-help-link\s*\{[\s\S]{0,200}?text-decoration:\s*none/.test(globalCss),
+  "缺 rel=noopener → 目标页能拿到 opener；颜色写死会在深色主题下看不清"
+);
+checkTrue(
+  "cron：示例列表限高留足（15 行实测需 525px，限高不能低于它否则末行被裁）",
+  /\.cron-help-list\s*\{[\s\S]{0,220}?max-height:\s*min\(6[0-9]vh/.test(globalCss),
+  "限高过小 → 最后一行（6 段秒级示例）被裁掉，用户不知道它存在（实测踩到：460px 会裁）"
+);
 checkTrue(
   "cron：配置层字段贯通（DEFAULTS / 读取归一化 / 写入归一化 / 类型 / mock）",
   /bgRotateCron:\s*""/.test(appearanceSrc) &&

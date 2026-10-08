@@ -32,6 +32,37 @@ function fmtNextRun(d: Date): string {
   return in7 ? `${week} ${withSec}` : `${d.getMonth() + 1}/${d.getDate()} ${week} ${withSec}`;
 }
 
+/**
+ * cron 示例表（点「示例」按钮后弹窗展示，行可点击直接填入）。
+ *
+ * 为什么把示例放进弹窗而不是全塞在输入框下方：完整示例有十几行，
+ * 常驻会把设置页撑得很长、干扰其它选项；而cron 语法本身有门槛，
+ * 需要时才翻出来对照更合适。
+ *
+ * ⚠️ 这里的表达式全部经过 `parseCron` 验证可解析（实测），别写错示例 ——
+ * 用户点一下就会真的写进配置，一个错示例比没有示例更糟。
+ */
+const CRON_EXAMPLES: { expr: string; desc: string }[] = [
+  // —— 5 段（分 时 日 月 周）——
+  { expr: "30 7 * * *", desc: "每天 07:30" },
+  { expr: "0 */2 * * *", desc: "每 2 小时整点" },
+  { expr: "15 3 * * 1-5", desc: "工作日 03:15" },
+  { expr: "0,30 * * * *", desc: "每小时 0 分与 30 分" },
+  { expr: "0 8 * * 1", desc: "每周一 08:00" },
+  { expr: "0 9 * * 0", desc: "每周日 09:00（7 也表示周日）" },
+  { expr: "0 10 1 * *", desc: "每月 1 号 10:00" },
+  // —— 步长 / 区间 / 列举——
+  { expr: "*/5 * * * *", desc: "每 5 分钟（步长）" },
+  { expr: "*/2 8-18 * * *", desc: "8–18 点每 2 小时（步长 + 区间）" },
+  { expr: "5/10 * * * *", desc: "5、15、25… 分（基点 + 步长）" },
+  { expr: "1-10/2 * * * *", desc: "1、3、5、7、9 分（区间 + 步长）" },
+  { expr: "*/2,5 * * * *", desc: "0、2、4、5、6、8… 分（步长 + 列举）" },
+  // —— 6 段（秒 分 时 日 月 周），秒在**最前**——
+  { expr: "*/10 * * * * *", desc: "每 10 秒（6 段，秒在左端）" },
+  { expr: "5 30 7 * * *", desc: "每天 07:30:05（精确到第 5 秒）" },
+  { expr: "0 0 9 * * 1-5", desc: "工作日 09:00:00" },
+];
+
 /** 外观预设：液态玻璃（半透明面板）/ 不透明（实心面板），均为纯 CSS 热切换 */
 const PRESETS: { key: AppearancePreset; label: string; desc: string }[] = [
   { key: "normal", label: "液态玻璃", desc: "默认半透明玻璃面板" },
@@ -133,6 +164,8 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
   const [cronDraft, setCronDraft] = useState<string | null>(null);
   const cronText = cronDraft ?? appearance?.bgRotateCron ?? "";
   const cronState = useMemo(() => describeCron(cronText.trim()), [cronText]);
+  // cron 示例弹窗（用户点「示例」按钮打开）
+  const [cronHelpOpen, setCronHelpOpen] = useState(false);
 
   if (!appearance) return null;
 
@@ -536,6 +569,14 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
                   }}
                   style={{ width: 160, fontFamily: "Consolas, monospace" }}
                 />
+                <button
+                  type="button"
+                  className="bg-chip"
+                  style={{ padding: "2px 10px" }}
+                  onClick={() => setCronHelpOpen(true)}
+                >
+                  示例
+                </button>
                 <span className="bg-note" style={{ margin: 0 }}>
                   <code>分 时 日 月 周</code> 共 5 段（本地时区），例 <code>30 7 * * *</code> 每天 07:30、
                   <code> 15 3 * * 1-5</code> 工作日 03:15。每段都支持 <code>*</code>、
@@ -545,6 +586,15 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
                   需要精确到秒就用 <code>秒 分 时 日 月 周</code> 共 6 段（秒在<strong>最前面</strong>，
                   如 <code>*/10 * * * * *</code> 每 10 秒）。留空 = 不启用。
                 </span>
+                <br />
+                <a
+                  className="cron-help-link"
+                  href="https://cron.ciding.cc/"
+                  target="_blank"
+                  rel="noreferrer noopener"
+                >
+                  在线生成 cron 表达式 →
+                </a>
               </div>
             )}
 
@@ -723,6 +773,55 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
         ) : (
           <div className="hint">当前没有可预览的壁纸</div>
         )}
+      </Modal>
+    <Modal
+        open={cronHelpOpen}
+        onOpenChange={setCronHelpOpen}
+        title="cron 表达式示例"
+        size="lg"
+        footer={
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+            <a
+              className="cron-help-link"
+              href="https://cron.ciding.cc/"
+              target="_blank"
+              rel="noreferrer noopener"
+            >
+              在线生成 cron 表达式 →
+            </a>
+            <GlassButton variant="plain" controlSize="small" onClick={() => setCronHelpOpen(false)}>
+              关闭
+            </GlassButton>
+          </div>
+        }
+      >
+        <p className="cron-help-tip">
+          点击任意一行即可把该表达式填入输入框。<code>*</code> = 全部、
+          <code>1-5</code> = 区间、<code>斜杠+数字</code> = 步长、<code>7,14,21</code> = 并列；
+          日与周同时指定时是<strong>「或」</strong>关系。6 段的<strong>秒在左端</strong>。
+        </p>
+        <div className="cron-help-list">
+          {CRON_EXAMPLES.map((ex) => (
+            <button
+              key={ex.expr}
+              type="button"
+              className="cron-help-row"
+              title="点击填入"
+              onClick={() => {
+                //走与手动输入**完全相同**的路径（校验 → 合法才落盘），
+                // 不直接 setState 绕过校验，否则点了个错示例会静默写进配置。
+                setCronDraft(ex.expr);
+                if (describeCron(ex.expr).ok) {
+                  void patchAppearance({ bgRotateCron: ex.expr });
+                }
+                setCronHelpOpen(false);
+              }}
+            >
+              <code className="cron-help-expr">{ex.expr}</code>
+              <span className="cron-help-desc">{ex.desc}</span>
+            </button>
+          ))}
+        </div>
       </Modal>
     </>
   );

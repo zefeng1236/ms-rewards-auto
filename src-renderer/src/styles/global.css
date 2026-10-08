@@ -1725,6 +1725,74 @@ html[data-preset="opaque"] .compat-toast {
   margin: 8px 0 0;
 }
 
+/* —— cron 高级选项：示例按钮 / 在线生成器链接 / 示例弹窗 —— */
+/* 链接用主题色变量 `--lg-accent`（= --accent，会随主题走），而不是写死 #3b82f6：
+   写死的话深色主题下会跟背景糊在一起、浅色主题下又显得刺眼。
+   ⚠️ 别臆造变量名：项目里**没有** --lg-link / --lg-surface-hover / --lg-border
+   （写错会静默回退到兜底值，深色主题下直接看不清）。 */
+.cron-help-link {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--lg-accent);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+}
+.cron-help-link:hover {
+  text-decoration: underline;
+  border-bottom-color: currentColor;
+}
+.cron-help-tip {
+  margin: 0 0 10px;
+  font-size: 11.5px;
+  line-height: 1.7;
+  color: var(--lg-text-secondary);
+}
+.cron-help-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  /* 15 行示例实测需要 525px；限高必须留够，否则最后一行被裁掉（用户根本不知道
+     还有 6 段秒级的示例）。留滚动兜底，但目标是在常见视口下**全部可见**。 */
+  max-height: min(62vh, 580px);
+  overflow-y: auto;
+}
+.cron-help-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--lg-text);
+  font-family: inherit;
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.cron-help-row:hover {
+  /* 用 clear-tint-hover（10% 白）而不是 tint-hover（16% 白）：后者在暗色主题下
+     一行就亮得刺眼，像"选中"而不是"悬停"。边框也用 clear-tint 才配套。 */
+  background: var(--lg-clear-tint-hover);
+  border-color: var(--lg-tint);
+}
+/* 表达式等宽显示：cron 全是符号，等宽才好逐段比对 */
+.cron-help-expr {
+  flex: 0 0 auto;
+  min-width: 148px;
+  font-family: Consolas, "Courier New", monospace;
+  color: var(--lg-text);
+  font-variant-numeric: tabular-nums;
+}
+.cron-help-desc {
+  flex: 1 1 auto;
+  color: var(--lg-text-secondary);
+  line-height: 1.5;
+}
+
 .danger-zone .block-title {
   color: var(--lg-danger);
 }
