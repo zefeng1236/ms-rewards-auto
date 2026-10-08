@@ -257,8 +257,37 @@ function geoLabel(verdicts) {
   const countryCn = pick("countryCn") || (cc ? COUNTRY_CN[cc] || "" : "");
   const left = cityEn ? `${cityEn}/${cc}` : cc;
   const right = [cityCn, countryCn].filter(Boolean).join("/");
-  if (left && right) return `${left}(${right})`;
-  return left || right || "未知";
+  let label = "";
+  if (left && right) label = `${left}(${right})`;
+  else label = left || right || "未知";
+  // 归属地前面挂国旗（2026-10-09 用户要求）：推送里一眼扫到国家，
+  // 不用去读括号里的文字。认不出国家码时就不加，别留个空前缀。
+  const flag = flagEmoji(cc);
+  return flag ? `${flag} ${label}` : label;
+}
+
+/**
+ * ISO 3166-1 alpha-2 国家/地区码 → 国旗 emoji。
+ *
+ * 原理：国旗 emoji 是两个「区域指示符」字母拼成的，
+ *   码点 = 0x1F1E6(A) + (字母序号)。如 JP → 🇯 + 🇵 → 🇯🇵
+ *
+ * ⚠️ 香港 / 澳门 / 台湾是**中国**的一部分，不是独立国家 ——
+ *    这三者统一使用中国国旗 🇨🇳，与 COUNTRY_CN 里「中国香港 / 中国澳门 /
+ *    中国台湾」的中文口径保持一致（不用各自的地区旗）。
+ *
+ * @param {string} cc 两位字母码，非法返回空串
+ * @returns {string}
+ */
+function flagEmoji(cc) {
+  const s = String(cc || "").trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(s)) return "";
+  const eff = s === "HK" || s === "MO" || s === "TW" ? "CN" : s;
+  const A = 65; // 'A'
+  const REGIONAL_INDICATOR_A = 0x1f1e6;
+  return String.fromCodePoint(
+    ...[...eff].map((ch) => REGIONAL_INDICATOR_A + (ch.charCodeAt(0) - A))
+  );
 }
 
 module.exports = {
@@ -273,6 +302,7 @@ module.exports = {
   normIsp,
   ispFromCnAddr,
   geoLabel,
+  flagEmoji,
   COUNTRY_CN,
   CITY_EN2CN,
 };

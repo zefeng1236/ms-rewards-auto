@@ -4559,7 +4559,8 @@ checkTrue(
   /检测到非中国大陆区域/.test(jBlocked.reason || "") && /ipsb/.test(jBlocked.reason || ""),
   jBlocked.reason
 );
-check("拦截结果带回触发拦截的出口（国家码 / IP / 归属地）", [jBlocked.ipcc, jBlocked.ip, jBlocked.geo], ["JP", "1.2.3.4", "Tokyo/JP(东京/日本)"]);
+// 归属地带国旗（2026-10-09 起）
+check("拦截结果带回触发拦截的出口（国家码 / IP / 归属地）", [jBlocked.ipcc, jBlocked.ip, jBlocked.geo], ["JP", "1.2.3.4", "🇯🇵 Tokyo/JP(东京/日本)"]);
 check("多源一致为境内 → 放行", rmodQ.judgeMainland(
   [
     { source: "bing", mainland: true, countryCode: "CN" },
@@ -4599,11 +4600,31 @@ checkTrue(
 checkTrue("导出 LOCK_REGION_LABEL（后期按国家/地区锁区时只改一处）", typeof rmodQ.LOCK_REGION_LABEL === "string" && rmodQ.LOCK_REGION_LABEL === "中国大陆");
 
 // —— 归属地展示 geoLabel ——
-check("geoLabel：境外带英文城市 → 东京/日本", ipLookup.geoLabel([{ countryCode: "JP", cityEn: "Tokyo" }]), "Tokyo/JP(东京/日本)");
-check("geoLabel：太平洋中文城市 → 徐州/中国大陆", ipLookup.geoLabel([{ countryCode: "CN", cityCn: "徐州" }]), "CN(徐州/中国大陆)");
-check("geoLabel：ip-api 中文国名直接透传", ipLookup.geoLabel([{ countryCode: "JP", cityCn: "东京", countryCn: "日本" }]), "JP(东京/日本)");
-check("geoLabel：无任何地理信息 → 未知", [ipLookup.geoLabel([]), ipLookup.geoLabel(null)], ["未知", "未知"]);
-check("geoLabel：只有国家码也能出中文国名", ipLookup.geoLabel([{ countryCode: "SG" }]), "SG(新加坡)");
+// ⚠️ 2026-10-09 起归属地前面带**国旗**（用户要求，一眼扫到国家）
+check("geoLabel：境外带英文城市 + 国旗", ipLookup.geoLabel([{ countryCode: "JP", cityEn: "Tokyo" }]), "🇯🇵 Tokyo/JP(东京/日本)");
+check("geoLabel：太平洋中文城市 + 国旗", ipLookup.geoLabel([{ countryCode: "CN", cityCn: "徐州" }]), "🇨🇳 CN(徐州/中国大陆)");
+check("geoLabel：ip-api 中文国名直接透传", ipLookup.geoLabel([{ countryCode: "JP", cityCn: "东京", countryCn: "日本" }]), "🇯🇵 JP(东京/日本)");
+check("geoLabel：无任何地理信息 → 未知（不挂国旗）", [ipLookup.geoLabel([]), ipLookup.geoLabel(null)], ["未知", "未知"]);
+check("geoLabel：只有国家码也能出中文国名 + 国旗", ipLookup.geoLabel([{ countryCode: "SG" }]), "🇸🇬 SG(新加坡)");
+checkTrue(
+  "国旗：港澳台一律用中国国旗（与「中国香港/澳门/台湾」的中文口径一致）",
+  ipLookup.flagEmoji("HK") === "🇨🇳" &&
+    ipLookup.flagEmoji("MO") === "🇨🇳" &&
+    ipLookup.flagEmoji("TW") === "🇨🇳" &&
+    ipLookup.flagEmoji("CN") === "🇨🇳",
+  `HK=${ipLookup.flagEmoji("HK")} MO=${ipLookup.flagEmoji("MO")} TW=${ipLookup.flagEmoji("TW")}`
+);
+checkTrue(
+  "国旗：其他国家按 ISO 码生成（US/JP/GB 各不相同）",
+  ipLookup.flagEmoji("US") === "🇺🇸" &&
+    ipLookup.flagEmoji("JP") === "🇯🇵" &&
+    ipLookup.flagEmoji("GB") === "🇬🇧" &&
+    ipLookup.flagEmoji("US") !== ipLookup.flagEmoji("JP")
+);
+checkTrue(
+  "国旗：非法输入返回空串（不留空前缀、不抛错）",
+  ["", null, undefined, "USA", "1", "u"].every((c) => ipLookup.flagEmoji(c) === "")
+);
 checkTrue(
   "国家/地区中文名表述完整（港澳台均为中国的一部分）",
   ipLookup.COUNTRY_CN.HK === "中国香港" && ipLookup.COUNTRY_CN.MO === "中国澳门" && ipLookup.COUNTRY_CN.TW === "中国台湾" && ipLookup.COUNTRY_CN.CN === "中国大陆",
