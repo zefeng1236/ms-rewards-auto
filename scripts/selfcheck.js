@@ -3918,11 +3918,9 @@ checkTrue(
     /MS-Rewards-Auto-Setup-\(\\d\+\(\?:\\\.\\d\+\)\+\)\\?\\\.exe/.test(appUpdateSrc),
   "版本号缺失时弹窗显示 undefined，比显示旧版本号更糟"
 );
-checkTrue(
-  "提权启动安装包有 stderr 监听（点安装无反应时能查原因）",
-  /stdio: \["ignore", "pipe", "pipe"\]/.test(mainSrcHist) && /child\.stderr\.on\("data"/.test(mainSrcHist),
-  "stdio:ignore → UAC 被拒/ SAC 拦截时静默失败，界面停在「点了没反应」且日志无记录"
-);
+// 2026-10-08：安装已改回 shell.openPath，这条守卫随之反转为「判 openPath 返回值」——
+// 代为提权（spawn + stderr 监听）整条链路已删除，stderr 监听不再是关键路径。
+// 真正的失败信号是 openPath 的返回值（失败返回错误文本而非抛异常）。
 
 // —— 日历界面静态守卫 ——
 const calSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "views", "CalendarPanel.tsx"), "utf8");
@@ -4953,46 +4951,60 @@ checkTrue(
   "必须实测可写：UAC 虚拟化会让写失败看似成功、用户事后找不到文件"
 );
 checkTrue(
-  "app:runUpdateInstaller 通道：先确认文件存在 + 提权启动 + 启动后让本体退出（NSIS 卸载前要拿到锁）",
+  "app:runUpdateInstaller 通道：先确认文件存在 + 打开安装包 + 启动后让本体退出（NSIS 卸载前要拿到锁）",
   /app:runUpdateInstaller/.test(mainSrcFp) &&
     /fs\.existsSync\(p\)/.test(mainSrcFp) &&
-    /launchInstallerElevated\(p\)/.test(mainSrcFp) &&
+    /openInstaller\(p\)/.test(mainSrcFp) &&
     /app\.quit\(\)/.test(mainSrcFp),
   "缺校验/不提权/不退 → 半截文件启动即崩；不退出就启动 → 旧 exe 占着文件；不弹 UAC → 智能应用控制拦截"
 );
 checkTrue(
-  "app:installUpdate: 启动安装程序前先把软件退干净（让 UAC 提升后的写文件无锁）",
+  "app:installUpdate: 启动安装程序前先把软件退干净（让安装器卸载旧版时能拿到锁）",
   /forceQuit = true/.test(mainSrcFp) &&
     /app\.quit\(\)/.test(mainSrcFp),
   "不退出就启动 → 写 Program Files 时旧 exe 的 mmap 会卡住新文件"
 );
-checkTrue(
-  "提权启动走 Start-Process -Verb RunAs（不依赖 shell.openPath 默认动词）",
-  /Start-Process[\s\S]{0,120}?-Verb\s+RunAs/.test(mainSrcFp) ||
-    /powershell\.exe[\s\S]{0,200}?Verb RunAs/.test(mainSrcFp) ||
-    /MSEDGEDRIVER\.exe|VERB\s*=\s*"runas"/i.test(mainSrcFp),
-  "shell.openPath 提权不可靠 → Program Files 下安装会 ACCESS_DENIED"
-);
-// 2026-10-07 用户实测：带 /S 静默时出现「提权进程秒退、什么都没发生」——
-// 日志显示 PowerShell exit 0 且无 stderr，但安装目录文件时间戳仍是旧构建，
-// 安装根本没发生，用户全程零线索（无 UAC、无窗口、无报错）。
-// 静默失败的根因就是「没有任何窗口承载错误信息」，故必须保持交互式安装。
-// ⚠️ 用字面量 includes 而非正则：正则里的 /S 会被注释里的历史说明命中而假绿。
+// 2026-10-08 用户决定：安装回到最原始形态 —— 软件只用**普通权限**打开安装包，
+// UAC 由安装包自己弹、用户手点完成（与手动双击完全一致）。
+//
+// ⚠️ 这条断言的方向在 2026-10-07 曾经是**反的**：当时断言「必须走
+//    Start-Process -Verb RunAs」，理由是「shell.openPath 不保证提权」。
+//    实测证明那条链路在真机上根本拉不起安装包（连续两次：带 /S 时提权进程秒退、
+//    安装没发生；去掉 /S 时仍打不开），而 shell.openPath 从来没出过问题。
+//    ⇒ **代为提权不可靠，用户手点才是可靠的**。
 const installerLaunchSrc = mainSrcFp.slice(
-  mainSrcFp.indexOf("function launchInstallerElevated"),
-  mainSrcFp.indexOf("function launchInstallerElevated") + 4000
+  mainSrcFp.indexOf("function openInstaller"),
+  mainSrcFp.indexOf("function openInstaller") + 2000
 );
 const nsisLaunchSrc = require("fs").readFileSync(path.join(ROOT, "build", "installer.nsh"), "utf8");
+// ⚠️ 判定「代码里还有没有代为提权」时**必须先剔除注释**（本项目已连续踩三次）：
+//   注释里写的「不要再用 Start-Process -Verb RunAs」会被正则命中 ⇒ 守卫假红。
+//   这里的注释保留着这段历史，正是为了说明为什么放弃代为提权。
+const mainSrcCodeOnly = mainSrcFp
+  .split("\n")
+  .filter((ln) => !/^\s*(\*|\/\/|\/\*)/.test(ln))
+  .join("\n");
 checkTrue(
-  "安装包走**交互式**安装：Start-Process 不带 /S（静默失败不可观测，用户零线索）",
-  installerLaunchSrc.includes("-Verb RunAs") &&
-    !/Start-Process[^\n]*-ArgumentList\s+'\/S'/.test(installerLaunchSrc),
-  "带 /S 会退回静默安装 → 实测出现过提权进程秒退、安装根本没发生、界面零反馈"
+  "安装包走 shell.openPath 打开（**不代为提权**，UAC 由安装包自己弹、用户手点完成）",
+  installerLaunchSrc.includes("shell.openPath(p)") &&
+    !/Start-Process[^\n]*-Verb\s+RunAs/.test(mainSrcCodeOnly) &&
+    !/function launchInstallerElevated/.test(mainSrcCodeOnly),
+  "代为提权（PowerShell RunAs）在真机上打不开安装包（实测两次）；应回到 shell.openPath"
 );
 checkTrue(
   "安装窗口默认展开文件列表（ShowInstDetails show），出错时能直接看到卡在哪个文件",
   nsisLaunchSrc.includes("ShowInstDetails show"),
   "细节面板折叠时 NSIS 只给一个进度条，文件占用/覆盖失败无任何线索"
+);
+// shell.openPath 成功返回空字符串、失败返回错误文本 —— 不判空就会把失败当成功，
+// 用户看到「点了没反应」却没有任何提示（0.14.6~0.14.11 那类静默失败的翻版）。
+checkTrue(
+  "打开安装包会判 openPath 返回值（失败要回填待装标记并报错，不能静默当成功）",
+  /openErr = openInstaller\([^)]*\) \|\| ""/.test(mainSrcFp) &&
+    /打开安装包失败/.test(mainSrcFp) &&
+    // 失败时把清掉的 readyFile 补回去，否则文件还在但再也不会提示
+    /globalConfig\.set\(\{ update: \{ \.\.\.info \} \}\)/.test(mainSrcFp),
+  "openPath 失败返回的是错误文本而不是抛异常，不判空 → 失败被当成成功，界面零反馈"
 );
 checkTrue(
   "弹窗时按规则触发：静默下完 / 当天首次 / 未开启三种规则（dayBoundary 用本地日，避免 UTC 漂移）",
@@ -5289,13 +5301,21 @@ console.log("\n【0.14.7】用户体验回归守卫");
     /key:\s*"update"[\s\S]{0,40}label:\s*"更新"/.test(sidebarFp),
     "软件设置里没有「更新」分类 → 用户找不到自动更新设置"
   );
-  // ③ 智能应用控制拦截：app:runUpdateInstaller 必须走提权（Start-Process -Verb RunAs），
-  //    不能用 shell.openPath。shell.openPath 不弹 UAC，无签名安装包被 SAC 拦。
+  // ③ 安装方式：2026-10-08 用户决定回到最原始形态 —— 普通权限 shell.openPath 打开，
+  //    UAC 由安装包自己弹、用户手点完成。
+  //    ⚠️ 这条断言原本是**反的**（当时要求「必须走 Start-Process -Verb RunAs」，
+  //    理由是 shell.openPath 不弹 UAC、会被 SAC 拦）。实测证明那条链路在真机上
+  //    根本拉不起安装包（连续两次失败），而手动双击从未出问题 ⇒ 用户手点才可靠。
   checkTrue(
-    "app:runUpdateInstaller 走提权（launchInstallerElevated），不再用 shell.openPath",
-    /ipcMain\.handle\("app:runUpdateInstaller"[\s\S]{0,800}launchInstallerElevated\(p\)/.test(mainFp) &&
-      !/ipcMain\.handle\("app:runUpdateInstaller"[\s\S]{0,800}shell\.openPath\(p\)/.test(mainFp),
-    "shell.openPath 不弹 UAC、无签名安装包被 Windows 智能应用控制拦截"
+    "app:runUpdateInstaller 用 shell.openPath 打开安装包（不代为提权）",
+    /ipcMain\.handle\("app:runUpdateInstaller"[\s\S]{0,900}openInstaller\(p\)/.test(mainFp) &&
+      !/function launchInstallerElevated/.test(mainFp) &&
+      // ⚠️ 剔除注释后再判「有没有 RunAs」——注释里写着「不要再用 Start-Process
+      //    -Verb RunAs」，不剔除就会假红（本项目已连续踩三次这个坑）
+      !/Start-Process[^\n]*-Verb\s+RunAs/.test(
+        mainFp.split("\n").filter((ln) => !/^\s*(\*|\/\/|\/\*)/.test(ln)).join("\n")
+      ),
+    "代为提权（PowerShell RunAs）在真机上打不开安装包（实测两次）；应回到 shell.openPath"
   );
   // ④ REQUIRED_HOSTS 是单一真源，README / fp150 unavailableReason 都引用它
   //    （不该让具体域名散落在文档各处）

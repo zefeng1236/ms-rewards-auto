@@ -3,7 +3,8 @@ const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
 const { pathToFileURL, fileURLToPath } = require("url");
-const { spawn } = require("child_process");
+// 注：此处曾 import { spawn } 用于 PowerShell 提权启动安装包，
+// 2026-10-08 已改回 shell.openPath（见 openInstaller 的注释），故不再需要。
 
 // ⚠️ 必须在 require 任何业务模块之前确定存储目录。
 // 打包后安装目录（Program Files）没有写权限，数据必须落在 userData 下；
@@ -1683,84 +1684,38 @@ function registerIpc() {
   // ---- 安装已下载的更新包 ----
 
   /**
-   * 提权启动安装包（弹 UAC），**交互式**安装（有窗口、显示详细过程）。
+   * 打开安装包（**普通权限**，不代为提权）。
    *
-   * 为什么用 PowerShell 的 `Start-Process -Verb RunAs` 而不是 shell.openPath：
-   *   - `shell.openPath` 用的是「默认动词」，不保证提权；装到 Program Files 时
-   *     安装程序会因权限不足写到 VirtualStore 或直接失败。
-   *   - `-Verb RunAs` 是 Windows 标准的提权方式，会正常弹 UAC 让用户确认。
+   * 2026-10-08 用户决定：回到最原始的做法 —— 软件只用普通权限把安装包打开，
+   * UAC 由**安装包自己**去弹、用户手点确认，一路点到「下一步 / 安装 / 完成」。
+   * 也就是和用户自己去文件夹双击安装包完全一样。
    *
-   * ⚠️ **不要再加 `/S`**（2026-10-07 用户实测后推翻 0.14.6 的决定）：
-   *   `/S` 静默模式在实机上出现过「提权进程秒退、什么都不发生」的组合 ——
-   *   日志显示 PowerShell exit 0 且无 stderr，但 `D:\Program Files\MS Rewards Auto`
-   *   里所有文件的时间戳仍是旧版本那次构建，**安装根本没发生**，而用户界面上
-   *   只看到「软件直接关闭」，既没有 UAC 也没有安装窗口，全程无任何线索。
-   *   静默失败不可观测是这类问题的根源：失败时没有任何窗口承载错误信息。
-   *   交互模式则天然可观测：安装进度、文件列表、错误对话框都在，装完由
-   *   electron-builder 的完成页「运行」按钮拉起新版（见 installer.nsh 注释）。
-   *   `ShowInstDetails show` 已让文件列表默认展开，出错时能直接看到卡在哪个文件。
+   * ⚠️ 不要再包 PowerShell 的 `Start-Process -Verb RunAs`（2026-10-07~08 实测）：
+   *   那条路在实机上**连续三次都没能拉起安装包** ——
+   *   ① 带 `/S` 时：提权进程秒退、安装根本没发生，界面零反馈；
+   *   ② 去掉 `/S` 时：仍打不开安装包（PowerShell 已 exit 0，日志无 stderr）。
+   *   两次都只能靠猜，**代为提权这条链路在真机上不可靠**。
+   *   shell.openPath 走系统的 ShellExecute，安装包 manifest 里声明了
+   *   `requestedExecutionLevel level="requireAdministrator"`，UAC 照常弹，
+   *   权限与「用户手动双击」完全一致 —— 这条路本来就稳，没出过问题。
    *
-   * ⚠️ 只在**用户主动点安装**时调用。后台静默下载阶段绝不提权。
+   * 顺带的收益：不再需要讨论 /S 静默、不再需要 customInstall 里那段自动拉起，
+   * 安装过程所见即所得（进度、文件列表、错误框都在，出错能直接看到卡在哪）。
+   *
+   * ⚠️ 只在**用户主动点安装**时调用。后台静默下载阶段绝不打开安装包。
    */
-  function launchInstallerElevated(exePath) {
-    const exe = String(exePath || "").replace(/'/g, "''");
-    // -Verb RunAs 触发 UAC；**不带 /S** → NSIS 走交互安装，有窗口有进度，
-    // 失败时会有错误对话框（静默失败才是最坏的：无窗口、无提示、无从排查）。
-    const ps = `Start-Process -FilePath '${exe}' -Verb RunAs`;
-
-    const child = spawn(
-      "powershell",
-      ["-NoProfile", "-NonInteractive", "-Command", ps],
-      { detached: true, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] }
-    );
-
-    // ⚠️ 为什么必须听 stderr（2026-10-07 用户实测「点立即安装打不开安装包」）：
-    //   Start-Process -Verb RunAs 的失败**不在子进程退出码上** —— 用户在 UAC 对话框
-    //   点「否」、或被 SAC 拦下时，PowerShell 本身是成功退出的（它只是没拉起目标）。
-    //   而原来 stdio:"ignore" 把一切输出都丢掉 ⇒ 界面永远停在「点了没反应」，
-    //   日志里也一个字都没有。
-    //
-    // ⚠️ detached + pipe 的第二个坑：detached 后子进程脱离父进程会话，pipe 必须被
-    //   消费，否则 Node 会一直等 EOF。所以下面既 on("data") 存内容（截断到 2KB，
-    //   防止无界增长），又 resume() 让数据流走。
-    let errOut = "";
-    try {
-      child.stderr.on("data", (d) => {
-        errOut += String(d);
-        if (errOut.length > 2000) errOut = errOut.slice(-2000);
-      });
-      child.stdout.on("data", () => {
-        /* Start-Process 正常无 stdout；消费掉即可，不记录 */
-      });
-      child.stderr.resume();
-      child.stdout.resume();
-      child.on("error", (e) => {
-        logger.error(`启动安装程序失败（无法拉起 PowerShell）: ${e.message}`);
-      });
-      child.on("exit", (code) => {
-        if (code !== 0) {
-          logger.error(`提权启动安装程序返回非零退出码 ${code}: ${errOut.trim() || "(无 stderr)"}`);
-        } else if (errOut.trim()) {
-          logger.warn(`提权启动安装程序有告警输出: ${errOut.trim()}`);
-        } else {
-          logger.info("已提权启动安装程序（若界面无反应，请检查 UAC 是否被拒绝 / 智能应用控制是否拦截）");
-        }
-      });
-    } catch {
-      /* 日志监听失败不影响安装流程 */
-    }
-
-    child.unref();
-    return child;
+  function openInstaller(exePath) {
+    const p = String(exePath || "");
+    // openPath 成功返回空字符串，失败返回错误说明文本（不是抛异常）
+    return shell.openPath(p);
   }
 
-  // 用户要求（2026-10-06）：点安装 → 弹 UAC → 装完自动打开，全程不用手点。
-  // 步骤：① 校验文件确实存在 ② 校验完整性 ③ 提权启动安装包（交互式，有窗口）
-  //       ④ 本进程自动退出 ⑤ 安装包装完自动拉起新版本（见 installer.nsh）。
+  // 用户流程（2026-10-08 回归最原始形态）：点安装 → 软件打开安装包（普通权限）
+  // → 安装包自己弹 UAC → 用户手点完成 → 本进程退出。
+  // 步骤：① 校验文件确实存在 ② 校验完整性 ③ 普通权限打开安装包 ④ 本进程退出。
   //
-  // ⚠️ 为什么这里**要**提权、而静默下载时**绝不**提权：
-  //   下载是后台行为，弹 UAC 就不叫静默了；而「点安装」是用户主动操作，
-  //   此时弹 UAC 是预期内的、也是必须的（装到 Program Files 需要管理员）。
+  // ⚠️ 为什么这里**不**自己提权：代为提权（PowerShell RunAs）在实机上打不开安装包，
+  //   且失败时静默无声；交给安装包自己弹 UAC，行为与用户手动双击完全一致。
   ipcMain.handle("app:installUpdate", async (_e, payload) => {
     const cfg = globalConfig.get() || {};
     const info = cfg.update || {};
@@ -1774,17 +1729,28 @@ function registerIpc() {
       logger.warn(`更新包校验未通过: ${v.reason}`);
       return { ok: false, error: v.reason };
     }
-    logger.info(`更新包校验通过（${v.bytes} 字节），提权启动安装程序…`);
+    logger.info(`更新包校验通过（${v.bytes} 字节），打开安装包…`);
     // 退出前先把待装标记清掉，避免下次启动又弹已装过的版本
     try {
       globalConfig.set({ update: { ...info, readyFile: "", readyVersion: "" } });
     } catch {}
+    // 打开失败会返回错误说明（空字符串 = 成功），必须判空否则失败会被当成成功
+    let openErr = "";
     try {
-      launchInstallerElevated(v.path);
+      openErr = openInstaller(v.path) || "";
     } catch (e) {
-      return { ok: false, error: `启动安装程序失败: ${e.message}` };
+      openErr = e && e.message ? e.message : String(e);
     }
-    // 让安装包先起来再退自己：立刻 quit 可能把刚 spawn 的安装包一起带走
+    if (openErr) {
+      logger.error(`打开安装包失败: ${openErr}`);
+      // 标记清不掉就补回去，否则下次启动不会再提示，文件却还在
+      try {
+        globalConfig.set({ update: { ...info } });
+      } catch {}
+      return { ok: false, error: `打开安装包失败：${openErr}` };
+    }
+    logger.info("已打开安装包（UAC 由安装包自身弹出，请确认后手点完成安装）");
+    // 让安装包先起来再退自己：立刻 quit 可能把刚打开的安装包一起带走
     setTimeout(() => {
       try {
         app.quit();
@@ -1801,21 +1767,22 @@ function registerIpc() {
     return { ok: true };
   });
 
-  // 运行下载好的安装包（NSIS 会覆盖正在运行的本体，先退出应用再启动安装器）
-  // 必须走 launchInstallerElevated：shell.openPath 用的是「默认动词」，不弹 UAC；
-  // 没数字签名的安装包因此被 Windows 智能应用控制（SAC）直接拦截，
-  // 用户在 SAC 弹窗里点「仍要运行」也只能单次放行，下次下载又要再点一次。
-  // 改走 Start-Process -Verb RunAs 既弹 UAC 让用户主动确认（与 SAC 不同，UAC 是
-  // 系统信任链的一环，配置一次后续始终信任），又让 NSIS 拿到管理员权限写到
-  // Program Files，而不是被 VirtualStore 截到 %LOCALAPPDATA%。
+  // 打开已下载的安装包（2026-10-08 回归原始形态：**普通权限**打开，
+  // UAC 由安装包自己弹、用户手点完成；先退出本体，避免自己占着文件）
   ipcMain.handle("app:runUpdateInstaller", async (_e, filePath) => {
     const p = String(filePath || "");
     if (!p || !fs.existsSync(p)) return { ok: false, error: "安装包不存在" };
+    let openErr = "";
     try {
-      launchInstallerElevated(p);
+      openErr = openInstaller(p) || "";
     } catch (e) {
-      return { ok: false, error: e && e.message ? e.message : String(e) };
+      openErr = e && e.message ? e.message : String(e);
     }
+    if (openErr) {
+      logger.error(`打开安装包失败: ${openErr}`);
+      return { ok: false, error: `打开安装包失败：${openErr}` };
+    }
+    logger.info("已打开安装包（UAC 由安装包自身弹出，请确认后手点完成安装）");
     // 稍等片刻让安装器进程接管，再退出本体，避免退出时把安装器一起带崩
     setTimeout(() => {
       forceQuit = true;
