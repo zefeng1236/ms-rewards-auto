@@ -3813,9 +3813,25 @@ checkTrue(
     /\.map\(\(v\) => v && v\.isp\)\.find\(Boolean\)/.test(wmRewardsSrc)
 );
 checkTrue(
-  "拦截推送的 IP 行带 ISP，且拿不到时整段省略（不显示「未知」）",
-  /const isp = env\.isp \? ` {4}🏢 \$\{env\.isp\}` : "";/.test(wmRunnerSrc) &&
-    /当前 IP：\$\{ip\} {4}🔴 \$\{geo\}\$\{isp\}/.test(wmRunnerSrc)
+  "拦截推送：IP / 归属地 / 运营商**各占一行**，且 ISP 拿不到时整行省略",
+  // 2026-10-09 改版：早先是「IP + 4 空格 + 🔴 + geo + 🏢 isp」挤在一行，
+  // 窄屏读起来费劲，且圆点会和图标打架。
+  /🟥 当前 IP：\$\{ip\}/.test(wmRunnerSrc) &&
+    /\.\.\.\(env\.isp \? \[`🏢 \$\{env\.isp\}`\] : \[\]\)/.test(wmRunnerSrc) &&
+    // 反例：退回「IP 与 geo 挤在同一行」
+    !/当前 IP：\$\{ip\}\s{4}🔴/.test(wmRunnerSrc)
+);
+checkTrue(
+  "拦截推送各行不带列表圆点（行首图标的行不转 KV 列表）",
+  // matchKeyValue 对「首字符非中英数」的行返回 null，否则钉钉会渲染成「• 🟥 当前 IP」
+  /if \(\/\^\[\^\\w\\u4e00-\\u9fa5\]\/\.test\(s\)\) return null;/.test(wmMdSrc)
+);
+checkTrue(
+  "企微 markdown 下 IP 行真的上色（<font color=warning>，仅企微支持）",
+  /function colorizeIpLine/.test(wmMdSrc) &&
+    /<font color="warning">/.test(wmMdSrc) &&
+    // 纯文本分支必须把 HTML 标签剥掉，否则微信端会看到 <font …> 原文
+    /<font color="warning">\$\{line\}<\/font>/.test(wmMdSrc)
 );
 
 checkTrue(
@@ -4656,11 +4672,12 @@ checkTrue(
   /`⚠️ \$\{env\.reason \|\|/.test(runnerSrcQ),
   "首行没有 ⚠️ —— 中止类通知要一眼看出事态"
 );
+// ⚠️ 2026-10-09 改版：IP / 归属地 / 运营商各占一行（不再挤在一行），
+//    也不再用 🔴（用户要求去掉圆点状态点，改用 🟥 标记 IP 行本身）。
 checkTrue(
-  "拦截推送：IP 后为红点 emoji + 4 空格 + 归属地，且不再套全角括号",
-  /当前 IP：\$\{ip\}    �?[^\s]*? \$\{geo\}/.test(runnerSrcQ) ||
-    /当前 IP：\$\{ip\}\s{4}🔴 \$\{geo\}/.test(runnerSrcQ),
-  "IP 行版式不符（要求：IP + 4 空格 + 🔴 + 归属地，去掉「（）」）"
+  "拦截推送：IP 单独一行并在行首用红色方块标记",
+  /🟥 当前 IP：\$\{ip\}/.test(runnerSrcQ),
+  "IP 行版式不符（要求：🟥 + 当前 IP：值，单独一行）"
 );
 checkTrue(
   "拦截推送不再用全角括号包归属地（用户要求删除前后括号）",

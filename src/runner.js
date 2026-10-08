@@ -35,16 +35,23 @@ async function pushRegionBlocked(ctx, env) {
       ? `${pad2(next.getMonth() + 1)}-${pad2(next.getDate())} ${pad2(next.getHours())}:${pad2(next.getMinutes())}`
       : "未启用自动调度（或未登录），请处理后手动运行";
     const ip = env.ip || "未知";
+    // geo 已自带国旗（ip-lookup.geoLabel），直接整段使用
     const geo = env.geo || env.ipcc || "未知";
-    // 运营商（2026-10-09 用户要求）：判断「是代理节点换了还是宽带出口变了」的关键信息。
-    // 拿不到就整行省略 —— 显示「未知」没有意义，还会让人以为是异常。
-    const isp = env.isp ? `    🏢 ${env.isp}` : "";
+    //
+    // 版式（2026-10-09 用户改版）：IP / 归属地 / 运营商**各占一行**，
+    // 每行靠图标表达语义，**不带列表圆点**（圆点会和图标挤在一起）。
+    // 早先是「当前 IP：x    🔴 geo    🏢 isp」挤在一行，窄屏读起来很费劲。
+    //
+    // 关于颜色：钉钉 markdown 与企微纯文本都**不支持文字颜色**，
+    // 只有企微 markdown 支持 <font color>（见 notify-markdown.weworkBody）。
+    // 所以这里用 🟥 红色方块给 IP 行做视觉标记 —— 任何渠道都能看到。
     const lines = [
       `⚠️ ${env.reason || "检测到非中国大陆区域，本次任务已取消执行"}`,
-      // 红点：推送渠道走 msgtype=text（钉钉/企微），**不支持颜色与富文本**，
-      // 所以只能用红色圆形 emoji 🔴 表达「红色状态点」，别改回 <font color=…>（不生效）。
-      `当前 IP：${ip}    🔴 ${geo}${isp}`,
-      `下次执行时间：${nextText}`,
+      `🟥 当前 IP：${ip}`,
+      geo,
+      // 运营商拿不到就整行省略 —— 显示「未知」没有意义，还会让人以为是异常
+      ...(env.isp ? [`🏢 ${env.isp}`] : []),
+      `🕐 下次执行时间：${nextText}`,
     ];
     await notify.sendText(ctx, "MS积分任务-区域拦截", lines.join("\n"));
   } catch (e) {

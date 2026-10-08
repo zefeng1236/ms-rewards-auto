@@ -104,6 +104,11 @@ function matchKeyValue(line) {
   if (!s) return null;
   // 已经是列表项/标题/引用 → 不是标签: 值
   if (/^([-*+]\s|#{1,6}\s|>|\d+\.\s)/.test(s)) return null;
+  // **行首带图标/符号的行不转列表**：拦截推送里「🟥 当前 IP：x」「🇨🇳 归属地」
+  // 这类行靠图标表达语义，再套列表符会变成「• 🟥 当前 IP」——
+  // 图标和圆点挤在一起很脏（用户 2026-10-09 要求「前面不加圆点」）。
+  // 判据：首字符不是中英文/数字（emoji、⚠️、🏢 等都落在这里）。
+  if (/^[^\w\u4e00-\u9fa5]/.test(s)) return null;
   const m = s.match(/^([^：:]{1,16})[：:]\s*(\S.*)$/);
   return m ? { k: m[1].trim(), v: m[2].trim() } : null;
 }
@@ -243,9 +248,24 @@ function weworkBody(title, text) {
     msgtype: "markdown",
     markdown: {
       // 企微没有 title 字段，标题要自己放进正文首行（加粗，模拟标题层级）
-      content: `**${String(title || "").trim()}**\n\n${text}`,
+      //
+      // 拦截推送的 IP 行在企微 markdown 下**真的上色**：企微是三家（钉钉/企微/飞书）
+      // 里唯一支持 <font color> 的，warning = 橙红色，正好用来标「出问题的出口 IP」。
+      // 纯文本/钉钉那两个分支走 stripMarksKeepLines，HTML 标签会被剥掉，不会残留。
+      content: `**${String(title || "").trim()}**\n\n${colorizeIpLine(text)}`,
     },
   };
+}
+
+/**
+ * 把正文里的「🟥 当前 IP：x」整行染成 warning 色（仅企微 markdown 支持）。
+ * 其它渠道拿到的都是剥过标签的纯文本，所以这里可以放心加。
+ */
+function colorizeIpLine(text) {
+  return String(text == null ? "" : text).replace(
+    /^🟥[^\n]*$/gm,
+    (line) => `<font color="warning">${line}</font>`
+  );
 }
 
 /**
