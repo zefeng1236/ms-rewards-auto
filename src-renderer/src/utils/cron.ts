@@ -6,10 +6,16 @@
  *   - 项目里已有 `runner.js` 的「自定义时间」先例，但那是 `hh:mm` 单点，
  *     不是 cron 表达式，语义不同不能复用。
  *
- * 支持的格式（空格分隔 5 段，缺一不可）：
- *   分 时 日 月 周
- *   例：`30 7 * * *`（每天 07:30）、每两小时的整点（分写 `0`、时写 `步长 2`）、
- *       `15 3 * * 1-5`（工作日 03:15）
+ * 支持的格式（空格分隔，**5 段或 6 段**）：
+ *   6 段：`秒 分 时 日 月 周`（Quartz / Jenkins 式，最小粒度 1 秒）
+ *   5 段：    `分 时 日 月 周`（Linux crontab 式，最小粒度 1 分钟 —— 主流格式）
+ *   例：`30 7 * * *`（每天 07:30）、`15 3 * * 1-5`（工作日 03:15）、
+ *       「秒段步长 10、其余全通配」（每 10 秒，**必须写 6 段**，
+ *       否则第 1 段会被当成分钟理解）
+ *
+ * ⚠️ 秒段**加在最前面**（左端），不是末尾 —— 这是 Quartz 的约定。
+ *    若习惯末尾追加（`30 7 * * * 5` = 5 秒），请改前 5 段语义，否则会被解析成
+ *    「30 分 7 时 0 日 0 月 5 秒后…」，且 5 段模式下第 6 段直接判非法。
  *
  * ⚠️ 本注释**故意不写**含「星号紧跟斜杠」的表达式：那是块注释的结束符，
  *    写在注释里会让整个文件语法错误（本项目已踩过一次，写完立刻 node --check 验）。
@@ -31,20 +37,25 @@
  * 时区：**用本地时间**（与项目里 `hh:mmToMinutes` / 账户调度的做法一致，
  * 用户看到的就是墙上时间，跨时区部署时也符合直觉）。
  *
- * 只处理「未来最紧的一次」——不支持秒级、不支持月份第 N 个周几之类扩展。
+ * 只处理「未来最紧的一次」——不支持月份第 N 个周几之类扩展。
  */
 
 /** 解析结果：每一段命中取值的集合 */
 export interface ParsedCron {
+  /** 秒（0-59）。5 段表达式下恒为 {0}，6 段表达式下才是真正的秒集合 */
+  seconds: Set<number>;
   minutes: Set<number>;
   hours: Set<number>;
   days: Set<number>;
   months: Set<number>;
   weekdays: Set<number>;
+  /** 是否是 6 段（带秒）表达式。5 段时搜索精度是分钟，避免逐秒空转 */
+  hasSeconds: boolean;
 }
 
-/** 每一段的合法范围 */
+/** 每一段的合法范围（秒 在左端，故索引 0=秒） */
 const FIELD_RANGE: ReadonlyArray<readonly [number, number]> = [
+  [0, 59], // 秒
   [0, 59], // 分
   [0, 23], // 时
   [1, 31], // 日
@@ -52,13 +63,13 @@ const FIELD_RANGE: ReadonlyArray<readonly [number, number]> = [
   [0, 7], // 周（7 归一为 0）
 ];
 
-export const FIELD_NAME = ["分钟", "小时", "日期", "月份", "星期"];
+export const FIELD_NAME = ["秒", "分钟", "小时", "日期", "月份", "星期"];
 
 /**
  * 解析单段字段。
  *
  * @param part  该段原文，如 `*` / `5` / `1-10` / 带步长 / `0,30`
- * @param idx  段序号（0=分 … 4=周），决定合法范围
+ * @param idx  段序号（0=秒 … 5=周），决定合法范围
  * @returns 命中的取值集合；null = 解析失败
  */
 function parseField(part: string, idx: number): Set<number> | null {
@@ -104,7 +115,7 @@ function parseField(part: string, idx: number): Set<number> | null {
 
     if (start < lo || end > hi) return null;
     for (let v = start; v <= end; v += step) {
-      out.add(idx === 4 && v === 7 ? 0 : v); // 周 7 → 0（周日）
+      out.add(idx === 5 && v === 7 ? 0 : v); // 周 7 → 0（周日）
     }
   }
   return out.size ? out : null;
@@ -117,24 +128,34 @@ function parseField(part: string, idx: number): Set<number> | null {
  */
 export function parseCron(expr: string): ParsedCron | null {
   const parts = String(expr == null ? "" : expr).trim().split(/\s+/);
-  if (parts.length !== 5 || parts[0] === "") return null;
+  // 5 段（分起）或 6 段（秒起，Quartz 式）。其它段数一律非法 ——
+  // 特别是 4 段：用户常以为能省掉某段，但语义上无法猜测，静默接受必然错。
+  if ((parts.length !== 5 && parts.length !== 6) || parts[0] === "") return null;
+  const hasSeconds = parts.length === 6;
   const sets: Set<number>[] = [];
-  for (let i = 0; i < 5; i++) {
-    const s = parseField(parts[i], i);
+  for (let i = 0; i < parts.length; i++) {
+    // ⚠️ 必须传**语义索引**（秒 分 时 日 月 周 → 0..5），不能传原始位置 i：
+    //   5 段表达式里 parts[4] 是「周」，但原始索引 4 对应 FIELD_RANGE[4] = 月 [1,12]，
+    //   会把周值 12 误判成「月越界」而整条拒掉（实测 `0 12 29 2 *` 因此变非法）。
+    //   5 段时整体右移一位，正好跳过秒。
+    const s = parseField(parts[i], hasSeconds ? i : i + 1);
     if (!s) return null;
     sets.push(s);
   }
   return {
-    minutes: sets[0],
-    hours: sets[1],
-    days: sets[2],
-    months: sets[3],
-    weekdays: sets[4],
+    // 5 段没有秒 ⇒ 语义是「整分触发」，秒固定 0
+    seconds: hasSeconds ? sets[0] : new Set([0]),
+    minutes: sets[hasSeconds ? 1 : 0],
+    hours: sets[hasSeconds ? 2 : 1],
+    days: sets[hasSeconds ? 3 : 2],
+    months: sets[hasSeconds ? 4 : 3],
+    weekdays: sets[hasSeconds ? 5 : 4],
+    hasSeconds,
   };
 }
 
-/** 该 Date 是否命中给定 cron（用于搜索下一次触发时刻） */
-function matches(cron: ParsedCron, date: Date): boolean {
+/** 该 Date 的「分/时/日/月/周」是否命中给定 cron（**不含秒**，秒由调用方单独处理） */
+function matchesMinute(cron: ParsedCron, date: Date): boolean {
   if (!cron.minutes.has(date.getMinutes())) return false;
   if (!cron.hours.has(date.getHours())) return false;
   if (!cron.months.has(date.getMonth() + 1)) return false;
@@ -154,23 +175,50 @@ function matches(cron: ParsedCron, date: Date): boolean {
 /**
  * 求「严格晚于 from」的下一个触发时刻。
  *
- * 逐分钟向前找，最多看 366 天（覆盖 `0 0 29 2 *` 这类一年才一次的表达；
- * 366 > 平年 365，保证闰年 2/29 也能命中）。
+ * 搜索策略：**按分钟跳跃 + 在命中的那一分钟内按秒细找**，而不是逐秒暴力扫。
  *
- * @param expr cron 表达式
+ * ⚠️ 为什么不能逐秒扫：一年 = 31,536,000 秒，为了覆盖 `0 0 29 2 *` 这类一年才
+ *   一次的表达式，最坏情况要循环三千多万次 —— 而这个函数是在**设置页每敲一个键**
+ *   时同步调用的，会直接卡住 UI。改成分钟跳跃后上限仍是 366×24×60 次（52 万次），
+ *   且秒级表达式的额外开销只发生在**真正命中的那一分钟内**（最多 60 次）。
+ *
+ * @param expr cron 表达式（5 段或 6 段）
  * @param from 起算时刻，默认现在
  * @returns 下一次触发时刻；表达式非法（或未来一年内无匹配）时返回 null
  */
 export function nextCronTime(expr: string, from: Date = new Date()): Date | null {
   const cron = parseCron(expr);
   if (!cron) return null;
-  // 从「下一分钟」开始找：cron 精度就是分钟，当分钟整点已过就该看下一分钟
   const d = new Date(from.getTime());
-  d.setSeconds(0, 0);
-  d.setMinutes(d.getMinutes() + 1);
-  const LIMIT_MIN = 366 * 24 * 60;
+  d.setMilliseconds(0);
+  if (cron.hasSeconds) {
+    // 6 段：从「下一秒」起算（秒级精度，不能像 5 段那样直接跳到下一整分）
+    d.setSeconds(d.getSeconds() + 1);
+    if (d.getSeconds() > 59) {
+      d.setSeconds(0);
+      d.setMinutes(d.getMinutes() + 1);
+    }
+  } else {
+    // 5 段：精度就是分钟，当分钟整点已过就该看下一分钟
+    d.setSeconds(0);
+    d.setMinutes(d.getMinutes() + 1);
+  }
+  // 秒集合升序，供「本分钟内找下一个命中秒」
+  const secs = cron.hasSeconds ? Array.from(cron.seconds).sort((a, b) => a - b) : [0];
+  const LIMIT_MIN = 366 * 24 * 60; // 366 > 平年 365，保证闰年 2/29 也能命中
   for (let i = 0; i < LIMIT_MIN; i++) {
-    if (matches(cron, d)) return new Date(d.getTime());
+    if (matchesMinute(cron, d)) {
+      if (!cron.hasSeconds) return new Date(d.getTime()); // 5 段：整分即触发
+      for (const s of secs) {
+        if (s < d.getSeconds()) continue;
+        const r = new Date(d.getTime());
+        r.setSeconds(s);
+        // 起算那一分钟里可能已越过部分秒，统一用「严格晚于 from」兜底
+        if (r.getTime() > from.getTime()) return r;
+      }
+      // 本分钟剩余的秒都不命中 → 继续下一分钟
+    }
+    d.setSeconds(0);
     d.setMinutes(d.getMinutes() + 1);
   }
   return null;
@@ -189,9 +237,10 @@ export type CronDescription =
 export function describeCron(expr: string): CronDescription {
   const cron = parseCron(expr);
   if (!cron) {
+    const ranges = FIELD_NAME.map((n, i) => `${n} ${FIELD_RANGE[i][0]}-${FIELD_RANGE[i][1]}`).join("，");
     return {
       ok: false,
-      error: `格式应为「分 时 日 月 周」共 5 段，例如 30 7 * * *（每天 07:30）；各段范围 ${FIELD_NAME.map((n, i) => `${n} ${FIELD_RANGE[i][0]}-${FIELD_RANGE[i][1]}`).join("，")}`,
+      error: `格式应为「分 时 日 月 周」5 段（如 30 7 * * * = 每天 07:30），或「秒 分 时 日 月 周」6 段（如 5/10 * * * * * = 每 10 秒）。各段范围 ${ranges}；每段可用 *、a、a-b、步长（斜杠）、逗号并列。`,
     };
   }
   return { ok: true, next: nextCronTime(expr) };

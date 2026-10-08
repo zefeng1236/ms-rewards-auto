@@ -3271,8 +3271,43 @@ checkTrue(
   /export function parseCron/.test(cronTs) &&
     /if\s*\(step\s*<=\s*0\)\s*return null/.test(cronTs) &&
     /if\s*\(start\s*>\s*end\)\s*return null/.test(cronTs) &&
-    /parts\.length\s*!==\s*5\s*\|\|\s*parts\[0\]\s*===\s*""\)\s*return null/.test(cronTs),
+    // 段数：只允许 5（分 时 日 月 周）或 6（秒 分 时 日 月 周，Quartz 式）
+    /parts\.length\s*!==?\s*5\s*&&\s*parts\.length\s*!==?\s*6/.test(cronTs) &&
+    /parts\.length\s*===\s*6/.test(cronTs),
   "步长 0 会死循环、倒序区间是笔误、空表达式必须先拦掉（parts[0] 为空时 split 会漏判）"
+);
+// —— 秒级（6 段 /Quartz 式）——
+// ⚠️ 最容易写错的是**语义索引对齐**：FIELD_RANGE 首位是「秒」，而 5 段表达式里
+//   parts[4] 是「周」。若把原始位置 i 直接当语义索引，周段会拿 FIELD_RANGE[4]
+//   = 月 [1,12] 去校验，把周日 7 判成「月越界」而整条拒掉。
+const cronShallow = fs.readFileSync(path.join(ROOT, "src", "cron.js"), "utf8");
+checkTrue(
+  "cron：6 段秒级支持（秒在左端，5 段仍兼容）",
+  /seconds:\s*hasSeconds\s*\?\s*sets\[0\]\s*:\s*new Set\(\[0\]\)/.test(cronTs) &&
+    /^\s*hasSeconds,\s*$/m.test(cronTs) &&
+    /export function nextCronTime/.test(cronTs) &&
+    /Array\.from\(cron\.seconds\)\.sort/.test(cronTs) &&
+    /if\s*\(!cron\.hasSeconds\)\s*return new Date/.test(cronTs),
+  "秒段必须独立于分/时/日/月/周参与匹配，且 5 段表达式秒固定为 0（整分触发）"
+);
+checkTrue(
+  "cron：5 段时把语义索引右移一位对齐「秒 分 时 日 月 周」",
+  /parseField\(parts\[i\],\s*hasSeconds\s*\?\s*i\s*:\s*i\s*\+\s*1\)/.test(cronTs) &&
+    /FIELD_RANGE\[hasSeconds\s*\?\s*i\s*:\s*i\s*\+\s*1\]/.test(cronShallow),
+  "直接传原始位置 i → 周段拿「月」的范围 1-12 校验，周日 7 被误判越界（实测踩到）"
+);
+checkTrue(
+  "cron：下一次触发按分钟跳跃（秒只在命中分钟内细找），不逐秒暴力扫",
+  /for\s*\(const s of secs\)/.test(cronTs) &&
+    /matchesMinute\(cron,\s*d\)/.test(cronTs) &&
+    !/LIMIT_SEC|LIMIT_SECONDS/.test(cronTs),
+  "逐秒扫最长要循环三千多万次，而这个函数在设置页每敲一键就同步调一次 → 卡 UI"
+);
+checkTrue(
+  "cron：主进程薄壳同步支持 5/6 段（否则 6 段表达式存不进配置）",
+  /parts\.length\s*!==?\s*5\s*&&\s*parts\.length\s*!==?\s*6/.test(cronShallow) &&
+    /FIELD_RANGE\[hasSeconds\s*\?\s*i\s*:\s*i\s*\+\s*1\]/.test(cronShallow),
+  "薄壳只放行 5 段 → 6 段表达式被判非法写不进配置，重启后被normalizeCron 清空"
 );
 checkTrue(
   "cron：配置层字段贯通（DEFAULTS / 读取归一化 / 写入归一化 / 类型 / mock）",

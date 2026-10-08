@@ -17,15 +17,19 @@ import type { AppearancePreset, BgCategory, BgType } from "../types";
 function fmtNextRun(d: Date): string {
   const now = new Date();
   const hhmm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  const ss = String(d.getSeconds()).padStart(2, "0");
   const sameDay = (a: Date, b: Date) =>
     a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-  if (sameDay(d, now)) return `今天 ${hhmm}`;
+  // 6 段（秒级）表达式：只在**秒不为 0** 时补秒。5 段表达式的秒恒为 0，
+  // 补了反而让人以为「今天 10:03:00」是精确到秒的触发点。
+  const withSec = d.getSeconds() !== 0 ? `${hhmm}:${ss}` : hhmm;
+  if (sameDay(d, now)) return `今天 ${withSec}`;
   const t = new Date(now.getTime() + 86400000);
-  if (sameDay(d, t)) return `明天 ${hhmm}`;
+  if (sameDay(d, t)) return `明天 ${withSec}`;
   const week = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][d.getDay()];
   // 7 天内（多为「每周几」）：只说周几；更远就带上月/日
   const in7 = d.getTime() - now.getTime() <= 7 * 86400000;
-  return in7 ? `${week} ${hhmm}` : `${d.getMonth() + 1}/${d.getDate()} ${week} ${hhmm}`;
+  return in7 ? `${week} ${withSec}` : `${d.getMonth() + 1}/${d.getDate()} ${week} ${withSec}`;
 }
 
 /** 外观预设：液态玻璃（半透明面板）/ 不透明（实心面板），均为纯 CSS 热切换 */
@@ -533,9 +537,13 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
                   style={{ width: 160, fontFamily: "Consolas, monospace" }}
                 />
                 <span className="bg-note" style={{ margin: 0 }}>
-                  标准 5 段：<code>分 时 日 月 周</code>（本地时区）。例
-                  <code> 30 7 * * *</code> 每天 07:30、
-                  <code> 15 3 * * 1-5</code> 工作日 03:15。留空 = 不启用。
+                  <code>分 时 日 月 周</code> 共 5 段（本地时区），例 <code>30 7 * * *</code> 每天 07:30、
+                  <code> 15 3 * * 1-5</code> 工作日 03:15。每段都支持 <code>*</code>、
+                  <code>1-5</code> 区间、<code>斜杠+数字</code> 步长（<code>*/5</code> 每 5 分钟）、
+                  <code>7,14,21</code> 并列。
+                  <br />
+                  需要精确到秒就用 <code>秒 分 时 日 月 周</code> 共 6 段（秒在<strong>最前面</strong>，
+                  如 <code>*/10 * * * * *</code> 每 10 秒）。留空 = 不启用。
                 </span>
               </div>
             )}

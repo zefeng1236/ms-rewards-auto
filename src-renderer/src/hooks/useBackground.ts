@@ -109,7 +109,11 @@ export function useBackground() {
         const next = cronNextTime(cronExpr, new Date());
         // 非法表达式 / 未来 366 天内无匹配（如 2 月 30 日）→ 不轮换
         if (!next) return;
-        const delay = Math.max(1000, next.getTime() - Date.now());
+        // ⚠️ 下限取 250ms 而非 1000ms：秒级 cron（如「秒段步长 1」= 每秒一次）
+        // 若被 1000ms 兜底会被拉成最多 1.25 秒，表达式的秒级语义就废了。
+        // 250ms 足以挡住「算出过去时刻 → setTimeout 视作 0 → 疯狂连转」，
+        // 又不会明显扭曲秒级间隔。漂移也不会累积：每次 tick 都按当前时刻重求。
+        const delay = Math.max(250, next.getTime() - Date.now());
         timer = window.setTimeout(() => {
           setNonce((n) => n + 1);
           tick();

@@ -12,9 +12,11 @@
  *   渲染层的 `describeCron` 才是用户看到的权威校验与报错来源。
  *
  * 校验规则刻意**保守**（宁可放过、让前端报错，也别在主进程误杀合法表达式）：
- *   - 必须正好 5 段（分 时 日 月 周）
+ *   - 必须正好 5 段（分 时 日 月 周）或 6 段（秒 分 时 日 月 周，Quartz 式）
  *   - 每段只能出现「数字、星号、斜杠、逗号、连字符」这些字符，且不能为空
- *   - 数字不越界（分 0-59、时 0-23、日 1-31、月 1-12、周 0-7）
+ *   - 数字不越界（秒/分 0-59、时 0-23、日 1-31、月 1-12、周 0-7）
+ *     ⚠️ 5 段时整体右移一位对齐「秒 分 时 日 月 周」的 FIELD_RANGE，
+ *        否则周段会拿月段的范围（1-12）去校验，把周日 7 误杀成「月越界」。
  * 但**不**在这里做区间/步长的完整语义校验（如倒序区间 `10-1`、步长为 0），
  * 那些交给前端 describeCron，主进程不拦。
  *
@@ -23,6 +25,7 @@
  */
 
 const FIELD_RANGE = [
+  [0, 59], // 秒
   [0, 59], // 分
   [0, 23], // 时
   [1, 31], // 日
@@ -31,7 +34,7 @@ const FIELD_RANGE = [
 ];
 
 /**
- * 判断字符串是否是「结构上可能合法」的 cron 表达式。
+ * 判断字符串是否是「结构上可能合法」的 cron 表达式（5 段或 6 段）。
  *
  * ⚠️ 这**不是**完整校验（`10-1 * * * *` 会被判为结构合法），
  *    只用于「保存前拦掉明显笔误」，精确语义判断请用前端的 describeCron。
@@ -43,12 +46,14 @@ function isCronShallowValid(expr) {
   const s = String(expr == null ? "" : expr).trim();
   if (!s) return false;
   const parts = s.split(/\s+/);
-  if (parts.length !== 5) return false;
-  for (let i = 0; i < 5; i++) {
+  if (parts.length !== 5 && parts.length !== 6) return false;
+  const hasSeconds = parts.length === 6;
+  for (let i = 0; i < parts.length; i++) {
     const p = parts[i];
     if (!p) return false;
     if (!/^[0-9*/,-]+$/.test(p)) return false; // 只允许这几种字符
-    const [lo, hi] = FIELD_RANGE[i];
+    // 语义索引：5 段时右移一位跳过秒（见文件头注释）
+    const [lo, hi] = FIELD_RANGE[hasSeconds ? i : i + 1];
     // 逐个核对出现在该段的数字是否越界（步长 /n 不参与范围校验）
     const nums = p.replace(/\/[^/]*/g, "").match(/\d+/g) || [];
     for (const n of nums) {
