@@ -81,7 +81,14 @@ const MEDAL = "🏅 ";
 function formatOne(r) {
   const rawName = String((r && r.name) || "").trim();
   // 调用方可能已经带了别的图标，这里不再叠一层
-  const head = rawName.startsWith(MEDAL.trim()) ? `${rawName}目标` : `${MEDAL}${rawName}目标`;
+  //
+  // ⚠️ 「目标」二字只在名字**没有以它结尾**时才补：用户完全可能把目标
+  //    命名为「每日目标」「月度目标」，直接拼会得到「每日目标目标」这种
+  //    结巴文案（2026-10-09 演示推送实测发现）。
+  const suffix = rawName.endsWith("目标") ? "" : "目标";
+  const head = rawName.startsWith(MEDAL.trim())
+    ? `${rawName}${suffix}`
+    : `${MEDAL}${rawName}${suffix}`;
   if (!r.reached) return `${head}已完成${r.current}还差${r.remain}积分`;
   if (r.rewardName) {
     const count = Math.floor(r.current / r.target);
@@ -89,7 +96,9 @@ function formatOne(r) {
     return `${head}当前已可兑换${count}个${r.rewardName}，距离下一个还剩${nextRemain}积分`;
   }
   const multiple = Math.round((r.current / r.target) * 10) / 10;
-  return `${head}当前已达成${multiple}倍目标`;
+  // 原写法是「…当前已达成42.8倍目标」，名字里再带个「目标」就很拗口
+  // （「每日目标当前已达成42.8倍目标」）。改成先说结论、再给倍数与绝对值。
+  return `${head}已达成，当前为目标的 ${multiple} 倍（${r.current}/${r.target}）`;
 }
 
 /** 生成汇总里的目标区块（无目标时返回空数组） */

@@ -69,7 +69,15 @@ const mkNotice = (extra = {}) =>
     // ⚠️ 0.14.14 起推送侧的一言开关改名为 hitokotoInPush（原来的 hitokoto 拆成了
     //    「界面显示」= appearance.hitokoto 与「推送附加」= notice.hitokotoInPush）。
     //    这里必须用新字段名，写旧名会被当成"没传"→ 兜底成 true → 关闭一言语义失效。
-    { wework: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=TEST", hitokotoInPush: true },
+    //
+    // ⚠️ weworkMarkdown: true 是**显式开启**的：企微默认已改成纯文本（转发微信可读），
+    //    而本脚本断言的是 markdown 版式（标题层级、列表、空行分段），
+    //    所以必须打开才能验到。纯文本分支另有单独断言（见文件末尾）。
+    {
+      wework: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=TEST",
+      hitokotoInPush: true,
+      weworkMarkdown: true,
+    },
     extra
   );
 /**
@@ -180,6 +188,23 @@ const body = (i) => {
   if (!/\n\n保持热爱，奔赴山海。 —— 测试出处$/.test(body(3))) bad.push("汇总末尾缺「空一行 + 一句话」");
   if (sl.filter((x) => x.indexOf("用户名") >= 0).length !== 1) bad.push("汇总用户名行重复或缺失");
   if (!sl.some((x) => x.startsWith("🏅 "))) bad.push("汇总目标行缺勋章图标");
+
+  // ⑤ 企业微信默认走**纯文本**（可转发到微信，微信不支持 markdown）：
+  //    报文必须是 msgtype=text，且正文里不该残留任何 markdown 标记。
+  //    这里特意用「不传 weworkMarkdown」的配置（模拟老配置/默认配置）来验。
+  const plainNotice = Object.assign(
+    { wework: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=TEST", hitokotoInPush: true }
+  );
+  const plainReqs = notify.buildRequests(plainNotice, TITLE, "已完成 5 次搜索\n获得 30 积分");
+  const plainBody = JSON.parse(plainReqs[0].init.body);
+  if (plainBody.msgtype !== "text") bad.push(`企微默认应为纯文本，实际 msgtype=${plainBody.msgtype}`);
+  const plainText = String((plainBody.text && plainBody.text.content) || "");
+  if (!plainText.startsWith(TITLE)) bad.push("企微纯文本：标题应在正文首行");
+  // 残留标记检测：连续两个星号 / 反引号 / 列表符开头 —— 出现在纯文本里就是脏的
+  if (/[*]{2}/.test(plainText)) bad.push("企微纯文本残留加粗标记 **");
+  if (/`/.test(plainText)) bad.push("企微纯文本残留反引号 `");
+  if (/^- /m.test(plainText)) bad.push("企微纯文本残留列表符 - ");
+  if (!/\n/.test(plainText)) bad.push("企微纯文本丢了换行（正文会糊成一整段）");
 
   fs.rmSync(tmp, { recursive: true, force: true });
   if (bad.length) {

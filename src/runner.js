@@ -36,11 +36,14 @@ async function pushRegionBlocked(ctx, env) {
       : "未启用自动调度（或未登录），请处理后手动运行";
     const ip = env.ip || "未知";
     const geo = env.geo || env.ipcc || "未知";
+    // 运营商（2026-10-09 用户要求）：判断「是代理节点换了还是宽带出口变了」的关键信息。
+    // 拿不到就整行省略 —— 显示「未知」没有意义，还会让人以为是异常。
+    const isp = env.isp ? `    🏢 ${env.isp}` : "";
     const lines = [
       `⚠️ ${env.reason || "检测到非中国大陆区域，本次任务已取消执行"}`,
       // 红点：推送渠道走 msgtype=text（钉钉/企微），**不支持颜色与富文本**，
       // 所以只能用红色圆形 emoji 🔴 表达「红色状态点」，别改回 <font color=…>（不生效）。
-      `当前 IP：${ip}    🔴 ${geo}`,
+      `当前 IP：${ip}    🔴 ${geo}${isp}`,
       `下次执行时间：${nextText}`,
     ];
     await notify.sendText(ctx, "MS积分任务-区域拦截", lines.join("\n"));

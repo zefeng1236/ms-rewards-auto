@@ -151,11 +151,15 @@ function buildRequests(notice, title, text) {
         headers: { "Content-Type": "application/json; charset=UTF-8" },
         // 企微支持 markdown，但它转发出去的消息**可以被微信客户端收到**，
         // 而微信不支持 markdown —— 收到的是带星号/反引号的裸文本（很难读）。
-        // 所以留一个开关：关掉就退回 msgtype=text，把所有标记剥干净。
+        // 所以默认走纯文本，只有显式开启（=== true）才用 markdown。
+        //
+        // ⚠️ 判据必须用 `=== true` 而不是 `!== false`：老配置里没有这个字段
+        //    （值是 undefined），用 !== false 会当成「没关」→ 走 markdown，
+        //    和「默认关闭」的语义正好相反。
         body: JSON.stringify(
-          notice.weworkMarkdown === false
-            ? md.weworkTextBody(title, md.buildMarkdown(title, content))
-            : md.weworkBody(title, md.buildMarkdown(title, content))
+          notice.weworkMarkdown === true
+            ? md.weworkBody(title, md.buildMarkdown(title, content))
+            : md.weworkTextBody(title, md.buildMarkdown(title, content))
         ),
       },
     });

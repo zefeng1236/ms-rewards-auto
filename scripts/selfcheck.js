@@ -3686,6 +3686,16 @@ const oneLine = goalsMod.formatOne({ name: "测试", current: 120, target: 300, 
 checkTrue("目标行实际输出带勋章图标", oneLine.startsWith("🏅 "), `实际: ${oneLine}`);
 const medalLine = goalsMod.formatOne({ name: "🏅 测试", current: 300, target: 300, reached: true, rewardName: "" });
 checkTrue("已带图标的名称不重复叠加", medalLine.startsWith("🏅 ") && !medalLine.startsWith("🏅 🏅 "), `实际: ${medalLine}`);
+// 「目标」二字同理：用户把目标命名为「每日目标」时不能拼成「每日目标目标」
+// （2026-10-09 演示推送实测发现 —— 名字以「目标」结尾时不补后缀）
+const nameEndsGoal = goalsMod.formatOne({ name: "每日目标", current: 268, target: 300, reached: false, remain: 32 });
+checkTrue(
+  "名称以「目标」结尾时不重复补「目标」",
+  !nameEndsGoal.includes("目标目标"),
+  `实际: ${nameEndsGoal}`
+);
+const nameNoGoal = goalsMod.formatOne({ name: "月度", current: 300, target: 300, reached: true, rewardName: "" });
+checkTrue("名称不以「目标」结尾时照常补", nameNoGoal.includes("月度目标"), `实际: ${nameNoGoal}`);
 
 // —— 通知外壳：版本号 + 一言固定末行 + 无重复 ——
 const notifySrc = fs.readFileSync(path.join(ROOT, "src", "notify.js"), "utf8");
@@ -3750,10 +3760,13 @@ const wmFormSrc = fs.readFileSync(
   "utf8"
 );
 checkTrue(
-  "企业微信可按开关退回纯文本（转发到微信时可读）",
-  /notice\.weworkMarkdown === false\s*\n?\s*\?\s*md\.weworkTextBody\(/.test(notifySrc) &&
-    /:\s*md\.weworkBody\(/.test(notifySrc),
-  "企微转发到微信后 markdown 标记会原样显示，必须能关"
+  "企业微信默认纯文本、可开关切 markdown（转发到微信时可读）",
+  // ⚠️ 判据必须是 `=== true` 而不是 `!== false`：老配置缺这个字段（undefined），
+  //    用 !== false 会被当成「没关」→ 走 markdown，与「默认关闭」语义相反。
+  /notice\.weworkMarkdown === true\s*\n?\s*\?\s*md\.weworkBody\(/.test(notifySrc) &&
+    /:\s*md\.weworkTextBody\(/.test(notifySrc) &&
+    !/weworkMarkdown === false/.test(notifySrc),
+  "企微转发到微信后 markdown 标记会原样显示，默认必须走纯文本且能开关"
 );
 checkTrue(
   "企微纯文本走 msgtype=text 且标题在正文首行（text 类型没有 title 字段）",
@@ -3774,12 +3787,43 @@ checkTrue(
   !/dingdingUrl[\s\S]{0,200}weworkMarkdown/.test(notifySrc) &&
     !/feishuUrl[\s\S]{0,200}weworkMarkdown/.test(notifySrc)
 );
+// —— 拦截推送带运营商 ISP（2026-10-09 用户要求）——
+//   判断「是代理节点换了，还是家里宽带出口变了」，光看 IP 归属地不够。
+const wmIpSrc = fs.readFileSync(path.join(ROOT, "src", "ip-lookup.js"), "utf8");
+const wmRunnerSrc = fs.readFileSync(path.join(ROOT, "src", "runner.js"), "utf8");
+const wmRewardsSrc = fs.readFileSync(path.join(ROOT, "src", "rewards.js"), "utf8");
 checkTrue(
-  "企微 markdown 开关：四处默认值同步（config / global-config / types / mock）",
-  /weworkMarkdown: true/.test(wmCfgSrc) &&
-    /weworkMarkdown: true/.test(wmGlobalSrc) &&
+  "IP 查询：四家服务的响应都能解析出 isp 字段",
+  /isp: ispFromCnAddr\(j\.addr\)/.test(wmIpSrc) &&
+    /isp: normIsp\(j\.isp \|\| j\.organization \|\| j\.asn_organization \|\| ""\)/.test(wmIpSrc) &&
+    /isp: normIsp\(j\.org \|\| ""\)/.test(wmIpSrc) &&
+    /isp: normIsp\(j\.isp \|\| ""\)/.test(wmIpSrc)
+);
+checkTrue(
+  "ISP 归一化：剥掉 AS 号前缀（ipinfo 的 org 形如 AS4134 xxx）",
+  /v\.replace\(\/\^AS\\d\+\\s\+\/i, ""\)/.test(wmIpSrc)
+);
+checkTrue(
+  "ip-api 请求显式带 isp 字段（默认不返回，不写就拿不到）",
+  /fields=status,message,countryCode,query,isp/.test(wmIpSrc)
+);
+checkTrue(
+  "ISP 透传：judgeMainland 从所有探针里捞第一个非空",
+  /isp:\s*\n?\s*ipLookup\.normIsp\(/.test(wmRewardsSrc) &&
+    /\.map\(\(v\) => v && v\.isp\)\.find\(Boolean\)/.test(wmRewardsSrc)
+);
+checkTrue(
+  "拦截推送的 IP 行带 ISP，且拿不到时整段省略（不显示「未知」）",
+  /const isp = env\.isp \? ` {4}🏢 \$\{env\.isp\}` : "";/.test(wmRunnerSrc) &&
+    /当前 IP：\$\{ip\} {4}🔴 \$\{geo\}\$\{isp\}/.test(wmRunnerSrc)
+);
+
+checkTrue(
+  "企微 markdown 默认值 false 且四处同步（config / global-config / types / mock）",
+  /weworkMarkdown: false/.test(wmCfgSrc) &&
+    /weworkMarkdown: false/.test(wmGlobalSrc) &&
     /weworkMarkdown: boolean/.test(wmTypesSrc) &&
-    /weworkMarkdown: true/.test(wmMockSrc)
+    /weworkMarkdown: false/.test(wmMockSrc)
 );
 checkTrue(
   "任务全局设置里能开关企微 markdown（用户可见）",

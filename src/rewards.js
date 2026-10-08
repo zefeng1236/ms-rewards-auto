@@ -176,6 +176,12 @@ function judgeMainland(verdicts, opts = {}) {
         ip: nonCn.ip || ((verdicts.map((v) => v && v.ip).find(Boolean)) || ""),
         // 归属地优先取触发拦截的探针（多源冲突时展示的就是拦下的那个出口）
         geo: ipLookup.geoLabel([nonCn].concat(verdicts)),
+        // 运营商：某个探针可能拿不到（ip-api 未请求该字段时会是空），
+        // 所以从**所有**探针里捞第一个非空的 —— 空则整段省略，不显示「未知」。
+        isp:
+          ipLookup.normIsp(
+            (([nonCn].concat(verdicts)).map((v) => v && v.isp).find(Boolean)) || ""
+          ) || "",
         reason,
       };
     }

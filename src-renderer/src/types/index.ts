@@ -156,7 +156,7 @@ export interface AppConfig {
     pushme: string;
     bark: string;
     /**
-     * 企业微信是否用 markdown 排版，默认开启；关掉则退回纯文本。
+     * 企业微信是否用 markdown 排版，**默认关闭**；开启则走 markdown 消息体。
      *
      * 需要关的场景：企微群消息能被转发到**微信客户端**，微信不支持 markdown，
      * 收到的是「**标题**」「`字段`」这类带标记的裸文本。

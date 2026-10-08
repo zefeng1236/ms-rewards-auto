@@ -34,8 +34,49 @@ const AUTO_ORDER = ["ipsb", "pconline", "ipinfo", "ipapi"];
 
 function norm(id, ip, countryCode, mainland, detail, extra) {
   const v = { ip: ip || "", countryCode: countryCode || "", mainland: mainland === undefined ? null : mainland, source: id, detail: detail || "" };
-  // extra：地理名称字段（cityEn/cityCn/countryEn/countryCn），供拦截推送展示归属地
+  // extra：地理名称字段（cityEn/cityCn/countryEn/countryCn），供拦截推送展示归属地；
+  // 另有 isp（运营商/出口组织），随 geo 一起进拦截推送，帮助用户判断
+  // 「是代理节点换了，还是家里宽带出口变了」。
   return extra ? Object.assign(v, extra) : v;
+}
+
+/**
+ * 运营商（ISP）名归一化。
+ *
+ * 各家返回的东西形态很杂：
+ *   - ip.sb    organization = "China Telecom" / "Amazon.com, Inc."
+ *   - ipinfo   org          = "AS4134 CHINANET-BACKBONE"  ← 前面带 AS 号，要剥
+ *   - 太平洋   addr         = "广东省深圳市 电信"          ← 混在地址里，要挑出来
+ *   - ip-api   isp          = "China Telecom Jiangsu"
+ * 统一成「人能认的短名」：剥 AS 号 / 去多余空格 / 截断过长值。
+ *
+ * @param {string} s
+ * @returns {string} 取不到时返回空串（推送里会整段省略，不显示"未知"）
+ */
+function normIsp(s) {
+  let v = String(s == null ? "" : s).trim();
+  if (!v) return "";
+  // 剥掉开头的 AS 号（ipinfo 的 "AS4134 CHINANET-BACKBONE" → "CHINANET-BACKBONE"）
+  v = v.replace(/^AS\d+\s+/i, "").trim();
+  // 多值取第一个（有的服务返回 "Org (ASN)" 或 "A, B"）
+  v = v.split(/[,(]/)[0].trim();
+  // 推送里这行不能太长（钉钉一行约 15 汉字）
+  return v.length > 28 ? v.slice(0, 28) + "…" : v;
+}
+
+/**
+ * 从太平洋返回的中文 addr 里挑出运营商。
+ * addr 形如「广东省深圳市 电信」「中国 江苏 南京 联通」，运营商通常在末段。
+ * 认不出来就返回空串 —— 宁缺勿错，别把地名当运营商显示。
+ */
+const ISP_CN_KEYWORDS = [
+  "电信", "联通", "移动", "铁通", "广电", "教育网", "科技网", "长城宽带", "鹏博士",
+  "阿里云", "腾讯云", "华为云", "百度云", "火山引擎", "京东云", "UCloud", "青云",
+];
+function ispFromCnAddr(addr) {
+  const s = String(addr == null ? "" : addr);
+  for (const k of ISP_CN_KEYWORDS) if (s.includes(k)) return k;
+  return "";
 }
 
 /** 各家服务的「请求 + 解析」实现。失败时抛出，由上层捕获降级。 */
@@ -49,7 +90,10 @@ function parsePconline(text) {
   const j = JSON.parse(text.trim());
   const code = String(j.proCode || "");
   const isMainland = /^\d{6}$/.test(code) && code !== "999999";
-  return norm("pconline", j.ip, isMainland ? "CN" : "", isMainland, j.addr || "", { cityCn: String(j.city || "") });
+  return norm("pconline", j.ip, isMainland ? "CN" : "", isMainland, j.addr || "", {
+    cityCn: String(j.city || ""),
+    isp: ispFromCnAddr(j.addr),
+  });
 }
 
 // ip.sb：全球 CDN，返回标准 ISO 国家码（country_code），city/country 为英文名
@@ -58,7 +102,11 @@ function parseIpsb(text) {
   const j = JSON.parse(text);
   const cc = String(j.country_code || "").toUpperCase();
   return norm("ipsb", j.ip, cc, cc ? cc === "CN" : null, j.organization || j.isp || "",
-    { cityEn: String(j.city || ""), countryEn: String(j.country || "") });
+    {
+      cityEn: String(j.city || ""),
+      countryEn: String(j.country || ""),
+      isp: normIsp(j.isp || j.organization || j.asn_organization || ""),
+    });
 }
 
 // ipinfo.io：返回 country 为 ISO 码，city 为英文名
@@ -67,7 +115,11 @@ function parseIpinfo(text) {
   const j = JSON.parse(text);
   const cc = String(j.country || "").toUpperCase();
   return norm("ipinfo", j.ip, cc, cc ? cc === "CN" : null, j.org || j.region || "",
-    { cityEn: String(j.city || "") });
+    {
+      cityEn: String(j.city || ""),
+      // ipinfo 的 org 形如 "AS4134 CHINANET-BACKBONE"，normIsp 会剥掉 AS 号
+      isp: normIsp(j.org || ""),
+    });
 }
 
 // ip-api.com：免费版仅 http，国内连通性一般，作为可选项/降级项。
@@ -78,7 +130,11 @@ function parseIpapi(text) {
   if (j.status !== "success") throw new Error(`ip-api ${j.message || "失败"}`);
   const cc = String(j.countryCode || "").toUpperCase();
   return norm("ipapi", j.query, cc, cc ? cc === "CN" : null, "",
-    { cityCn: String(j.city || ""), countryCn: String(j.country || "") });
+    {
+      cityCn: String(j.city || ""),
+      countryCn: String(j.country || ""),
+      isp: normIsp(j.isp || ""),
+    });
 }
 
 const QUERY = {
@@ -114,7 +170,8 @@ const QUERY = {
   },
   async ipapi(ctx) {
     const r = await httpRequest({
-      url: "http://ip-api.com/json/?fields=status,message,countryCode,query&lang=zh-CN",
+      // isp 字段必须显式请求：ip-api 默认只返回基础字段，不写就拿不到运营商
+      url: "http://ip-api.com/json/?fields=status,message,countryCode,query,isp&lang=zh-CN",
       headers: { "user-agent": UA },
       timeout: 8000,
       ctx,
@@ -213,6 +270,8 @@ module.exports = {
   parseIpsb,
   parseIpinfo,
   parseIpapi,
+  normIsp,
+  ispFromCnAddr,
   geoLabel,
   COUNTRY_CN,
   CITY_EN2CN,
