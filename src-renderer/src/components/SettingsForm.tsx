@@ -467,6 +467,13 @@ export function SettingsForm({
             onChange={(v) => onChange({ notice: { bark: v } })}
           />
         </div>
+        <div style={{ marginTop: 10 }} />
+        <SwitchField
+          label="企业微信 Markdown 排版"
+          hint="开启后企业微信推送用 Markdown（标题加粗、字段等宽、列表排版）。如果这条消息会被转发到微信客户端，请关掉 —— 微信不支持 Markdown，会显示成带 ** 和 ` 的裸文本。只影响企业微信，钉钉/飞书不受影响"
+          checked={value.notice?.weworkMarkdown !== false}
+          onChange={(v) => onChange({ notice: { weworkMarkdown: v } })}
+        />
         <SwitchField
           label="推送附加一言"
           hint="开启后，每条推送的末尾会自动追加当天的一句一言作为签名（位置 / 句子类型在「软件设置 → 个性化」里管）。界面显示开关不受影响，已迁去个性化菜单"

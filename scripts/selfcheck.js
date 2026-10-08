@@ -3728,11 +3728,63 @@ checkTrue(
     !/opts\.lead/.test(notifySrc) &&
     // ⚠️ 只剩注释在讲历史，必须**剔除注释行**再判，否则注释里的名字也会命中
     !/^[^/*]*\bincludeTitleInBody\b/m.test(notifySrc.replace(/^\s*\/\/.*$/gm, "")) &&
-    // 三家必须发 markdown（或飞书卡片），不是纯 text
-    /JSON\.stringify\(md\.weworkBody\(/.test(notifySrc) &&
+    // 钉钉/飞书必须发 markdown（或飞书卡片），不是纯 text
     /JSON\.stringify\(md\.dingdingBody\(/.test(notifySrc) &&
     /JSON\.stringify\(md\.feishuBody\(/.test(notifySrc),
-  "退回 msgtype=text → 排版全废（无标题层级、无列表、单换行糊成一段）"
+  "钉钉/飞书退回 msgtype=text → 排版全废（无标题层级、无列表、单换行糊成一段）"
+);
+
+// —— 企业微信：markdown 可关（2026-10-09 用户需求）——
+//   企微群消息能被转发到**微信客户端**，而微信不支持 markdown ——
+//   收到的是「**标题**」「`字段`」这种带标记的裸文本。所以留一个开关退回纯文本。
+//
+// ⚠️ 独立读源（变量名带 wm 前缀）：本文件各段的同名变量散落在不同行，
+//    直接用会撞上 const 的暂时性死区（在定义前引用 → ReferenceError 直接崩）。
+const wmMdSrc = fs.readFileSync(path.join(ROOT, "src", "notify-markdown.js"), "utf8");
+const wmCfgSrc = fs.readFileSync(path.join(ROOT, "src", "config.js"), "utf8");
+const wmGlobalSrc = fs.readFileSync(path.join(ROOT, "src", "global-config.js"), "utf8");
+const wmTypesSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "types", "index.ts"), "utf8");
+const wmMockSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "api", "mock.ts"), "utf8");
+const wmFormSrc = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "components", "SettingsForm.tsx"),
+  "utf8"
+);
+checkTrue(
+  "企业微信可按开关退回纯文本（转发到微信时可读）",
+  /notice\.weworkMarkdown === false\s*\n?\s*\?\s*md\.weworkTextBody\(/.test(notifySrc) &&
+    /:\s*md\.weworkBody\(/.test(notifySrc),
+  "企微转发到微信后 markdown 标记会原样显示，必须能关"
+);
+checkTrue(
+  "企微纯文本走 msgtype=text 且标题在正文首行（text 类型没有 title 字段）",
+  /function weworkTextBody/.test(wmMdSrc) &&
+    /msgtype: "text"/.test(wmMdSrc) &&
+    /content: `\$\{String\(title \|\| ""\)\.trim\(\)\}\\n\\n\$\{plain\}`/.test(wmMdSrc)
+);
+checkTrue(
+  "企微纯文本：剥标记但**保留换行**（用 stripMarksKeepLines，不是 stripMarkdown）",
+  // 反例：用 stripMarkdown 会把换行压成空格 → 正文糊成一整段
+  /const plain = stripMarksKeepLines\(text\);/.test(wmMdSrc) &&
+    !/const plain = stripMarkdown\(text\);/.test(wmMdSrc),
+  "stripMarkdown 会把换行也压成空格，纯文本推送会糊成一整段"
+);
+checkTrue(
+  "企微开关不影响钉钉/飞书（它们的客户端都支持 markdown）",
+  // 钉钉/飞书分支里不该出现 weworkMarkdown
+  !/dingdingUrl[\s\S]{0,200}weworkMarkdown/.test(notifySrc) &&
+    !/feishuUrl[\s\S]{0,200}weworkMarkdown/.test(notifySrc)
+);
+checkTrue(
+  "企微 markdown 开关：四处默认值同步（config / global-config / types / mock）",
+  /weworkMarkdown: true/.test(wmCfgSrc) &&
+    /weworkMarkdown: true/.test(wmGlobalSrc) &&
+    /weworkMarkdown: boolean/.test(wmTypesSrc) &&
+    /weworkMarkdown: true/.test(wmMockSrc)
+);
+checkTrue(
+  "任务全局设置里能开关企微 markdown（用户可见）",
+  /label="企业微信 Markdown 排版"/.test(wmFormSrc) &&
+    /weworkMarkdown: v/.test(wmFormSrc)
 );
 // —— 推送 markdown 排版（2026-10-08 用户要求：正文要空行、钉钉一行约 15 汉字）——
 const notifyMd = fs.readFileSync(path.join(ROOT, "src", "notify-markdown.js"), "utf8");

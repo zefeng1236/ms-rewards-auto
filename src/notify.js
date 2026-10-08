@@ -149,8 +149,14 @@ function buildRequests(notice, title, text) {
       init: {
         method: "POST",
         headers: { "Content-Type": "application/json; charset=UTF-8" },
-        // 企业微信 markdown：标题放正文首行（它没有独立 title 字段）
-        body: JSON.stringify(md.weworkBody(title, md.buildMarkdown(title, content))),
+        // 企微支持 markdown，但它转发出去的消息**可以被微信客户端收到**，
+        // 而微信不支持 markdown —— 收到的是带星号/反引号的裸文本（很难读）。
+        // 所以留一个开关：关掉就退回 msgtype=text，把所有标记剥干净。
+        body: JSON.stringify(
+          notice.weworkMarkdown === false
+            ? md.weworkTextBody(title, md.buildMarkdown(title, content))
+            : md.weworkBody(title, md.buildMarkdown(title, content))
+        ),
       },
     });
   }

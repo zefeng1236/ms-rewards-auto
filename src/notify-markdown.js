@@ -249,6 +249,29 @@ function weworkBody(title, text) {
 }
 
 /**
+ * 企业微信**纯文本**消息体（关掉 markdown 时用）。
+ *
+ * 为什么要这个：企微群消息可以被转发到**微信客户端**，而微信不支持 markdown ——
+ * markdown 消息在微信里会原样显示成「**标题**」「`当前 IP`」这种带标记的裸文本，
+ * 读起来很脏。关掉后走 msgtype=text，标记全部剥掉，只留干净的文本与换行。
+ *
+ * ⚠️ 剥标记必须保留换行（用 stripMarksKeepLines，不是 stripMarkdown）——
+ *    stripMarkdown 会把换行也压成空格，正文会糊成一整段。
+ *
+ * @param {string} title 标题（text 类型没有 title 字段，放正文首行）
+ * @param {string} text  已加工好的 markdown 正文
+ */
+function weworkTextBody(title, text) {
+  const plain = stripMarksKeepLines(text);
+  return {
+    msgtype: "text",
+    text: {
+      content: `${String(title || "").trim()}\n\n${plain}`,
+    },
+  };
+}
+
+/**
  * 飞书 interactive 卡片消息体。
  *
  * 官方文档（open.feishu.cn「自定义机器人使用指南」）：
@@ -311,5 +334,6 @@ module.exports = {
   buildMarkdown,
   dingdingBody,
   weworkBody,
+  weworkTextBody,
   feishuBody,
 };

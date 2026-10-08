@@ -156,6 +156,14 @@ export interface AppConfig {
     pushme: string;
     bark: string;
     /**
+     * 企业微信是否用 markdown 排版，默认开启；关掉则退回纯文本。
+     *
+     * 需要关的场景：企微群消息能被转发到**微信客户端**，微信不支持 markdown，
+     * 收到的是「**标题**」「`字段`」这类带标记的裸文本。
+     * ⚠️ 只作用于企业微信 —— 钉钉/飞书客户端都支持 markdown，不受此开关影响。
+     */
+    weworkMarkdown: boolean;
+    /**
      * 推送中是否附加每日一言，默认开启。
      * 界面显示开关已迁去个性化菜单（appearance.hitokoto / hitokotoPosition /
      * hitokotoTypes），与推送侧独立：
