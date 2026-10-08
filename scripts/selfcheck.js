@@ -3757,8 +3757,41 @@ checkTrue(
     /function renderKeyValue/.test(notifyMd) &&
     /\^\(\[-\*\+\]/.test(notifyMd) &&
     // 逐行判定（不是「整段全是标签才转」）—— 一条散文不该把整段的列表化打回原形
-    /linesInPara\.map\(\(l\) =>/.test(notifyMd),
+    /const kv = matchKeyValue\(s\);/.test(notifyMd) &&
+    /blocks\.push\(kv \? renderKeyValue\(kv\) : s\);/.test(notifyMd),
   "整段一刀切会让「散文 + 标签」混合的正文（区域拦截推送正是这种）全部退化成裸文本"
+);
+
+// —— 2026-10-09 用户实测反馈的四条版式要求（都在真实钉钉/企微上验证过）——
+//  ① 用户名行和正文黏成一行 ② 开头多出圆点 ③ 版本号被挤到下一行 ④ 想要分割线
+//  根因是同一个：钉钉 markdown **不认单个换行符**，段内用单 \n 连接会被压成一行。
+checkTrue(
+  "推送 markdown：每行独立成块（行间空行）—— 单换行会被钉钉压成一行",
+  /blocks\.join\("\\n\\n"\)/.test(notifyMd) &&
+    // 反例：退回「段内用单个换行连接」→ 用户名和正文黏一起（用户实测反馈）
+    !/blocks\.push\(out\.join\("\\n"\)\);/.test(notifyMd),
+  "段内用单 \\n 连接 → 钉钉把同一段的多行压成一行（用户名+警示句黏在一起）"
+);
+checkTrue(
+  "推送 markdown：用户名行不转列表项（否则钉钉渲染成圆点）",
+  // 反例：用户名行被 matchKeyValue 命中 → 渲染成「- `用户名`：xxx」
+  /if \(\/\^用户名\[：:\]\/\.test\(s\)\) \{/.test(notifyMd) &&
+    /blocks\.push\(s\);/.test(notifyMd)
+);
+checkTrue(
+  "推送 markdown：头部与正文之间有分割线（区分「谁发的」和「发了什么」）",
+  /const HR = "---";/.test(notifyMd) && /blocks\.splice\(1, 0, HR\);/.test(notifyMd)
+);
+checkTrue(
+  "标签用反引号等宽而不是加粗（用户指名的格式）",
+  /const TICK = "`";/.test(notifyMd) &&
+    /return "- " \+ TICK \+ pair\.k \+ TICK \+ "：" \+ pair\.v;/.test(notifyMd)
+);
+checkTrue(
+  "用户名与版本号之间是**两个半角空格**（全角空格会把版本号挤到下一行）",
+  /return `用户名：\$\{name\}  \$\{tail\}`;/.test(notifySrc) &&
+    !/用户名：\$\{name\}　　/.test(notifySrc),
+  "全角空格在钉钉窄屏按宽度算，版本号会被挤到下一行看着像断了"
 );
 checkTrue(
   "推送 markdown：提供长行折行（钉钉移动端一行约 15 汉字）",

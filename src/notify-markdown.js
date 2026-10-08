@@ -34,6 +34,10 @@ const LINE_HINT = 15;
  *   **注释里提到这个序列时也别直接写出来**，用「星号-斜杠」这种中文说法。
  */
 const BOLD = ["*", "*"].join("");
+/** 反引号同样用常量拼，避免在正则/注释里凑出会被误解析的序列 */
+const TICK = "`";
+/** 分割线。放在头部与正文之间，区分「谁发的」和「发了什么」 */
+const HR = "---";
 
 /**
  * 去掉正文里的 markdown 标记，得到「纯文本」——用于关键词匹配与长度估算。
@@ -104,9 +108,17 @@ function matchKeyValue(line) {
   return m ? { k: m[1].trim(), v: m[2].trim() } : null;
 }
 
-/** 渲染成markdown 列表项。加粗标记用常量，理由见 BOLD 的注释。 */
+/**
+ * 渲染成markdown 列表项。
+ *
+ * ⚠️ 标签用**反引号等宽**而不是加粗：钉钉/企微的等宽块带淡底色，
+ *    一眼能看出「左边是字段名、右边是值」，且不会像 `**加粗**` 那样
+ *    在深色主题下抢走正文的注意力（用户 2026-10-09 指名要这个格式：
+ *    ``- `ip`：192.168.1.1``）。
+ *    反引号标记用常量拼，理由同 BOLD 的注释（星号紧挨斜杠会被当注释结束符）。
+ */
 function renderKeyValue(pair) {
-  return "- " + BOLD + pair.k + BOLD + "：" + pair.v;
+  return "- " + TICK + pair.k + TICK + "：" + pair.v;
 }
 
 /**
@@ -161,27 +173,37 @@ function wrapLongLine(s, width) {
 function buildMarkdown(title, body, opts = {}) {
   void title; // 标题由各平台的 title / header 字段承载，不进正文（见文件头注释）
 
-  // ⚠️ 「每个逻辑块之间恰好一个空行」是这里**唯一**的换行规则实现点：
+  // ⚠️ 「每个渲染单元之间恰好一个空行」是这里**唯一**的换行规则实现点。
+  //
   //   三家 markdown 都**不认单个换行符**（会折成同一段糊成一坨），只认空行分段。
-  //   所以不能简单地「按行逐个加空行」—— 那样会把「标签: 值」这种属于同一件事的
-  //   行也拆开，读起来像一堆孤立条目（实测：区域拦截推送会变成三段互不相干的短行）。
-  //   正确做法是**按空行分段，段内的连续行合成一块**。
+  //   所以这里把**每一行都当成独立的渲染单元**，中间一律 `\n\n` ——
+  //   早先的写法是「按空行分段、段内用单个 \n 连接」，结果钉钉把同一段的多行
+  //   压成了一行：用户名和后面的警示句黏在一起（用户 2026-10-09 实测反馈）。
+  //
+  //   代价是列表项之间也会各带一个空行（比紧凑列表稍微松一点），但这是
+  //   三家 markdown 换行语义要求的，紧凑与不糊只能选一个 —— 选不糊。
   const raw = String(body == null ? "" : body);
   const blocks = [];
   for (const para of raw.split(/\n{2,}/)) {
-    const linesInPara = para
-      .split(/\n/)
-      .map((s) => s.trim())
-      .filter(Boolean);
-    if (!linesInPara.length) continue;
-    // **逐行**判断：散文行原样保留、标签行转成列表项。
-    // 之前是「整段全是标签才转」，结果一条散文就把整段拉回原样，
-    // 区域拦截推送里的「当前 IP / 下次执行时间」全都不再是列表项了。
-    const out = linesInPara.map((l) => {
-      const kv = matchKeyValue(l);
-      return kv ? renderKeyValue(kv) : l;
-    });
-    blocks.push(out.join("\n"));
+    for (const l of para.split(/\n/)) {
+      const s = String(l).trim();
+      if (!s) continue;
+      // 用户名行是「这条推送来自哪个账号」的标识，不是数据项：
+      //   - 转成列表项会在钉钉渲染成圆点（用户反馈「开头不要有这么多点」）
+      //   - 它必须独立成块，否则版本号会被后面的正文挤走
+      if (/^用户名[：:]/.test(s)) {
+        blocks.push(s);
+        continue;
+      }
+      // 逐行判断：散文行原样保留、标签行转成列表项
+      const kv = matchKeyValue(s);
+      blocks.push(kv ? renderKeyValue(kv) : s);
+    }
+  }
+  // 头部（用户名+版本号）之后加一条分割线，把「谁发的」和「发了什么」分开。
+  // 只在头部后面确有正文时才加 —— 否则末尾会拖一条孤零零的横线。
+  if (blocks.length > 1 && /^用户名[：:]/.test(blocks[0])) {
+    blocks.splice(1, 0, HR);
   }
   const text = blocks.join("\n\n");
   // 折行默认**关**：三家 markdown 渲染时本来就会自动折行，硬折可能把emoji/链接切断。

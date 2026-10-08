@@ -316,7 +316,11 @@ function accountHeaderLine(ctx) {
   }
   // 版本号后补运行环境，形如 v0.13.14(PC) —— 用户 2026-10-03 要求区分端
   const tail = ver ? `v${ver}(${runtimeTag()})` : `(${runtimeTag()})`;
-  return `用户名：${name}　　${tail}`;
+  // ⚠️ 中间只留**两个半角空格**：早先用的是两个全角空格（　　），钉钉移动端
+  //    按字符宽度算会把版本号挤到下一行，看起来像断了（用户 2026-10-09 反馈）。
+  //    版本号不被挤走的真正保障在 buildMarkdown —— 这一行整个独立成块，
+  //    不与后面的正文黏在同一段（钉钉 markdown 不认单个换行符）。
+  return `用户名：${name}  ${tail}`;
 }
 
 /**

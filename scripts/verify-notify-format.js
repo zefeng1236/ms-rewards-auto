@@ -108,7 +108,9 @@ const body = (i) => {
   // 剥掉 markdown 标记后比对纯文本：断言里**不写字面量加粗标记**——
   // 它和后续字符可能凑出块注释结束符（本项目已踩4 次）。
   // 三家渲染结果一致（列表项前缀会被剥掉），所以同一套断言通吃三家。
-  const headPlain = `用户名：测试账号　　v${ver}(${notify.runtimeTag()})`;
+  // ⚠️ 分隔用的是**两个半角空格**（2026-10-09 起）：全角空格在钉钉窄屏会把
+  //    版本号挤到下一行，看着像断了。
+  const headPlain = `用户名：测试账号  v${ver}(${notify.runtimeTag()})`;
   /** 剥标记 + 过滤空行：版式只关心内容顺序，空行另有单独断言 */
   const plainLines = (i) =>
     md.stripMarksKeepLines(body(i))
@@ -123,9 +125,18 @@ const body = (i) => {
   //    绝不能被一句话挤走（0.13.10.1 曾短暂改成首行一言，属回归）。
   const l1raw = md.stripMarksKeepLines(body(0)).split("\n");
   if (l1raw[0] !== TITLE) bad.push(`正文首行不是标题（实际：${l1raw[0]}）`);
-  const l1 = plainLines(0).slice(1); // 去掉标题行
+  // 用户名行之后是分割线（---），它**不属于内容行**，比对时要跳过
+  const l1 = plainLines(0).slice(1).filter((x) => x.trim() !== "---");
   if (l1[0] !== headPlain) bad.push(`第一行不是用户名+版本号（实际：${l1[0]}）`);
   if (l1[1] !== "已完成 5 次搜索") bad.push(`第二行不是内容（实际：${l1[1]}）`);
+  // 分割线必须在用户名行**之后**、正文之前（否则「谁发的」和「发了什么」又糊一起）
+  {
+    const raw = plainLines(0);
+    const iHead = raw.indexOf(headPlain);
+    const iHr = raw.indexOf("---");
+    if (iHr < 0) bad.push("用户名行与正文之间缺分割线");
+    else if (iHead >= 0 && iHr !== iHead + 1) bad.push("分割线不在用户名行之后");
+  }
   if (!/\n\n保持热爱，奔赴山海。 —— 测试出处$/.test(body(0))) bad.push("末尾缺「空一行 + 一句话」");
   // 一言只在末行出现一次：首行若也出现，说明又退回了「首末各一次」的旧版式
   if ((body(0).match(/保持热爱/g) || []).length !== 1) bad.push("一句话应只在末行出现一次");
@@ -154,11 +165,18 @@ const body = (i) => {
 
   // ③ 关闭一言：不带一言，也不留多余空行
   if (/保持热爱/.test(body(2))) bad.push("关闭一言后仍带一句话");
-  if (md.stripMarksKeepLines(body(2)).split("\n").filter((x) => x.trim() !== "").slice(1).join("\n") !== headPlain + "\n本次无一言") bad.push("关闭一言后版式异常");
+  {
+    const noQuote = md
+      .stripMarksKeepLines(body(2))
+      .split("\n")
+      .filter((x) => x.trim() !== "" && x.trim() !== "---");
+    if (noQuote.slice(1).join("\n") !== headPlain + "\n本次无一言") bad.push("关闭一言后版式异常");
+  }
 
   // ④ 汇总：首行是「用户名+版本号」（不是一言），一言在末行
   const sl = md.stripMarksKeepLines(body(3)).split("\n");
-  if (sl.filter((x) => x.trim() !== "")[1] !== headPlain) bad.push("汇总用户名行位置不对");
+  // 汇总里用户名行后面同样跟分割线，比对时跳过
+  if (sl.filter((x) => x.trim() !== "" && x.trim() !== "---")[1] !== headPlain) bad.push("汇总用户名行位置不对");
   if (!/\n\n保持热爱，奔赴山海。 —— 测试出处$/.test(body(3))) bad.push("汇总末尾缺「空一行 + 一句话」");
   if (sl.filter((x) => x.indexOf("用户名") >= 0).length !== 1) bad.push("汇总用户名行重复或缺失");
   if (!sl.some((x) => x.startsWith("🏅 "))) bad.push("汇总目标行缺勋章图标");
