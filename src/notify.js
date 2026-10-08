@@ -1,6 +1,8 @@
 const logger = require("./logger");
 const hitokoto = require("./hitokoto");
 const { displayVersion } = require("./version");
+// markdown 排版与三家 IM 的方言适配（钉钉/企微/飞书各一套，详见该文件头注释）
+const md = require("./notify-markdown");
 
 /**
  * 把 URL 里的密钥部分打码，只留够辨认的头尾。
@@ -105,6 +107,11 @@ function normalizeWebhook(raw, platform) {
  * 保证 content 里包含指定关键词（钉钉关键词安全模式需要）。
  * 已经包含就原样返回，否则在最前面补一次。
  * keyword 支持字符串（单个）或字符串数组（多个任选其一命中，未命中补第一个）。
+ *
+ * ⚠️ 2026-10-08：**比较的是「纯文本」**（先剥 markdown 标记），不是原始正文。
+ *   改用 markdown 后正文里会有 `**`、`- ` 等标记，而钉钉的关键词安全模式
+ *   是按纯文本匹配的 —— 若拿带标记的正文去比，用户设的关键词永远匹配不上，
+ *   结果就是消息被钉钉静默丢弃（errcode 310000）。
  */
 function ensureKeyword(content, keyword) {
   const src = (content == null) ? "" : String(content);
@@ -113,14 +120,20 @@ function ensureKeyword(content, keyword) {
     ? keyword.map((k) => String(k)).filter(Boolean)
     : [String(keyword)];
   if (!list.length) return src;
-  if (list.some((k) => src.includes(k))) return src;
-  return `${list[0]} ${src}`;
+  // 用剥掉 markdown 后的纯文本判断「用户想说的那句话在不在」
+  if (md.stripMarkdown(src).includes(list[0])) return src;
+  if (list.some((k) => md.stripMarkdown(src).includes(k))) return src;
+  return `${list[0]}\n\n${src}`;
 }
 
 /** 统一构造各通道的请求参数，测试与正式推送共用，避免两套逻辑跑偏 */
-function buildRequests(notice, title, text, opts = {}) {
-  const body = String(text == null ? "" : text);
-  const content = opts.includeTitleInBody === false ? body : `${title}\n${body}`;
+function buildRequests(notice, title, text) {
+  // 标题**不再**拼进正文开头：markdown 版式把标题放进各平台的
+  // title / header 字段（钉钉 markdown.title、飞书卡片 header、企微正文首行），
+  // 正文只放内容。否则首屏标题与正文标题会重复显示两次。
+  // 曾经这里有个 includeTitleInBody 开关（汇总推送不拼标题），
+  // 改markdown 后已无意义 —— 汇总推送的标题同样该走 title 字段，故彻底删除。
+  const content = String(text == null ? "" : text);
   const list = [];
 
   const weworkUrl = normalizeWebhook(notice.wework, "wework");
@@ -132,13 +145,16 @@ function buildRequests(notice, title, text, opts = {}) {
       init: {
         method: "POST",
         headers: { "Content-Type": "application/json; charset=UTF-8" },
-        body: JSON.stringify({ msgtype: "text", text: { content } }),
+        // 企业微信 markdown：标题放正文首行（它没有独立 title 字段）
+        body: JSON.stringify(md.weworkBody(title, md.buildMarkdown(title, content))),
       },
     });
   }
   const dingdingUrl = normalizeWebhook(notice.dingding, "dingding");
   if (dingdingUrl) {
-    const ddContent = ensureKeyword(content, notice.dingdingKeyword);
+    const mdText = md.buildMarkdown(title, content);
+    // 关键词补在 markdown 化**之后**、发送之前，保证补进去的词也在正文里
+    const ddText = ensureKeyword(mdText, notice.dingdingKeyword);
     list.push({
       channel: "钉钉",
       platform: "dingding",
@@ -146,7 +162,7 @@ function buildRequests(notice, title, text, opts = {}) {
       init: {
         method: "POST",
         headers: { "Content-Type": "application/json; charset=UTF-8" },
-        body: JSON.stringify({ msgtype: "text", text: { content: ddContent } }),
+        body: JSON.stringify(md.dingdingBody(title, ddText)),
       },
     });
   }
@@ -159,7 +175,8 @@ function buildRequests(notice, title, text, opts = {}) {
       init: {
         method: "POST",
         headers: { "Content-Type": "application/json; charset=UTF-8" },
-        body: JSON.stringify({ msg_type: "text", content: { text: content } }),
+        // 飞书没有 markdown 消息类型，走 interactive 卡片
+        body: JSON.stringify(md.feishuBody(title, md.buildMarkdown(title, content))),
       },
     });
   }
@@ -391,19 +408,15 @@ async function withAccountHeader(ctx, text, opts = {}) {
 async function sendText(ctx, title, text) {
   const cfg = ctx.config.get();
   const noticeCfg = cfg.notice || {};
-  const isSummary = /^Rewards 运行汇总/.test(String(title || ""));
 
-  // 一言固定在**末行**（由 withAccountHeader 统一拼装，前面空一行）。
-  // 首行永远是标题（汇总推送则是不合标题、以「用户名」开头），
-  // 保证多账户场景下一眼看出这条推送来自哪个账号。
+  // 一言固定在**末段**（由 withAccountHeader 统一拼装，前面空一行）。
+  // 首行留给用户名（汇总推送）或正文，保证多账户场景下一眼看出这条推送来自哪个账号。
   //
   // 刷新口径：推送时 force 取新句（30 秒 TTL 太短，不 force 可能推到界面正显示的旧句）。
-  // force 只影响「取哪一句」，不影响「放在哪一行」。
+  // force 只影响「取哪一句」，不影响「放在哪里」。
   const content = await withAccountHeader(ctx, text, { force: true });
 
-  const reqs = buildRequests(noticeCfg, title, content, {
-    includeTitleInBody: !isSummary,
-  });
+  const reqs = buildRequests(noticeCfg, title, content);
   if (!reqs.length) return [];
   const results = await Promise.allSettled(reqs.map((r) => fire(r)));
   return results.map((r) => (r.status === "fulfilled" ? r.value : { ok: false, error: String(r.reason) }));

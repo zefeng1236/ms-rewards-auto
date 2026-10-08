@@ -53,6 +53,8 @@ global.fetch = async (url, init) => {
 };
 
 const notify = require(path.join(ROOT, "src", "notify.js"));
+// markdown 剥标记（断言比对纯文本时用，避免在脚本里写字面量加粗标记）
+const md = require(path.join(ROOT, "src", "notify-markdown.js"));
 const hitokotoMod = require(path.join(ROOT, "src", "hitokoto.js"));
 const goals = require(path.join(ROOT, "src", "goals.js"));
 const { displayVersion } = require(path.join(ROOT, "src", "version.js"));
@@ -67,7 +69,19 @@ const mkNotice = (extra = {}) =>
     { wework: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=TEST", hitokoto: true },
     extra
   );
-const body = (i) => JSON.parse(pushes[i].body).text.content;
+/**
+ * 取第 i 条推送的 markdown 报文。
+ *
+ * ⚠️ 2026-10-08 起改用 markdown 消息体，字段名与旧的 `text.content` 不同：
+ *   - 企业微信：markdown.content（标题由 notify 拼在正文首行）
+ *   - 钉钉：markdown.text（标题走markdown.title）
+ *   - 飞书：card.elements[0].content（标题走 card.header.title）
+ * 本脚本只接了企业微信通道，所以读 markdown.content。
+ */
+const body = (i) => {
+  const b = JSON.parse(pushes[i].body);
+  return b.markdown ? String(b.markdown.content || b.markdown.text || "") : "";
+};
 
 (async () => {
   await notify.sendText(mkCtx(mkNotice()), TITLE, "已完成 5 次搜索\n获得 30 积分");
@@ -88,17 +102,35 @@ const body = (i) => JSON.parse(pushes[i].body).text.content;
   // 避免脚本里再写一份判定逻辑导致两处漂移（2026-10-03 新增端标识）。
   const head = `用户名：测试账号　　v${ver}(${notify.runtimeTag()})`;
   const bad = [];
-  const l1 = body(0).split("\n");
+  // 剥掉 markdown 标记后比对纯文本：断言里**不写字面量加粗标记**——
+  // 它和后续字符可能凑出块注释结束符（本项目已踩4 次）。
+  // 三家渲染结果一致（列表项前缀会被剥掉），所以同一套断言通吃三家。
+  const headPlain = `用户名：测试账号　　v${ver}(${notify.runtimeTag()})`;
+  /** 剥标记 + 过滤空行：版式只关心内容顺序，空行另有单独断言 */
+  const plainLines = (i) =>
+    md.stripMarksKeepLines(body(i))
+      .split("\n")
+      .filter((x) => x.trim() !== "");
 
-  // ① 版式：标题 → 用户名+版本号 → 正文 → 空行 → 一言（一言固定在末行）
-  //    首行必须是标题 —— 多账户场景下一眼看出这条推送来自哪个账号，
+  // ① 版式（2026-10-08 markdown 版）：
+  //    企业微信没有独立 title 字段，标题以加粗行放在正文最前；
+  //    钉钉/飞书把标题放进各自的 title / header，正文里不再重复。
+  //    之后依次是「用户名+版本号 → 内容 → 空行 → 一言」。
+  //    用户名必须在最前 —— 多账户场景一眼看出推送来自哪个账号，
   //    绝不能被一句话挤走（0.13.10.1 曾短暂改成首行一言，属回归）。
-  if (l1[0] !== TITLE) bad.push(`第一行不是标题（实际：${l1[0]}）`);
-  if (l1[1] !== head) bad.push(`第二行不是用户名+版本号（实际：${l1[1]}）`);
+  const l1raw = md.stripMarksKeepLines(body(0)).split("\n");
+  if (l1raw[0] !== TITLE) bad.push(`正文首行不是标题（实际：${l1raw[0]}）`);
+  const l1 = plainLines(0).slice(1); // 去掉标题行
+  if (l1[0] !== headPlain) bad.push(`第一行不是用户名+版本号（实际：${l1[0]}）`);
+  if (l1[1] !== "已完成 5 次搜索") bad.push(`第二行不是内容（实际：${l1[1]}）`);
   if (!/\n\n保持热爱，奔赴山海。 —— 测试出处$/.test(body(0))) bad.push("末尾缺「空一行 + 一句话」");
   // 一言只在末行出现一次：首行若也出现，说明又退回了「首末各一次」的旧版式
   if ((body(0).match(/保持热爱/g) || []).length !== 1) bad.push("一句话应只在末行出现一次");
   if (/保持热爱/.test(l1[0]) || /保持热爱/.test(l1[1])) bad.push("一句话不该出现在首行/第二行");
+  // ① b 段落之间必须有空行：三家 markdown 都不认单个换行符（会糊成一段）
+  if (!/\n\n/.test(body(0)) && /\n/.test(body(0))) bad.push("正文有换行但无空行分段");
+  // ① c 必须是 markdown 消息体（不再是纯text）
+  if (JSON.parse(pushes[0].body).msgtype !== "markdown") bad.push("企业微信应发 markdown 消息体");
 
   // ② 缓存策略：30 秒 TTL + 推送强制刷新
   //    - 推送走 force：每次推送各请求一次新句（上面 3 条开启一言的推送 = 3 次）
@@ -119,13 +151,13 @@ const body = (i) => JSON.parse(pushes[i].body).text.content;
 
   // ③ 关闭一言：不带一言，也不留多余空行
   if (/保持热爱/.test(body(2))) bad.push("关闭一言后仍带一句话");
-  if (body(2).trimEnd() !== `${TITLE}\n${head}\n本次无一言`) bad.push("关闭一言后版式异常");
+  if (md.stripMarksKeepLines(body(2)).split("\n").filter((x) => x.trim() !== "").slice(1).join("\n") !== headPlain + "\n本次无一言") bad.push("关闭一言后版式异常");
 
   // ④ 汇总：首行是「用户名+版本号」（不是一言），一言在末行
-  const sl = body(3).split("\n");
-  if (sl[0] !== head) bad.push(`汇总第一行不是用户名+版本号（实际：${sl[0]}）`);
+  const sl = md.stripMarksKeepLines(body(3)).split("\n");
+  if (sl.filter((x) => x.trim() !== "")[1] !== headPlain) bad.push("汇总用户名行位置不对");
   if (!/\n\n保持热爱，奔赴山海。 —— 测试出处$/.test(body(3))) bad.push("汇总末尾缺「空一行 + 一句话」");
-  if (sl.filter((x) => x.startsWith("用户名：")).length !== 1) bad.push("汇总用户名行重复或缺失");
+  if (sl.filter((x) => x.indexOf("用户名") >= 0).length !== 1) bad.push("汇总用户名行重复或缺失");
   if (!sl.some((x) => x.startsWith("🏅 "))) bad.push("汇总目标行缺勋章图标");
 
   fs.rmSync(tmp, { recursive: true, force: true });

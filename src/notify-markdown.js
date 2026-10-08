@@ -1,0 +1,293 @@
+/**
+ * 推送消息的markdown 排版（三家 IM 的方言适配）。
+ *
+ * ⚠️ 为什么要单独建文件、而不是在 notify.js 里就地拼：
+ *   三家的 markdown 支持**互不兼容**，混在一起写必然互相污染：
+ *   - 钉钉：`msgtype:"markdown"` + `{title, text}`，支持 1~6 级标题/列表/引用/
+ *     加粗/链接/图片。**换行必须用 `\n\n`（官方原文：换行 前后分别加2个空格）**
+ *     —— 单个 `\n` 会被折成同一段。这就是「要空行」这条用户要求的来源。
+ *   - 企业微信：`msgtype:"markdown"` + `{content}`，除上述外还支持
+ *     `<font color="info|comment|warning">` 彩色字体（仅 3 种内置色）。
+ *     同样必须空行换行。markdown_v2 支持表格/分割线/代码块但**不支持颜色和 @**。
+ *   -飞书：**没有 markdown 消息类型**（只有 text / post / interactive），
+ *     所以要用 `interactive` 卡片里的 `markdown` 元素，或 `post` 富文本。
+ *     本文件走**卡片**（能显示标题 + markdown 正文，且首屏标题可控）。
+ *
+ * 三条硬约束（用户 2026-10-08 明确要求）：
+ *   1. **要有空行**：段落之间一律 `\n\n`。三家都不能靠单 `\n` 换行，
+ *      单 `\n` 会被折成同一段糊成一坨。
+ *   2. **钉钉一行最多约 15 个汉字**（移动端窄屏实测值），所以行内不要拼长句，
+ *      要拆行；正文里的英文/数字按半宽算，别按字符数硬算。
+ *   3. **标题走title 参数**（首屏会话列表透出），不要用 `#` 包在正文里 ——
+ *      钉钉/企微的 markdown 消息体里`# 标题` 会和title 重复显示。
+ */
+
+/** 单行宽度上限：钉钉移动端约 15 个汉字（用户实测），这里留一点余量 */
+const LINE_HINT = 15;
+
+/**
+ * 加粗标记（两个星号）。
+ * ⚠️ 用字符串常量而不是在代码里直接写：一旦它和紧随其后的斜杠凑成
+ *   「星号-斜杠」的连续序列，JS 会当成**块注释结束符**，提前闭合注释并把
+ *   后面的代码当注释吃掉，报 `SyntaxError: Unexpected token`。
+ *   本项目已踩 4 次（cron.ts / cron.js 注释里的步长表达式、本文件首版两处）。
+ *   **注释里提到这个序列时也别直接写出来**，用「星号-斜杠」这种中文说法。
+ */
+const BOLD = ["*", "*"].join("");
+
+/**
+ * 去掉正文里的 markdown 标记，得到「纯文本」——用于关键词匹配与长度估算。
+ *
+ * 钉钉/企微的关键词安全模式是**按纯文本**匹配的（`#`、`**` 之类的标记不算），
+ * 所以补关键词前必须先剥标记，否则用户设的关键词如果是正文里带 markdown 的
+ * 那个词，永远匹配不上。
+ */
+function stripMarkdown(s) {
+  // ⚠️ 所有含 `*` 的正则一律用字符串 + new RegExp 构造，**不要**写字面量：
+  //   字面量里的连续 `*/`（如 `[*]{2}/` 这类）会被 JS 当成**块注释结束符**，
+  //   提前闭合注释、后面整段当代码解析，报 `SyntaxError: Unexpected token`。
+  //   本项目同类坑已踩多次（cron.ts / cron.js 注释里写步长表达式）。
+  const boldRe = new RegExp("[*]{2}(.+?)[*]{2}", "g"); // 加粗
+  const italicRe = new RegExp("[*]([^*\\n]+)[*]", "g"); // 斜体（不用 lookbehind）
+  return String(s == null ? "" : s)
+    .replace(/^#{1,6}\s+/gm, "") // 标题
+    .replace(boldRe, "$1")
+    .replace(italicRe, "$1")
+    .replace(/`{1,3}([^`]*)`{1,3}/g, "$1") // 行内/块代码
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1") // 链接 [文字](地址)
+    .replace(/^>\s?/gm, "") // 引用
+    .replace(/^[-*+]\s+/gm, "") // 无序列表
+    .replace(/^\d+\.\s+/gm, "") // 有序列表
+    .replace(/<[^>]+>/g, "") // HTML 标签（含企微 font color）
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * 段落之间插入空行，并把连续空行压成恰好一个。
+ *
+ * ⚠️ 这是「要空行」的**唯一实现点**：调用方随便 `\n` 或 `\n\n` 都行，
+ * 出口统一是「段与段之间恰好一个空行」。
+ */
+function toBlocks(body) {
+  return String(body == null ? "" : body)
+    .split(/\n+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+/**
+ * 把「用户名：值」这类正文行整理成markdown 列表。
+ *
+ * 为什么：这类推送（区域拦截、签到、汇总）的正文天然是若干个「标签: 值」，
+ * 直接裸排一行行贴上去在窄屏会挤成一坨。整理成 `- 标签：值` 后每项自带
+ * 缩进，窄屏换行时值不会跑到标签头上方。
+ *
+ * 只处理形如 `xxx：yyy` / `xxx: yyy` 的行；其它行（标题、空行、列表）原样保留。
+ */
+/**
+ * 判断一行是不是「标签: 值」。
+ *
+ * 标签限长 16 是为了不把整句误判成标签 —— 如「注意：这个功能需要先在设置里开启」
+ * 应该原样输出（它是给用户看的提醒，不是一个字段）。
+ *
+ * @param {string} line
+ * @returns {{k:string,v:string}|null}
+ */
+function matchKeyValue(line) {
+  const s = String(line == null ? "" : line).trim();
+  if (!s) return null;
+  // 已经是列表项/标题/引用 → 不是标签: 值
+  if (/^([-*+]\s|#{1,6}\s|>|\d+\.\s)/.test(s)) return null;
+  const m = s.match(/^([^：:]{1,16})[：:]\s*(\S.*)$/);
+  return m ? { k: m[1].trim(), v: m[2].trim() } : null;
+}
+
+/** 渲染成markdown 列表项。加粗标记用常量，理由见 BOLD 的注释。 */
+function renderKeyValue(pair) {
+  return "- " + BOLD + pair.k + BOLD + "：" + pair.v;
+}
+
+/**
+ * 长行软折行。
+ *
+ * 钉钉移动端**一行只显示约 15 个汉字**，超出部分要用户横向拖才能看到 ——
+ * 而推送多半是在手机上看（用户 2026-10-08 明确要求按 15 字考虑）。
+ * 这里按「显示宽度」折行：一个汉字算 2、ASCII 算 1。
+ *
+ * ⚠️ 只折「纯散文长句」，**不折列表项**：列表项折行后缩进会乱。
+ *
+ * @param {string} s
+ * @param {number} [width] 显示单位（1 汉字 = 2）。默认 30 = 15 汉字
+ * @returns {string}
+ */
+function wrapLongLine(s, width) {
+  const limit = Math.max(8, Number(width) || LINE_HINT * 2);
+  const disp = (ch) => (/[\x00-\xff]/.test(ch) ? 1 : 2); // ASCII 1 宽，其余 2 宽
+  const out = [];
+  for (const line of String(s == null ? "" : s).split("\n")) {
+    // 列表项 / 标题 / 引用：整行交给客户端 CSS 折行，不在这里动
+    if (/^([-*+]\s|#{1,6}\s|>|\d+\.\s)/.test(line)) {
+      out.push(line);
+      continue;
+    }
+    let cur = "";
+    let w = 0;
+    for (const ch of line) {
+      const cw = disp(ch);
+      if (w + cw > limit) {
+        out.push(cur);
+        cur = "";
+        w = 0;
+      }
+      cur += ch;
+      w += cw;
+    }
+    if (cur) out.push(cur);
+  }
+  return out.join("\n");
+}
+
+/**
+ * 把正文加工成markdown 文本。
+ *
+ * @param {string} title    消息标题（各平台单独用title 字段透出，不进正文）
+ * @param {string} body     正文（纯文本，允许 \n 单换行）
+ * @param {object} [opts]
+ * @param {boolean} [opts.color] 企业微信是否允许彩色字体（钉钉/飞书不支持，不传）
+ * @returns {string} markdown 文本（段落间恰好一个空行）
+ */
+function buildMarkdown(title, body, opts = {}) {
+  void title; // 标题由各平台的 title / header 字段承载，不进正文（见文件头注释）
+
+  // ⚠️ 「每个逻辑块之间恰好一个空行」是这里**唯一**的换行规则实现点：
+  //   三家 markdown 都**不认单个换行符**（会折成同一段糊成一坨），只认空行分段。
+  //   所以不能简单地「按行逐个加空行」—— 那样会把「标签: 值」这种属于同一件事的
+  //   行也拆开，读起来像一堆孤立条目（实测：区域拦截推送会变成三段互不相干的短行）。
+  //   正确做法是**按空行分段，段内的连续行合成一块**。
+  const raw = String(body == null ? "" : body);
+  const blocks = [];
+  for (const para of raw.split(/\n{2,}/)) {
+    const linesInPara = para
+      .split(/\n/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (!linesInPara.length) continue;
+    // **逐行**判断：散文行原样保留、标签行转成列表项。
+    // 之前是「整段全是标签才转」，结果一条散文就把整段拉回原样，
+    // 区域拦截推送里的「当前 IP / 下次执行时间」全都不再是列表项了。
+    const out = linesInPara.map((l) => {
+      const kv = matchKeyValue(l);
+      return kv ? renderKeyValue(kv) : l;
+    });
+    blocks.push(out.join("\n"));
+  }
+  const text = blocks.join("\n\n");
+  // 折行默认**关**：三家 markdown 渲染时本来就会自动折行，硬折可能把emoji/链接切断。
+  // 需要时按需打开（opts.wrap=true）。
+  return opts.wrap ? wrapLongLine(text, opts.wrapWidth) : text;
+}
+
+/**
+ * 钉钉 markdown 消息体。
+ *
+ * 官方文档（open.dingtalk.com「消息类型与数据格式」）：
+ *   { "msgtype": "markdown", "markdown": { "title": "...", "text": "..." } }
+ *   - text建议 500 字符以内
+ *   - 换行用 \n\n（官方：「换行 前后分别加2个空格」）
+ *   - 关键词安全模式按**纯文本**匹配
+ */
+function dingdingBody(title, text) {
+  return {
+    msgtype: "markdown",
+    markdown: { title: String(title || "").slice(0, 100), text },
+    // at 字段留空：本项目没有「@某人」需求，写死会误触发
+    at: { atMobiles: [], isAtAll: false },
+  };
+}
+
+/**
+ * 企业微信 markdown 消息体。
+ *
+ * 官方文档（developer.work.weixin.qq.com/document/path/91770）：
+ *   { "msgtype": "markdown", "markdown": { "content": "...", "mentioned_list": [] } }
+ *   - content 最长 4096 **字节**（不是字符），一个中文约 3 字节 → 约 1360 字
+ *   - 支持 <font color="info|comment|warning"> 三种内置色
+ *   - markdown 类型的 text/markdown 都支持 <@userid> 扩展语法
+ */
+function weworkBody(title, text) {
+  return {
+    msgtype: "markdown",
+    markdown: {
+      // 企微没有 title 字段，标题要自己放进正文首行（加粗，模拟标题层级）
+      content: `**${String(title || "").trim()}**\n\n${text}`,
+    },
+  };
+}
+
+/**
+ * 飞书 interactive 卡片消息体。
+ *
+ * 官方文档（open.feishu.cn「自定义机器人使用指南」）：
+ *   飞书**没有** markdown 消息类型，要markdown 就得用 interactive 卡片里的
+ *   `markdown` 元素：{ "msg_type": "interactive",
+ *                 "card": { "header": {"title": {"tag":"plain_text",...}},
+ *                           "elements": [{"tag":"markdown","content":"..."}] } }
+ *   - header 可选；不传时整张卡片没有标题
+ *   - card 宽默认下是「两栏」布局，内容过多会被折叠（展开后才是完整宽度）
+ */
+function feishuBody(title, text) {
+  const elements = [{ tag: "markdown", content: text }];
+  const card = { elements };
+  const t = String(title || "").trim();
+  if (t) {
+    card.header = {
+      title: { tag: "plain_text", content: t },
+      // 蓝底白字：与其它两家标题的视觉重量一致
+      template: "blue",
+    };
+  }
+  return { msg_type: "interactive", card };
+}
+
+/**
+ * 剥掉 markdown 标记但**保留换行与段落结构**（用于版式断言 / 日志可读性）。
+ *
+ * ⚠️ 不要用 stripMarkdown 做这件事：它末尾把连续空白压成单个空格
+ *    （那是为了关键词匹配与长度估算），会把多行正文压成一行，
+ *    版式断言会全部失效。
+ *
+ * @param {string} s
+ * @returns {string}
+ */
+function stripMarksKeepLines(s) {
+  const boldRe = new RegExp("[*]{2}(.+?)[*]{2}", "g");
+  const italicRe = new RegExp("[*]([^*\\n]+)[*]", "g");
+  return String(s == null ? "" : s)
+    .replace(boldRe, "$1")
+    .replace(italicRe, "$1")
+    .replace(/`{1,3}([^`]*)`{1,3}/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^>\s?/gm, "")
+    .replace(/^[-*+]\s+/gm, "")
+    .replace(/^\d+\.\s+/gm, "")
+    .replace(/<[^>]+>/g, "")
+    .replace(/[ \t]+$/gm, "")
+    .trim();
+}
+
+module.exports = {
+  LINE_HINT,
+  stripMarkdown,
+  stripMarksKeepLines,
+  toBlocks,
+  matchKeyValue,
+  renderKeyValue,
+  wrapLongLine,
+  buildMarkdown,
+  dingdingBody,
+  weworkBody,
+  feishuBody,
+};

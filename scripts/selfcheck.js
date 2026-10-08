@@ -3711,15 +3711,83 @@ checkTrue(
   /async function quoteLine\(notice, override, force = false\)/.test(notifySrc) &&
     /const line = await quoteLine\(notice, opts\.quote, opts\.force === true\);/.test(notifySrc)
 );
-// 版式口径（0.13.10.1 修正）：一言**固定末行**，首行留给标题/用户名。
+// 版式口径（0.13.10.1 修正，2026-10-08 再调整）：一言**固定末行**。
 // 曾短暂改成「首行一言、标题下沉」（靠 buildRequests 的 lead + skipTop），
 // 导致每日汇总首行变成一句话、把「用户名」挤走 —— 多账户时无法辨认来源。
+//
+// ⚠️ 2026-10-08 起改markdown 版式后，「标题进正文首行」这个机制**整体移除**：
+//   - 钉钉 → markdown.title（首屏会话透出）
+//   - 飞书 → card.header.title
+//   - 企业微信 → 自己没有 title 字段，由 notify-markdown.weworkBody 拼在正文首行
+// buildRequests 不再拼标题，所以断言从「content = 标题+换行+正文」改成
+// 「content 不拼标题 + 三家都走 markdown 消息体」。
 checkTrue(
-  "一言固定末行（buildRequests 不再往首行塞 lead）",
-  /const content = opts\.includeTitleInBody === false \? body : `\$\{title\}\\n\$\{body\}`;/.test(notifySrc) &&
-    // 回归反例：lead / skipTop 机制整体移除，防止有人再往首行塞
-    !/\bskipTop\b/.test(notifySrc) &&
-    !/opts\.lead/.test(notifySrc)
+  "一言固定末行 + 标题走平台 title 字段（buildRequests 不再往首行塞 lead/标题）",
+  // 旧机制回归反例：lead / skipTop / includeTitleInBody 都不该回来
+  !/\bskipTop\b/.test(notifySrc) &&
+    !/opts\.lead/.test(notifySrc) &&
+    // ⚠️ 只剩注释在讲历史，必须**剔除注释行**再判，否则注释里的名字也会命中
+    !/^[^/*]*\bincludeTitleInBody\b/m.test(notifySrc.replace(/^\s*\/\/.*$/gm, "")) &&
+    // 三家必须发 markdown（或飞书卡片），不是纯 text
+    /JSON\.stringify\(md\.weworkBody\(/.test(notifySrc) &&
+    /JSON\.stringify\(md\.dingdingBody\(/.test(notifySrc) &&
+    /JSON\.stringify\(md\.feishuBody\(/.test(notifySrc),
+  "退回 msgtype=text → 排版全废（无标题层级、无列表、单换行糊成一段）"
+);
+// —— 推送 markdown 排版（2026-10-08 用户要求：正文要空行、钉钉一行约 15 汉字）——
+const notifyMd = fs.readFileSync(path.join(ROOT, "src", "notify-markdown.js"), "utf8");
+checkTrue(
+  "推送 markdown：三家方言各自适配（钉钉/企微 markdown + 飞书 interactive 卡片）",
+  /msgtype:\s*"markdown"/.test(notifyMd) &&
+    /markdown:\s*\{\s*title[\s\S]{0,80}?text/.test(notifyMd) &&
+    /msg_type:\s*"interactive"/.test(notifyMd) &&
+    /tag:\s*"markdown"/.test(notifyMd) &&
+    /card\.header\s*=\s*\{[\s\S]{0,160}?plain_text/.test(notifyMd),
+  "飞书**没有** markdown 消息类型（只有 text/post/interactive），必须走卡片 markdown 元素"
+);
+checkTrue(
+  "推送 markdown：段落之间留空行（三家都不认单个换行符，会糊成一段）",
+  /split\(\/\\n\{2,\}\/\)/.test(notifyMd) &&
+    /join\("\\n\\n"\)/.test(notifyMd),
+  "单换行会被三家折成同一段，列表与段落黏在一起看不出层次"
+);
+checkTrue(
+  "推送 markdown：标签: 值 逐行转列表项（窄屏换行时值不会跑到标签上方）",
+  /function matchKeyValue/.test(notifyMd) &&
+    /function renderKeyValue/.test(notifyMd) &&
+    /\^\(\[-\*\+\]/.test(notifyMd) &&
+    // 逐行判定（不是「整段全是标签才转」）—— 一条散文不该把整段的列表化打回原形
+    /linesInPara\.map\(\(l\) =>/.test(notifyMd),
+  "整段一刀切会让「散文 + 标签」混合的正文（区域拦截推送正是这种）全部退化成裸文本"
+);
+checkTrue(
+  "推送 markdown：提供长行折行（钉钉移动端一行约 15 汉字）",
+  /function wrapLongLine/.test(notifyMd) &&
+    /LINE_HINT\s*=\s*15/.test(notifyMd) &&
+    /opts\.wrap\s*\?/.test(notifyMd),
+  "钉钉窄屏一行只显示约 15 汉字，长句要横向拖才能看全"
+);
+checkTrue(
+  "推送 markdown：含星号的正则一律用 new RegExp 构造（字面量会凑出块注释结束符）",
+  // 正向：至少两处加粗正则走字符串构造（stripMarkdown / stripMarksKeepLines 各一）
+  (notifyMd.match(/new RegExp\("\[\*\]\{2\}/g) || []).length >= 2 &&
+    // 负向：源码里**不能出现**字面量形式的加粗正则。
+    // ⚠️ 断言本身要写成能真正匹配到的那种形态，
+    //   否则「负向条件恒为真」= 守卫假绿（case6 反例验证过这点）。
+    !/const boldRe = \/\[\*\]/.test(notifyMd) &&
+    !/const italicRe = \/\[\*\]/.test(notifyMd),
+  "加粗/斜体正则写成字面量时，其中的连续星号-斜杠会被 JS 当成块注释结束符，整个文件语法错误（本项目已踩 4 次）"
+);
+checkTrue(
+  "推送关键词匹配按**纯文本**（先剥 markdown 标记再比对）",
+  // 两条都要：函数存在（负向）+ 被 notify.js 真的调用（正向）。
+  // 只判「函数还在」会被改名绕过 —— case5 反例验证过这点。
+  /function stripMarkdown/.test(notifyMd) &&
+    /stripMarkdown,/.test(notifyMd) && //仍在导出列表里
+    /md\.stripMarkdown\(src\)\.includes/.test(notifySrc) &&
+    //必须作用在**两个分支**上（原实现/list.some 各一处），漏一处就有一半概率失效
+    (notifySrc.match(/md\.stripMarkdown\(src\)/g) || []).length >= 2,
+  "改markdown 后正文带标记，拿带标记的正文比关键词 → 永远匹配不上 → 钉钉静默丢弃（errcode 310000）"
 );
 checkTrue(
   "首行不被一言挤走（正文里一言只追加在末尾）",

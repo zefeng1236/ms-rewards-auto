@@ -431,14 +431,21 @@ body::before {
   overflow-y: auto;
   padding: 18px 16px;
 }
-/* 检查中 / 已是最新 / 失败：居中三行 */
+/* 检查中 / 已是最新 / 失败：居中三行
+ *
+ * ⚠️ 这里的上下 padding 必须**小**（2026-10-08 用户实测「弹窗变得很扁」）：
+ *   三行内容（图标 44 + 标题 + 版本号）本身只有约 100px 高，早先写的是
+ *   `padding: 56px 0 64px` —— 上下 120px 纯空白把它们夹在中间，视觉上就成了
+ *   一个又扁又空的长条（实测 panel 464px 里 120px 是空白）。
+ *   现在改成上下 20px，弹窗高度随内容走，「已是最新」紧凑、「检查中」也不空。
+ */
 .upd-checking {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 10px;
-  padding: 56px 0 64px;
+  padding: 20px 0;
   text-align: center;
 }
 .upd-spinner {
