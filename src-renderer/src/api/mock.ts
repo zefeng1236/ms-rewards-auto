@@ -94,6 +94,7 @@ const DEFAULT_APPEARANCE: Appearance = {
   bgUnsplashKey: "",
   bgPexelsKey: "",
   bgRotate: 0,
+  bgRotateCron: "",
   bgBlur: 4,
   bgDim: 0.25,
   glass: true,

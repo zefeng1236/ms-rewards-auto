@@ -405,6 +405,8 @@ export interface Appearance {
   bgPexelsKey: string;
   /** 轮换间隔秒数，0 = 不轮换 */
   bgRotate: number;
+  /** 高级：cron 表达式轮换（分 时 日 月 周，本地时区）。空串 = 不启用；非空时优先于 bgRotate */
+  bgRotateCron: string;
   /** 背景模糊 0–40 */
   bgBlur: number;
   /** 背景暗化 0–0.85 */

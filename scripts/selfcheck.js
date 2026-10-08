@@ -3243,10 +3243,47 @@ checkTrue(
   "useBackground.ts 未监听 visibilitychange，或用 blur 判定（会误判后台）"
 );
 checkTrue(
-  "壁纸轮换定时器受 pageVisible 门控且进入依赖数组",
+  "壁纸轮换定时器受 pageVisible 门控且进入依赖数组（含 cron 高级选项）",
   /if\s*\(\s*!pageVisible\s*\)\s*return/.test(useBgSrc21) &&
-    /\[\s*bgType\s*,\s*bgRotate\s*,\s*pageVisible\s*\]/.test(useBgSrc21),
-  "后台仍然装定时器（配额白白消耗），或 pageVisible 没进依赖数组（状态变了不重建定时器）"
+    // 依赖数组从 [bgType, bgRotate, pageVisible] 扩成含 cronExpr（2026-10-08 加 cron 时改的）：
+    // cron 非空时走 setTimeout 打「下一次触发」，它的开关必须进依赖数组，
+    // 否则用户刚填完 cron 不会立刻生效、要等下一次 appearance 变更才挂上。
+    /\[\s*bgType\s*,\s*bgRotate\s*,\s*cronExpr\s*,\s*pageVisible\s*\]/.test(useBgSrc21),
+  "后台仍然装定时器（配额白白消耗），或 pageVisible / cronExpr 没进依赖数组（状态变了不重建定时器）"
+);
+// —— 定时换壁纸的 cron 高级选项（2026-10-08 用户要求）——
+// ⚠️ 日/周的「或」语义是这里最容易写错的地方：简写成 `dayHit || weekHit` 时，
+//   「周 = *」会让 weekHit 恒为真 ⇒ 「0 12 29 2 *」（二月 29 日）会在**二月 1 日**
+//   命中（实测 2028 年踩到）。所以必须断言「周为通配时只看日」。
+const cronTs = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "utils", "cron.ts"),
+  "utf8"
+);
+const appearanceSrc = fs.readFileSync(path.join(ROOT, "src", "appearance.js"), "utf8");
+checkTrue(
+  "cron：日/周「或」语义正确（周为通配时只看日，不让 29 日退化成每月 1 日）",
+  /if\s*\(cron\.weekdays\.size\s*===\s*7\)\s*return cron\.days\.has\(date\.getDate\(\)\)/.test(cronTs) &&
+    /if\s*\(cron\.days\.size\s*===\s*31\)\s*return cron\.weekdays\.has\(date\.getDay\(\)\)/.test(cronTs),
+  "写成 dayHit || weekHit → 「周=*」时恒真，二月 29 日会在二月 1 日就触发（实测 2028 年）"
+);
+checkTrue(
+  "cron：解析拒绝非法输入且不静默兜底成「每分钟」",
+  /export function parseCron/.test(cronTs) &&
+    /if\s*\(step\s*<=\s*0\)\s*return null/.test(cronTs) &&
+    /if\s*\(start\s*>\s*end\)\s*return null/.test(cronTs) &&
+    /parts\.length\s*!==\s*5\s*\|\|\s*parts\[0\]\s*===\s*""\)\s*return null/.test(cronTs),
+  "步长 0 会死循环、倒序区间是笔误、空表达式必须先拦掉（parts[0] 为空时 split 会漏判）"
+);
+checkTrue(
+  "cron：配置层字段贯通（DEFAULTS / 读取归一化 / 写入归一化 / 类型 / mock）",
+  /bgRotateCron:\s*""/.test(appearanceSrc) &&
+    /bgRotateCron: normalizeCron\(raw\.bgRotateCron/.test(appearanceSrc) &&
+    /bgRotateCron: normalizeCron\(next\.bgRotateCron/.test(appearanceSrc) &&
+    /bgRotateCron:\s*string/.test(
+      fs.readFileSync(path.join(ROOT, "src-renderer", "src", "types", "index.ts"), "utf8")
+    ) &&
+    /bgRotateCron/.test(fs.readFileSync(path.join(ROOT, "src-renderer", "src", "api", "mock.ts"), "utf8")),
+  "缺任一 → 旧配置文件读不出该字段（回 undefined）或类型对不上，白屏"
 );
 
 // ① UAPI 随机图源彻底移除：客户端函数没了、白名单没了、解析入口不再分发

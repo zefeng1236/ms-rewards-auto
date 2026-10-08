@@ -1,11 +1,32 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { GlassButton, GlassSegmentedControl, GlassSwitch } from "@ttqtt/liquid-glass-react";
 import { AppCard, Input, Modal, toast } from "../components/liquidGlassCompat";
 import { CommitSlider } from "../components/CommitSlider";
 import { api } from "../api/ipc";
 import { useAppState } from "../hooks/useAppState";
 import { DisclaimerModal } from "../components/DisclaimerModal";
+import { describeCron } from "../utils/cron";
 import type { AppearancePreset, BgCategory, BgType } from "../types";
+
+/**
+ * 把 cron 的「下次触发时刻」格式成人话（2026-10-08）。
+ *
+ * 显示「今天 / 明天 / 周几」而不是完整日期 —— cron 的典型用法是「每天几点」，
+ * 用户只关心"下一次是几点"，跨年的日期反而是噪音。
+ */
+function fmtNextRun(d: Date): string {
+  const now = new Date();
+  const hhmm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  const sameDay = (a: Date, b: Date) =>
+    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  if (sameDay(d, now)) return `今天 ${hhmm}`;
+  const t = new Date(now.getTime() + 86400000);
+  if (sameDay(d, t)) return `明天 ${hhmm}`;
+  const week = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][d.getDay()];
+  // 7 天内（多为「每周几」）：只说周几；更远就带上月/日
+  const in7 = d.getTime() - now.getTime() <= 7 * 86400000;
+  return in7 ? `${week} ${hhmm}` : `${d.getMonth() + 1}/${d.getDate()} ${week} ${hhmm}`;
+}
 
 /** 外观预设：液态玻璃（半透明面板）/ 不透明（实心面板），均为纯 CSS 热切换 */
 const PRESETS: { key: AppearancePreset; label: string; desc: string }[] = [
@@ -99,6 +120,15 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
   const [blurDraft, setBlurDraft] = useState<number | null>(null);
   const [dimDraft, setDimDraft] = useState<number | null>(null);
   const [opacityDraft, setOpacityDraft] = useState<number | null>(null);
+  // cron 高级选项（2026-10-08 新增）：默认收起，保持旧界面紧凑。
+  // 开关状态不入 appearance.json —— 它只是「这次要不要展开这个输入框」的
+  // UI 状态，和外观配置无关（换台机器不该继承「我正开着高级面板」）。
+  const [cronAdvanced, setCronAdvanced] = useState(false);
+  // 输入框受控副本：跟着配置走（外部改动 / 恢复默认时能同步回来），
+  // 但用户正在打字时不回灌，否则光标会跳。
+  const [cronDraft, setCronDraft] = useState<string | null>(null);
+  const cronText = cronDraft ?? appearance?.bgRotateCron ?? "";
+  const cronState = useMemo(() => describeCron(cronText.trim()), [cronText]);
 
   if (!appearance) return null;
 
@@ -187,6 +217,7 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
       bgUnsplashKey: "",
       bgPexelsKey: "",
       bgRotate: 0,
+      bgRotateCron: "",
       bgBlur: 4,
       bgDim: 0.25,
       glass: false,
@@ -440,28 +471,88 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
             {(bgGroup !== "none" && bgGroup !== "bing") && (
               <div className="range-field" style={{ marginTop: 12 }}>
                 <span>自动轮换</span>
-                <Input
-                  size="sm"
-                  type="number"
-                  min={0}
-                  // step=1 + 正整数：轮换间隔只接受整秒（小数秒对定时器没有意义）
-                  step={1}
-                  value={String(appearance.bgRotate || 0)}
-                  onChange={(e) =>
-                    void patchAppearance({
-                      bgRotate: Number.isFinite(Number(e.target.value))
-                        ? Math.max(0, Math.floor(Math.abs(Number(e.target.value))))
-                        : 0,
-                    })
-                  }
-                  style={{ width: 90 }}
-                />
-                <span className="rng-val">秒</span>
+                {/* 高级模式开启时，下面的固定秒数输入要让位给 cron —— 两个都填会让人
+                    搞不清到底哪个生效，所以直接隐藏并给出说明。 */}
+                {!cronAdvanced ? (
+                  <>
+                    <Input
+                      size="sm"
+                      type="number"
+                      min={0}
+                      // step=1 + 正整数：轮换间隔只接受整秒（小数秒对定时器没有意义）
+                      step={1}
+                      value={String(appearance.bgRotate || 0)}
+                      onChange={(e) =>
+                        void patchAppearance({
+                          bgRotate: Number.isFinite(Number(e.target.value))
+                            ? Math.max(0, Math.floor(Math.abs(Number(e.target.value))))
+                            : 0,
+                        })
+                      }
+                      style={{ width: 90 }}
+                    />
+                    <span className="rng-val">秒</span>
+                  </>
+                ) : null}
+                <button
+                  type="button"
+                  className="bg-chip"
+                  style={{ padding: "2px 10px", marginLeft: cronAdvanced ? 0 : 8 }}
+                  onClick={() => setCronAdvanced((v) => !v)}
+                >
+                  {cronAdvanced ? "返回简单模式" : "高级（cron 表达式）"}
+                </button>
                 <span className="bg-note" style={{ margin: 0 }}>
-                  0=不轮换（默认）；须为正整数秒；随机图源最低 60 秒，自定义链接不限；切到后台自动暂停。
-                  Bing 每日按天固定，不参与轮换。
+                  {cronAdvanced
+                    ? "填 cron 后以它为准，下面的秒数不再生效。"
+                    : "0=不轮换（默认）；须为正整数秒；随机图源最低 60 秒，自定义链接不限；切到后台自动暂停。Bing 每日按天固定，不参与轮换。"}
                 </span>
               </div>
+            )}
+
+            {/* 高级：cron 表达式（2026-10-08 新增，用户要求） */}
+            {cronAdvanced && bgGroup !== "none" && bgGroup !== "bing" && (
+              <div className="range-field" style={{ marginTop: 8 }}>
+                <span>cron</span>
+                <Input
+                  size="sm"
+                  value={cronText}
+                  placeholder="30 7 * * *"
+                  spellCheck={false}
+                  autoComplete="off"
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setCronDraft(v);
+                    // 即时校验并把错误显示在下方；合法才落盘，非法**不写** ——
+                    // 边打边存会让「半成品表达式」被保存成"已启用"。
+                    const d = describeCron(v.trim());
+                    if (v.trim() === "" || d.ok) {
+                      void patchAppearance({ bgRotateCron: v.trim() });
+                    }
+                  }}
+                  style={{ width: 160, fontFamily: "Consolas, monospace" }}
+                />
+                <span className="bg-note" style={{ margin: 0 }}>
+                  标准 5 段：<code>分 时 日 月 周</code>（本地时区）。例
+                  <code> 30 7 * * *</code> 每天 07:30、
+                  <code> 15 3 * * 1-5</code> 工作日 03:15。留空 = 不启用。
+                </span>
+              </div>
+            )}
+
+            {/* cron 校验结果 / 下次触发时刻（实时，随输入变化） */}
+            {cronAdvanced && bgGroup !== "none" && bgGroup !== "bing" && cronText.trim() !== "" && (
+              cronState.ok ? (
+                <p className="bg-note" style={{ color: "var(--lg-success)", margin: "4px 0 0" }}>
+                  {cronState.next
+                    ? `表达式有效 · 下次自动换壁纸：${fmtNextRun(cronState.next)}`
+                    : "表达式有效，但未来一年内没有触发时刻（请检查日期组合）"}
+                </p>
+              ) : (
+                <p className="bg-note" style={{ color: "var(--lg-danger)", margin: "4px 0 0" }}>
+                  {cronState.error}
+                </p>
+              )
             )}
 
             {bgGroup === "random" && (

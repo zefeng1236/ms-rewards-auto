@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAmbientFromImage } from "../components/liquidGlassCompat";
+import { nextCronTime as cronNextTime } from "../utils/cron";
 import { api } from "../api/ipc";
 import { useAppState } from "./useAppState";
 import type { BgType } from "../types";
@@ -26,6 +27,9 @@ export function useBackground() {
   const bgFile = appearance?.bgFile;
   const bgCategory = appearance?.bgCategory;
   const bgRotate = appearance?.bgRotate ?? 0;
+  const bgRotateCron = appearance?.bgRotateCron ?? "";
+  // cron 与固定秒数**二选一**：填了 cron 就以它为准（高级选项优先）
+  const cronExpr = String(bgRotateCron || "").trim();
 
   // ---- 解析当前背景地址 ----
   const lastNonce = useRef<number>(-1);
@@ -87,14 +91,43 @@ export function useBackground() {
 
   useEffect(() => {
     // bing 按天缓存、本地文件固定，都不参与轮换
-    if (!bgRotate || bgType === "none" || bgType === "bing" || bgType === "file") return;
-    // 后台：不装定时器（等于暂停）。回到前台会重新挂载定时器、从头计时。
+    if (bgType === "none" || bgType === "bing" || bgType === "file") return;
+    // 后台：不装定时器（等于暂停）。回到前台会重新挂载定时器、按当前时刻重算。
     if (!pageVisible) return;
+
+    // ---- 高级：cron 轮换（优先于固定秒数）----
+    //
+    // 用 setTimeout 打「下一次触发」而不是 setInterval：cron 的间隔**不是常量**
+    // （如「每天 07:30」相邻两次可能差 23 小时 59 分），固定间隔表达不了，
+    // 必须每次触发后按当前时刻重新求下一次。
+    // ⚠️ 挂定时器时立刻算「下一次」：若算出的是过去时刻（正好卡在触发点、
+    //   或电脑从休眠唤醒），会得到 <= now 的间隔，setTimeout 视作 0 立即连转
+    //   —— 表现为「回来后壁纸疯狂闪烁」。所以先兜一个最小延后。
+    if (cronExpr) {
+      let timer: number | null = null;
+      const tick = () => {
+        const next = cronNextTime(cronExpr, new Date());
+        // 非法表达式 / 未来 366 天内无匹配（如 2 月 30 日）→ 不轮换
+        if (!next) return;
+        const delay = Math.max(1000, next.getTime() - Date.now());
+        timer = window.setTimeout(() => {
+          setNonce((n) => n + 1);
+          tick();
+        }, delay);
+      };
+      tick();
+      return () => {
+        if (timer !== null) window.clearTimeout(timer);
+      };
+    }
+
+    // ---- 常规：固定秒数间隔 ----
+    if (!bgRotate) return;
     const isRandom = RANDOM_SOURCES.includes(bgType);
     const sec = isRandom ? Math.max(MIN_ROTATE_SEC, bgRotate) : bgRotate;
     const timer = window.setInterval(() => setNonce((n) => n + 1), sec * 1000);
     return () => window.clearInterval(timer);
-  }, [bgType, bgRotate, pageVisible]);
+  }, [bgType, bgRotate, cronExpr, pageVisible]);
 
   // ---- 从壁纸取样环境色 ----
   const ambient = useAmbientFromImage(src || null, { strategy: "edge" });

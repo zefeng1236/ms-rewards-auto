@@ -3,6 +3,8 @@ const path = require("path");
 const { pathToFileURL } = require("url");
 const sp = require("./storage-path");
 const wallpapers = require("./wallpapers");
+// cron 结构校验（薄壳，见 src/cron.js；语义权威在 src-renderer/src/utils/cron.ts）
+const cronModule = require("./cron");
 
 /**
  * 应用外观设置（appearance.json）
@@ -56,6 +58,10 @@ const DEFAULTS = {
   bgPexelsKey: "",
   // 背景自动轮换间隔（秒）。0=不启用；随机图源最低 60s，自定义链接不受此限
   bgRotate: 0,
+  // 高级：cron 表达式轮换（2026-10-08 新增）。非空时**优先于 bgRotate**，
+  // 格式为标准 5 段 cron「分 时 日 月 周」（本地时区，见 src/cron.js）。
+  // 空串 = 不启用。非法表达式不会保存（见 normalizeCron），回落成"不启用"。
+  bgRotateCron: "",
   // 背景高斯模糊像素（0–40）与暗化比例（0–0.85）
   bgBlur: 4,
   bgDim: 0.25,
@@ -134,6 +140,24 @@ function clampRotate(v) {
 }
 
 /**
+ * 归一化「cron 轮换表达式」（2026-10-08 新增）。
+ *
+ * 非法表达式一律回落成**空串（不启用）**，理由与 clampRotate 一致：
+ * 「用户填了个看不懂的东西」比「静默沿用一个错的调度」安全，而且 UI 上能
+ * 看到它变回空。**绝不**猜测或近似修正 —— cron 的语义（尤其日/周的「或」）
+ * 一旦猜错就会换错壁纸，且很难察觉。
+ *
+ * 这里用的是主进程侧的**浅层结构校验**（段数 / 字符集 / 数字范围），
+ * 完整语义校验在前端 `describeCron`（设置页会当场把错误原因显示给用户）。
+ * 两层校验分工不同，不是重复。
+ */
+function normalizeCron(v) {
+  const s = String(v == null ? "" : v).trim();
+  if (!s) return "";
+  return cronModule.isCronShallowValid(s) ? s : "";
+}
+
+/**
  * 二级分类合法性校验（按主分类分源）：
  *   - upx8/qy98/unsplash：取值必须在该源分类表内，非法回落该源默认（列表首个）
  *   - 其余主分类（none/bing/url/file）无二级分类：保留已知 key（切源不丢选择），
@@ -195,6 +219,7 @@ function get() {
     bgUnsplashKey: String(raw.bgUnsplashKey || "").trim(),
     bgPexelsKey: String(raw.bgPexelsKey || "").trim(),
     bgRotate: clampRotate(raw.bgRotate === undefined ? DEFAULTS.bgRotate : raw.bgRotate),
+    bgRotateCron: normalizeCron(raw.bgRotateCron === undefined ? DEFAULTS.bgRotateCron : raw.bgRotateCron),
     bgBlur: clampBlur(raw.bgBlur === undefined ? DEFAULTS.bgBlur : raw.bgBlur),
     bgDim: clampDim(raw.bgDim === undefined ? DEFAULTS.bgDim : raw.bgDim),
     glass: raw.glass !== false,
@@ -232,6 +257,7 @@ function set(patch) {
     bgUnsplashKey: String(next.bgUnsplashKey || "").trim(),
     bgPexelsKey: String(next.bgPexelsKey || "").trim(),
     bgRotate: clampRotate(next.bgRotate),
+    bgRotateCron: normalizeCron(next.bgRotateCron),
     bgBlur: clampBlur(next.bgBlur),
     bgDim: clampDim(next.bgDim),
     glass: next.glass === true,
