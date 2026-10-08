@@ -3839,7 +3839,7 @@ html[data-preset="opaque"] .compat-toast {
    三处位置共用一套视觉规格：小字 + 次要文字色，不抢界面焦点。
    差别只在定位与换行策略：侧边栏可折行，右下角必须单行截断（怕浮标越铺越长）。
 
-   可选位置来自 notice.hitokotoPosition：
+   可选位置来自 appearance.hitokotoPosition（0.14.14 起从 notice 迁到外观配置）：
      sidebar（默认，左下角侧边栏贴底） / bottomRight（右下角贴底）
      / topbar（**窗口原生标题栏**，由主进程 setTitle 绘制，本文件无对应样式）
    ========================================================== */

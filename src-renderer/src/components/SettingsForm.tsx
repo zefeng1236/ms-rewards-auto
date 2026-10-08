@@ -20,34 +20,9 @@ const MODE_OPTIONS: SelectOption[] = [
 const SCOPE_OPTIONS: SelectOption[] = [{ label: "总积分余额", value: "balance" }];
 
 /**
- * 每日一言在界面上的显示位置。
- * ⚠️ label/value 必须与 src/hitokoto.js 的 POSITIONS 保持一致（selfcheck 有跨文件守卫）。
+ * 一言的开关 / 位置 / 句子类型常量已迁去 src/views/Personalize.tsx（个性化菜单）。
+ * 推送侧只留 hitokotoInPush 一个开关，参见下方「推送通知」Section。
  */
-const HITOKOTO_POSITION_OPTIONS: SelectOption[] = [
-  { label: "左下角侧边栏（贴底部）", value: "sidebar" },
-  { label: "右下角（贴底部）", value: "bottomRight" },
-  { label: "标题栏（原生窗口标题栏，任务栏可见）", value: "topbar" },
-];
-
-/**
- * 每日一言的句子类型（接口 c 参数，可多选）。
- * ⚠️ label/value 必须与 src/hitokoto.js 的 TYPES 保持一致（selfcheck 有跨文件守卫）。
- * 数据源：https://developer.hitokoto.cn/sentence/
- */
-const HITOKOTO_TYPE_OPTIONS: SelectOption[] = [
-  { label: "动画", value: "a" },
-  { label: "漫画", value: "b" },
-  { label: "游戏", value: "c" },
-  { label: "文学", value: "d" },
-  { label: "原创", value: "e" },
-  { label: "来自网络", value: "f" },
-  { label: "其他", value: "g" },
-  { label: "影视", value: "h" },
-  { label: "诗词", value: "i" },
-  { label: "网易云", value: "j" },
-  { label: "哲学", value: "k" },
-  { label: "抖机灵", value: "l" },
-];
 
 const TASK_LABELS: { key: keyof AppConfig["tasks"]; label: string; hint?: string }[] = [
   { key: "sign", label: "每日签入", hint: "每日打卡签到，获得固定积分奖励" },
@@ -104,18 +79,12 @@ export function SettingsForm({
   onChange,
   onTestPush,
   showLogging = false,
-  showHitokotoPosition = false,
 }: {
   value: AppConfig;
   onChange: (patch: DeepPartial<AppConfig>) => void;
   onTestPush?: (notice: AppConfig["notice"]) => Promise<void>;
   /** 日志保留是应用级设置，仅全局设置页显示 */
   showLogging?: boolean;
-  /**
-   * 是否显示一言的「显示位置」。位置是全局的界面行为（左下/右下/标题栏），
-   * 账户级表单里显示它会误导用户以为可以按账户分别设置，所以只有全局页打开。
-   */
-  showHitokotoPosition?: boolean;
 }) {
   const [testing, setTesting] = useState(false);
 
@@ -168,17 +137,8 @@ export function SettingsForm({
   };
 
   const mode = value.schedule?.mode ?? "interval";
-  const hitokotoOn = value.notice?.hitokoto !== false;
-  // 位置可能源自旧配置（缺字段）或被改坏 —— 非法值一律回落到左下角侧边栏
-  const hitokotoPos = HITOKOTO_POSITION_OPTIONS.some((o) => o.value === value.notice?.hitokotoPosition)
-    ? String(value.notice?.hitokotoPosition)
-    : "sidebar";
-  // 句子类型：旧配置缺字段 / 被改坏时当作「不限类型」（与后端 normalizeTypes 同口径）
-  const hitokotoTypes = Array.isArray(value.notice?.hitokotoTypes)
-    ? HITOKOTO_TYPE_OPTIONS.filter((o) => value.notice?.hitokotoTypes?.includes(o.value)).map((o) => o.value)
-    : [];
-  const setHitokotoTypes = (next: string[]) =>
-    onChange({ notice: { hitokotoTypes: next } } as DeepPartial<AppConfig>);
+  // 一言三件套（开关 / 位置 / 句子类型）已迁去「个性化」菜单——见 appearance 对象。
+  // 这里只留推送侧的 hitokotoInPush 开关；不再从 notice 里读 hitokoto/hitokotoPosition/hitokotoTypes。
 
   // —— 定期收取积分的节奏（2026-10-06）——
   // ⚠️ 全部经收口后再用：旧配置文件没有 claimSchedule 段，值会是 undefined，
@@ -508,61 +468,11 @@ export function SettingsForm({
           />
         </div>
         <SwitchField
-          label="每日一言"
-          hint="界面左上角/右下角/标题栏显示当天的一言小字，并在推送首尾各附加一次；按天缓存，接口不可用时自动跳过"
-          checked={hitokotoOn}
-          onChange={(v) => onChange({ notice: { hitokoto: v } })}
+          label="推送附加一言"
+          hint="开启后，每条推送的末尾会自动追加当天的一句一言作为签名（位置 / 句子类型在「软件设置 → 个性化」里管）。界面显示开关不受影响，已迁去个性化菜单"
+          checked={value.notice?.hitokotoInPush !== false}
+          onChange={(v) => onChange({ notice: { hitokotoInPush: v } })}
         />
-        {hitokotoOn && showHitokotoPosition && (
-          <div className="form-grid" style={{ marginTop: 12 }}>
-            <SelectField
-              label="显示位置"
-              hint="界面中小字展示的位置；选「标题栏」会送到窗口原生标题栏（任务栏也可见）"
-              value={hitokotoPos}
-              options={HITOKOTO_POSITION_OPTIONS}
-              onChange={(v) =>
-                onChange({ notice: { hitokotoPosition: v as AppConfig["notice"]["hitokotoPosition"] } })
-              }
-            />
-          </div>
-        )}
-        {hitokotoOn && showHitokotoPosition && (
-          <div style={{ marginTop: 12 }}>
-            <span className="field-label">句子类型</span>
-            <div className="hk-chips">
-              <button
-                type="button"
-                className={`hk-chip${hitokotoTypes.length === 0 ? " active" : ""}`}
-                onClick={() => setHitokotoTypes([])}
-                title="不限类型，全库随机"
-              >
-                全部（不限）
-              </button>
-              {HITOKOTO_TYPE_OPTIONS.map((o) => (
-                <button
-                  key={o.value}
-                  type="button"
-                  className={`hk-chip${hitokotoTypes.includes(o.value) ? " active" : ""}`}
-                  onClick={() =>
-                    setHitokotoTypes(
-                      hitokotoTypes.includes(o.value)
-                        ? hitokotoTypes.filter((v) => v !== o.value)
-                        : HITOKOTO_TYPE_OPTIONS.filter(
-                            (x) => x.value === o.value || hitokotoTypes.includes(x.value)
-                          ).map((x) => x.value)
-                    )
-                  }
-                >
-                  {o.label}
-                </button>
-              ))}
-            </div>
-            <div className="hint" style={{ marginTop: 6 }}>
-              勾选后只从这些类型里取句（多选，清空回到全部）；改动后 15 秒内换一句新范围的句。
-              数据源：<a href="https://developer.hitokoto.cn/sentence/" target="_blank" rel="noreferrer">一言开发者中心</a>
-            </div>
-          </div>
-        )}
         {onTestPush && (
           <div style={{ marginTop: 12 }}>
             <GlassButton variant="glassProminent" controlSize="small" onClick={onTest} loading={testing}>

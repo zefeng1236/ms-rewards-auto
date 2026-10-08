@@ -155,21 +155,15 @@ export interface AppConfig {
     feishu: string;
     pushme: string;
     bark: string;
-    /** 推送中附加每日一言，默认开启 */
-    hitokoto: boolean;
     /**
-     * 一言在界面上的显示位置：
-     *   sidebar     —— 左下角侧边栏、贴窗口底部（默认）
-     *   bottomRight —— 右下角、贴窗口底部
-     *   topbar      —— 窗口原生标题栏（拼在「MS Rewards 自动任务 vX · 」之后）
+     * 推送中是否附加每日一言，默认开启。
+     * 界面显示开关已迁去个性化菜单（appearance.hitokoto / hitokotoPosition /
+     * hitokotoTypes），与推送侧独立：
+     *   - 关界面 + 开推送 → 推送依旧带一言
+     *   - 开界面 + 关推送 → 界面仍显示一言，推送不带
+     *   - 都关 → 两处都无一言
      */
-    hitokotoPosition: HitokotoPosition;
-    /**
-     * 一言句子类型（接口 c 参数）。字母数组，空数组 = 不限类型（默认，全类型随机）。
-     * 取值见 src/hitokoto.js 的 TYPES：a 动画 / b 漫画 / c 游戏 / d 文学 / e 原创 /
-     * f 来自网络 / g 其他 / h 影视 / i 诗词 / j 网易云 / k 哲学 / l 抖机灵。
-     */
-    hitokotoTypes: string[];
+    hitokotoInPush: boolean;
   };
   logging: {
     /** 历史日志保留天数，默认 7，范围 1–365 */
@@ -419,6 +413,16 @@ export interface Appearance {
   autoTheme: boolean;
   /** Bing 每日图解析缓存 */
   bgResolved: { date: string; url: string } | null;
+  /**
+   * 界面上是否显示每日一言。与推送开关（notice.hitokotoInPush）拆开：
+   *   - 整个开关在「个性化」菜单里管
+   *   - 推送时是否带一言在「任务全局设置 → 推送通知」里管
+   */
+  hitokoto: boolean;
+  /** 一言显示位置：sidebar / bottomRight / topbar。值定义见 HitokotoPosition。 */
+  hitokotoPosition: HitokotoPosition;
+  /** 一言句子类型（接口 c 参数）。字母数组，空数组 = 不限类型。 */
+  hitokotoTypes: string[];
 }
 
 // ============ 其他 IPC 返回 ============

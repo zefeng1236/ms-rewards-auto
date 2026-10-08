@@ -98,12 +98,11 @@ const DEFAULTS = {
     feishu: "",
     pushme: "",
     bark: "",
-    hitokoto: true,
-    // 一言在界面上的显示位置：sidebar 左下角侧边栏贴底（默认）| bottomRight 右下角贴底 | topbar 窗口原生标题栏
-    hitokotoPosition: "sidebar",
-    // 一言句子类型（接口 c 参数）：字母数组，空数组 = 不限类型（官方默认，全类型随机）
-    // 取值见 src/hitokoto.js 的 TYPES（a 动画 … l 抖机灵）
-    hitokotoTypes: [],
+    // 推送是否附加一言：与界面显示开关（appearance 段的 hitokoto）拆开。
+    // 此前 `hitokoto` 一个开关同时管「界面 + 推送」，但「界面位置/句子类型」属于外观，
+    // 已迁去个性化菜单，这里只留推送侧的开关。
+    // 旧配置只有 hitokoto=true 没 hitokotoInPush 时，normalize 会按 hitokoto 同值兜底（保持旧意图）。
+    hitokotoInPush: true,
   },
   // 日志保留策略（仅全局设置生效；账户独立设置保持同一结构便于表单复用）
   logging: {

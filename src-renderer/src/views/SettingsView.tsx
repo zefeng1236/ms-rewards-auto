@@ -46,7 +46,6 @@ export function SettingsView() {
             <SettingsForm
               value={cfg}
               showLogging
-              showHitokotoPosition
               onChange={(patch) => {
                 // 本地先乐观更新，避免输入框闪烁
                 setCfg((prev) => (prev ? mergeDeep(prev, patch) : prev));

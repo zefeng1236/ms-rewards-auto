@@ -79,12 +79,12 @@ const GLOBAL_DEFAULTS = {
     feishu: "",
     pushme: "",
     bark: "",
-    hitokoto: true,
-    // 一言在界面上的显示位置：sidebar 左下角侧边栏贴底（默认）| bottomRight 右下角贴底 | topbar 窗口原生标题栏
-    // ⚠️ 必须与 src/config.js 的 DEFAULTS.notice 逐字段对齐（详见文件顶部说明）
-    hitokotoPosition: "sidebar",
-    // 一言句子类型（接口 c 参数）：字母数组，空数组 = 不限类型（全类型随机）
-    hitokotoTypes: [],
+    // 推送是否附加一言：与界面显示开关（appearance 段的 hitokoto）拆开。
+    // 此前 `hitokoto` 一个开关同时管「界面 + 推送」，但「界面位置/句子类型」属于外观，
+    // 已迁去个性化菜单（与 src/config.js 的 DEFAULTS.appearance.hitokoto 同源），
+    // 这里只留推送侧的开关。
+    // 旧配置只有 hitokoto=true 没 hitokotoInPush 时，normalize 会按 hitokoto 同值兜底（保持旧意图）。
+    hitokotoInPush: true,
   },
   // 日志设置（应用级）：历史日志按账号、按天保留
   logging: {
@@ -182,12 +182,31 @@ function load() {
   ensureFile();
   try {
     const raw = JSON.parse(fs.readFileSync(GLOBAL_FILE, "utf-8"));
-    cache = deepMerge(GLOBAL_DEFAULTS, raw);
+    cache = migrateNoticeHitokoto(deepMerge(GLOBAL_DEFAULTS, raw));
   } catch {
     // 文件损坏时退回默认值，不要让整个程序起不来
     cache = JSON.parse(JSON.stringify(GLOBAL_DEFAULTS));
   }
   return cache;
+}
+
+/**
+ * 一次性迁移：老配置只在 notice 里写 hitokoto（同时管界面 + 推送），
+ * 0.14.14 拆成 appearance.hitokoto（界面）+ notice.hitokotoInPush（推送）。
+ * 旧字段还在、但新字段没写时，按旧意图兜底，避免一次升级就把用户的"关闭推送一言"配置丢了。
+ *
+ * 边界：
+ *   - 老 notice.hitokoto=true + 没有 hitokotoInPush → 推送仍开（true）
+ *   - 老 notice.hitokoto=false + 没有 hitokotoInPush → 推送关（false）
+ *   - 老 notice.hitokoto=true + 新 hitokotoInPush=false → 用户已显式覆盖，**以新为准**（不再回填）
+ *   - 全新配置 → 不动（已用默认值）
+ */
+function migrateNoticeHitokoto(cfg) {
+  const notice = cfg && cfg.notice;
+  if (!notice || typeof notice !== "object") return cfg;
+  if ("hitokotoInPush" in notice) return cfg; // 新字段已显式写过 → 用户意图明确，不动
+  if ("hitokoto" in notice) notice.hitokotoInPush = notice.hitokoto === true;
+  return cfg;
 }
 
 /** 读取全局设置（带缓存） */
@@ -197,7 +216,7 @@ function get() {
 
 /** 写入全局设置补丁，返回合并后的完整配置 */
 function set(patch) {
-  const merged = deepMerge(load(), patch || {});
+  const merged = migrateNoticeHitokoto(deepMerge(load(), patch || {}));
   fs.mkdirSync(STORAGE_DIR, { recursive: true });
   fs.writeFileSync(GLOBAL_FILE, JSON.stringify(merged, null, 2), "utf-8");
   cache = merged;
@@ -217,4 +236,5 @@ module.exports = {
   get,
   set,
   invalidate,
+  migrateNoticeHitokoto,
 };

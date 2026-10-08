@@ -38,9 +38,11 @@ interface AppStateValue {
   stats: OverviewStats | null;
   appearance: Appearance | null;
   /**
-   * 全局配置（含 notice.hitokoto / notice.hitokotoPosition）。
-   * 一言的开关与显示位置属于它，所以界面要能读到 —— 这也是唯一需要
-   * 脱离账户单独读取配置的地方（外观同理，但外观走独立的 appearance 接口）。
+   * 全局配置（含 notice.hitokotoInPush —— 推送是否附加一言）。
+   * 界面上展示的一言（位置 / 句子类型）已迁去个性化菜单的 appearance，
+   * 推送信箱却还要看这个开关 —— 所以界面要能读到通知侧的配置。
+   * 这也是唯一需要脱离账户单独读取配置的地方（外观同理，
+   * 但外观走独立的 appearance 接口）。
    */
   globalConfig: AppConfig | null;
   /**
@@ -139,7 +141,10 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   // 开关默认开启（缺字段当作开）。后端 30 秒 TTL 缓存，前端每 30 秒轮询一次。
   // 窗口隐藏（最小化/切到后台）时暂停轮询，切回来时立即刷新一次再恢复 ——
   // 既省请求（公益接口 QPS 2），又不会让界面停在过时的一句话上。
-  const hitokotoEnabled = globalConfig?.notice?.hitokoto !== false;
+  //
+  // ⚠️ 读的是 **appearance.hitokoto**（界面侧开关，已从 notice 迁到个性化菜单），
+  // 不是 notice.hitokotoInPush（那是「推送是否附加一言」，与界面显示无关）。
+  const hitokotoEnabled = appearance?.hitokoto !== false;
   useEffect(() => {
     if (!hitokotoEnabled) {
       setHitokoto("");
@@ -273,7 +278,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       appearance,
       globalConfig,
       hitokoto,
-      hitokotoPosition: normalizePosition(globalConfig?.notice?.hitokotoPosition),
+      hitokotoPosition: normalizePosition(appearance?.hitokotoPosition),
       logs,
       running,
       chromium,

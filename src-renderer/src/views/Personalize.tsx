@@ -6,7 +6,7 @@ import { api } from "../api/ipc";
 import { useAppState } from "../hooks/useAppState";
 import { DisclaimerModal } from "../components/DisclaimerModal";
 import { describeCron } from "../utils/cron";
-import type { AppearancePreset, BgCategory, BgType } from "../types";
+import type { AppearancePreset, BgCategory, BgType, HitokotoPosition } from "../types";
 
 /**
  * 把 cron 的「下次触发时刻」格式成人话（2026-10-08）。
@@ -142,6 +142,36 @@ const BG_SOURCES: { type: BgType; label: string; cats: { key: BgCategory; label:
 /** 带二级分类的随机图源主分类 key */
 const BG_SOURCE_TYPES: BgType[] = BG_SOURCES.map((s) => s.type);
 
+/**
+ * 一言显示位置（界面侧）。
+ * ⚠️ label/value 必须与 src/hitokoto.js 的 POSITIONS 保持一致（selfcheck 有跨文件守卫）。
+ */
+const HITOKOTO_POSITION_OPTIONS = [
+  { label: "左下角侧边栏（贴底部）", value: "sidebar" },
+  { label: "右下角（贴底部）", value: "bottomRight" },
+  { label: "标题栏（原生窗口标题栏，任务栏可见）", value: "topbar" },
+];
+
+/**
+ * 一言句子类型（接口 c 参数，可多选）。空数组 = 不限类型（全类型随机）。
+ * ⚠️ label/value 必须与 src/hitokoto.js 的 TYPES 保持一致（selfcheck 有跨文件守卫）。
+ * 数据源：https://developer.hitokoto.cn/sentence/
+ */
+const HITOKOTO_TYPE_OPTIONS = [
+  { label: "动画", value: "a" },
+  { label: "漫画", value: "b" },
+  { label: "游戏", value: "c" },
+  { label: "文学", value: "d" },
+  { label: "原创", value: "e" },
+  { label: "来自网络", value: "f" },
+  { label: "其他", value: "g" },
+  { label: "影视", value: "h" },
+  { label: "诗词", value: "i" },
+  { label: "网易云", value: "j" },
+  { label: "哲学", value: "k" },
+  { label: "抖机灵", value: "l" },
+] as const;
+
 export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: () => void }) {
   const { appearance, patchAppearance } = useAppState();
   const [disclaimerOpen, setDisclaimerOpen] = useState(false);
@@ -166,6 +196,18 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
   const cronState = useMemo(() => describeCron(cronText.trim()), [cronText]);
   // cron 示例弹窗（用户点「示例」按钮打开）
   const [cronHelpOpen, setCronHelpOpen] = useState(false);
+
+  // 一言（界面侧）派生值。位置与句子类型都走「白名单过滤」而不是直接用配置值：
+  // 配置文件可能被手改，旧版本（迁移前）也可能存着非法值 ——
+  // 直接透传会让分段控件的高亮项对不上（界面看着像坏了）。
+  const hitokotoPosition: HitokotoPosition = HITOKOTO_POSITION_OPTIONS.some(
+    (o) => o.value === appearance?.hitokotoPosition
+  )
+    ? (appearance!.hitokotoPosition as HitokotoPosition)
+    : "sidebar";
+  const hitokotoTypes: string[] = Array.isArray(appearance?.hitokotoTypes)
+    ? HITOKOTO_TYPE_OPTIONS.filter((o) => appearance!.hitokotoTypes?.includes(o.value)).map((o) => o.value)
+    : [];
 
   if (!appearance) return null;
 
@@ -739,6 +781,103 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
               恢复默认
             </GlassButton>
           </div>
+        </AppCard>
+      </div>
+
+      {/* ---- 每日一言（界面侧）----
+          一言三件套（开关 / 位置 / 句子类型）原本挤在「任务全局设置 → 推送通知」里，
+          但「显示位置」本质是外观、且与任务执行无关，放在这里更顺。
+          推送是否附加一言是另一件事 —— 那条开关留在推送通知里（notice.hitokotoInPush），
+          两者互相独立：可以只关界面、或只关推送。 */}
+      <div className="block">
+        <div className="block-head">
+          <div>
+            <div className="block-title">每日一言</div>
+          </div>
+        </div>
+        <AppCard padding={16}>
+          <div className="field-row">
+            <div>
+              <div>界面上显示一言</div>
+              <div className="hint">
+                在界面里显示当天的一句一言小字（按天缓存，接口不可用时自动跳过）。
+                是否在推送里附加一言是另一条开关，在「任务全局设置 → 推送通知」里。
+              </div>
+            </div>
+            <GlassSwitch
+              checked={appearance.hitokoto !== false}
+              onCheckedChange={(v) => void patchAppearance({ hitokoto: v })}
+              aria-label="界面上显示一言"
+            />
+          </div>
+
+          {appearance.hitokoto !== false && (
+            <>
+              <div className="field-row" style={{ marginTop: 12 }}>
+                <div>
+                  <div>显示位置</div>
+                  <div className="hint">
+                    「标题栏」会送到窗口原生标题栏（任务栏切换时也可见）。
+                    推送里的位置固定在末尾，不受这里影响。
+                  </div>
+                </div>
+              </div>
+              <div style={{ marginTop: 8 }}>
+                <GlassSegmentedControl
+                  value={hitokotoPosition}
+                  items={HITOKOTO_POSITION_OPTIONS.map((o) => ({ label: o.label, value: o.value }))}
+                  onValueChange={(v) =>
+                    void patchAppearance({
+                      hitokotoPosition: v as HitokotoPosition,
+                    })
+                  }
+                  aria-label="一言显示位置"
+                />
+              </div>
+
+              <div style={{ marginTop: 14 }}>
+                <span className="field-label">句子类型</span>
+                <div className="hk-chips">
+                  <button
+                    type="button"
+                    className={`hk-chip${hitokotoTypes.length === 0 ? " active" : ""}`}
+                    onClick={() => void patchAppearance({ hitokotoTypes: [] })}
+                    title="不限类型，全库随机"
+                  >
+                    全部（不限）
+                  </button>
+                  {HITOKOTO_TYPE_OPTIONS.map((o) => {
+                    const on = hitokotoTypes.includes(o.value);
+                    return (
+                      <button
+                        key={o.value}
+                        type="button"
+                        className={`hk-chip${on ? " active" : ""}`}
+                        onClick={() =>
+                          void patchAppearance({
+                            hitokotoTypes: on
+                              ? hitokotoTypes.filter((v) => v !== o.value)
+                              : // 追加后按 HITOKOTO_TYPE_OPTIONS 的顺序重排，
+                                // 免得存进配置的是点击顺序（normalizeTypes 也会再排一次，这里只是让 UI 可预测）
+                                HITOKOTO_TYPE_OPTIONS.filter(
+                                  (x) => x.value === o.value || hitokotoTypes.includes(x.value)
+                                ).map((x) => x.value),
+                          })
+                        }
+                      >
+                        {o.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="hint" style={{ marginTop: 6 }}>
+                  勾选后只从这些类型里取句（多选，点「全部（不限）」回到不限）；
+                  改动后 15 秒内换一句新范围的句。
+                  数据源：<a href="https://developer.hitokoto.cn/sentence/" target="_blank" rel="noreferrer">一言开发者中心</a>
+                </div>
+              </div>
+            </>
+          )}
         </AppCard>
       </div>
 

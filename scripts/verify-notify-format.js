@@ -66,7 +66,10 @@ const mkCtx = (notice) => ({
 });
 const mkNotice = (extra = {}) =>
   Object.assign(
-    { wework: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=TEST", hitokoto: true },
+    // ⚠️ 0.14.14 起推送侧的一言开关改名为 hitokotoInPush（原来的 hitokoto 拆成了
+    //    「界面显示」= appearance.hitokoto 与「推送附加」= notice.hitokotoInPush）。
+    //    这里必须用新字段名，写旧名会被当成"没传"→ 兜底成 true → 关闭一言语义失效。
+    { wework: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=TEST", hitokotoInPush: true },
     extra
   );
 /**
@@ -86,7 +89,7 @@ const body = (i) => {
 (async () => {
   await notify.sendText(mkCtx(mkNotice()), TITLE, "已完成 5 次搜索\n获得 30 积分");
   await notify.sendText(mkCtx(mkNotice()), "MS积分任务-阅读", "已完成阅读");
-  await notify.sendText(mkCtx(mkNotice({ hitokoto: false })), TITLE, "本次无一言");
+  await notify.sendText(mkCtx(mkNotice({ hitokotoInPush: false })), TITLE, "本次无一言");
 
   const goalLine = goals.formatLines(
     { enable: true, items: [{ name: "每日", target: 300, scope: "balance" }] },

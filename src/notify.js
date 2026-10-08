@@ -1,5 +1,9 @@
 const logger = require("./logger");
 const hitokoto = require("./hitokoto");
+// 一言的「句子类型」0.14.14 起住在外观配置里（界面侧三件套都在 appearance），
+// 推送侧要取同一份类型，所以这里直接读 appearance ——
+// 不能从 notice 读，那个字段已经迁走了（推送侧只剩开关 hitokotoInPush）。
+const appearance = require("./appearance");
 const { displayVersion } = require("./version");
 // markdown 排版与三家 IM 的方言适配（钉钉/企微/飞书各一套，详见该文件头注释）
 const md = require("./notify-markdown");
@@ -342,7 +346,8 @@ function accountHeaderLine(ctx) {
  * @param {string} text    正文
  * @param {object} [opts]
  * @param {object} [opts.notice]   无账户上下文时直接传入推送配置（测试推送用）
- * @param {boolean} [opts.quote]   是否附加一言，默认按配置的 notice.hitokoto
+ * @param {boolean} [opts.quote]   是否附加一言，默认按配置的 notice.hitokotoInPush
+ *                              （旧配置只有 hitokoto 时由 normalize 兜底）
  * @param {boolean} [opts.force]   一言是否跳过 30 秒缓存取新句（推送时用）
  * @returns {Promise<string>}
  */
@@ -352,18 +357,28 @@ function accountHeaderLine(ctx) {
  * 抽成单一出口，是为了让所有调用方共用同一条开关 + 降级判断，
  * 避免口径漂移导致一处加一处不加。
  *
- * @param {object} notice     推送配置
- * @param {boolean} [override] 显式开关；未传则跟随 notice.hitokoto（缺省 true）
+ * @param {object} notice     推送配置（只用其中的开关 hitokotoInPush）
+ * @param {boolean} [override] 显式开关；未传则跟随 notice.hitokotoInPush（缺省 true）。
+ *                             旧配置只有 notice.hitokoto 没有 hitokotoInPush 时，
+ *                             global-config 的 migrateNoticeHitokoto 会按 hitokoto
+ *                             同值兜底（保持旧意图），所以这里直接读即可。
  * @param {boolean} [force]    跳过 TTL 缓存重新请求（推送时取新句用）
  * @returns {Promise<string>}
  */
 async function quoteLine(notice, override, force = false) {
   const cfg = notice || {};
-  const off = override != null ? override === false : cfg.hitokoto === false;
+  const off = override != null ? override === false : cfg.hitokotoInPush === false;
   if (off) return "";
   try {
-    // 句子类型跟随全局设置（接口 c 参数）；空数组 = 不限类型
-    return hitokoto.format(await hitokoto.get({ force, types: cfg.hitokotoTypes }));
+    // 句子类型读**外观配置**（0.14.14 从 notice 迁到 appearance），
+    // 空数组 = 不限类型。读盘失败时按不限处理，绝不因为读不到配置就卡住推送。
+    let types = [];
+    try {
+      types = appearance.get()?.hitokotoTypes || [];
+    } catch {
+      types = [];
+    }
+    return hitokoto.format(await hitokoto.get({ force, types }));
   } catch {
     // 公益接口超时/不可用时静默跳过：只为美观，不值得阻塞任务推送
     return "";
@@ -385,7 +400,7 @@ async function withAccountHeader(ctx, text, opts = {}) {
     }
   }
 
-  // 一言：默认跟随账户/全局的 notice.hitokoto 开关。
+  // 一言：默认跟随推送配置 notice.hitokotoInPush 开关（界面侧的一言开关独立）。
   // 位置固定在**消息末尾**（前面空一行）——首行留给标题/用户名，
   // 多账户时一眼就能看出这条推送来自哪个账号，不会被一句话挤走。
   const notice =

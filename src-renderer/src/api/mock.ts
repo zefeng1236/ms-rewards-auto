@@ -53,9 +53,8 @@ const DEFAULT_CONFIG: AppConfig = {
     feishu: "",
     pushme: "",
     bark: "",
-    hitokoto: true,
-    hitokotoPosition: "sidebar",
-    hitokotoTypes: [],
+    // 推送是否附加一言（界面侧三件套已迁到 DEFAULT_APPEARANCE）
+    hitokotoInPush: true,
   },
   logging: { retentionDays: 7 },
   goals: {
@@ -101,6 +100,10 @@ const DEFAULT_APPEARANCE: Appearance = {
   pointerHalo: true,
   autoTheme: false,
   bgResolved: null,
+  // 一言（界面侧）三件套：从 notice 迁到 appearance，与 src/appearance.js DEFAULTS 对齐
+  hitokoto: true,
+  hitokotoPosition: "sidebar",
+  hitokotoTypes: [],
 };
 
 /**

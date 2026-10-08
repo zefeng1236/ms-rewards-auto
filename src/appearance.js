@@ -5,6 +5,7 @@ const sp = require("./storage-path");
 const wallpapers = require("./wallpapers");
 // cron 结构校验（薄壳，见 src/cron.js；语义权威在 src-renderer/src/utils/cron.ts）
 const cronModule = require("./cron");
+const hitokotoModule = require("./hitokoto");
 
 /**
  * 应用外观设置（appearance.json）
@@ -77,6 +78,16 @@ const DEFAULTS = {
   autoTheme: false,
   // bing 每日图解析缓存 { date: "YYYY-MM-DD", url }，一天只请求一次
   bgResolved: null,
+  // 一言（在个性化）菜单管）：开 / 关 + 位置 + 句子类型。
+  // 原本 `notice.hitokoto` 一个开关同时管「界面 + 推送」—— 但位置/类型是外观，
+  // 推送侧另起 notice.hitokotoInPush。这里 3 个字段是迁移后的归宿；
+  // 旧 normalize 会对没有 hitokoto 段的 appearance 兜底到下面的默认值。
+  hitokoto: true,
+  // 一言在界面上的显示位置：sidebar 左下角侧边栏贴底（默认）| bottomRight 右下角贴底 | topbar 窗口原生标题栏
+  hitokotoPosition: "sidebar",
+  // 一言句子类型（接口 c 参数）：字母数组，空数组 = 不限类型
+  // 取值见 src/hitokoto.js 的 TYPES（a 动画 … l 抖机灵）
+  hitokotoTypes: [],
 };
 
 // 主界面壁纸白名单。0.13.1 曾把 "flow" 放进来当全局默认，用户纠正：
@@ -229,6 +240,15 @@ function get() {
       resolved && typeof resolved.url === "string" && typeof resolved.date === "string"
         ? { date: resolved.date, url: resolved.url }
         : null,
+    // 一言三件套（个性化菜单管）：开关 / 位置 / 句子类型。
+    // 字段从老 notice 段迁移过来，normalize 兜底到 DEFAULTS。
+    hitokoto: raw.hitokoto === undefined ? DEFAULTS.hitokoto : raw.hitokoto === true,
+    hitokotoPosition: hitokotoModule.normalizePosition(
+      raw.hitokotoPosition === undefined ? DEFAULTS.hitokotoPosition : raw.hitokotoPosition
+    ),
+    hitokotoTypes: hitokotoModule.normalizeTypes(
+      raw.hitokotoTypes === undefined ? DEFAULTS.hitokotoTypes : raw.hitokotoTypes
+    ),
   };
 }
 
@@ -268,6 +288,14 @@ function set(patch) {
       next.bgResolved && next.bgResolved.date && next.bgResolved.url
         ? { date: next.bgResolved.date, url: next.bgResolved.url }
         : null,
+    // 一言三件套：开 / 位置 / 句子类型，分别走对应的归一化。
+    hitokoto: next.hitokoto === undefined ? cur.hitokoto : next.hitokoto === true,
+    hitokotoPosition: hitokotoModule.normalizePosition(
+      next.hitokotoPosition === undefined ? cur.hitokotoPosition : next.hitokotoPosition
+    ),
+    hitokotoTypes: hitokotoModule.normalizeTypes(
+      next.hitokotoTypes === undefined ? cur.hitokotoTypes : next.hitokotoTypes
+    ),
   };
   fs.writeFileSync(FILE, JSON.stringify(out, null, 2), "utf8");
   return out;

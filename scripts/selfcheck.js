@@ -3810,36 +3810,99 @@ checkTrue(
     !/const limit = Math\.max\(1, Math\.min\(randInt\(4, 7\), remaining\)\)/.test(tasksForceSrc)
 );
 
-// —— 默认值跨文件同步（含 hitokoto / hitokotoPosition）——
-check("config.DEFAULTS.notice 含 hitokoto 开关与位置", cfgDefaults.notice.hitokotoPosition, "sidebar");
-check("global-config 默认值同步含位置", globalDefaults.notice.hitokotoPosition, "sidebar");
+// —— 一言：2026-10-09 拆分「界面显示」与「推送附加」——
+//   界面三件套（hitokoto / hitokotoPosition / hitokotoTypes）迁到 appearance（个性化菜单），
+//   推送侧只留开关 notice.hitokotoInPush（任务全局设置 → 推送通知）。
+//   下方守卫断言的正是这个分工，防止有人把三件塞回 notice 或让推送去读 notice 的类型。
+const appearanceDefaultsSrc = fs.readFileSync(path.join(ROOT, "src", "appearance.js"), "utf8");
+const personalizeSrcHk = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "views", "Personalize.tsx"),
+  "utf8"
+);
+// 独立读源（不叫 globalConfigSrc / cfgSrc：本文件内已有多处声明，重名会 SyntaxError）
+const hkGlobalConfigSrc = fs.readFileSync(path.join(ROOT, "src", "global-config.js"), "utf8");
+const hkCfgSrc = fs.readFileSync(path.join(ROOT, "src", "config.js"), "utf8");
+check("appearance.DEFAULTS 含一言位置（界面侧）", /hitokotoPosition: "sidebar"/.test(appearanceDefaultsSrc), true);
+check("global-config 默认含推送一言开关", /hitokotoInPush: true/.test(hkGlobalConfigSrc), true);
+check("config.DEFAULTS 含推送一言开关", /hitokotoInPush: true/.test(hkCfgSrc), true);
 checkTrue("渲染层 mock 默认值同步含位置", /hitokotoPosition: "sidebar"/.test(mockSrc));
-checkTrue("设置页出现一只言位置下拉", /显示位置/.test(formSrc) && /hitokotoPosition/.test(formSrc));
+checkTrue(
+  "个性化菜单出现一言位置选择（界面侧唯一入口）",
+  // 判据要覆盖**整个选择器**，不能只查 "hitokotoPosition" 字样 ——
+  // 否则把位置下拉整个删掉、只留下派生变量声明，反例照样通过（实测踩过）。
+  /aria-label="一言显示位置"/.test(personalizeSrcHk) &&
+    /HITOKOTO_POSITION_OPTIONS\.map/.test(personalizeSrcHk) &&
+    /patchAppearance\(\{\s*hitokotoPosition: v as HitokotoPosition/.test(personalizeSrcHk)
+);
+checkTrue(
+  "任务全局设置里不再出现一言位置/类型（旧入口已撤）",
+  !/显示位置/.test(formSrc) && !/HITOKOTO_TYPE_OPTIONS/.test(formSrc)
+);
+checkTrue(
+  "任务全局设置的推送一言开关独立于界面（两个开关不是同一个字段）",
+  /label="推送附加一言"/.test(formSrc) &&
+    /hitokotoInPush: v/.test(formSrc) &&
+    // 反例：又写回 notice.hitokoto → 变成"界面关了推送也跟着关"
+    !/notice: \{ hitokoto: v \}/.test(formSrc)
+);
 
 // —— 一言句子类型（0.13.13）：类型表跨文件同步 + 三处取句都传 types ——
+// ⚠️ 0.14.14 起类型住在 appearance，**主进程与推送都不能再从 notice 读**。
 // 独立读源，不复用别处变量（同文件内重复声明会 SyntaxError，未定义则是 ReferenceError）
 const hkMainSrc = fs.readFileSync(path.join(ROOT, "src", "electron-main.js"), "utf8");
 const hkWebApiSrc = fs.readFileSync(path.join(ROOT, "src", "web-api.js"), "utf8");
 const hkTypesSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "types", "index.ts"), "utf8");
-checkTrue("config 默认一言不限类型", Array.isArray(cfgDefaults.notice.hitokotoTypes) && cfgDefaults.notice.hitokotoTypes.length === 0);
-checkTrue("global-config 默认一言不限类型", Array.isArray(globalDefaults.notice.hitokotoTypes) && globalDefaults.notice.hitokotoTypes.length === 0);
+checkTrue("appearance 默认一言不限类型", /hitokotoTypes: \[\]/.test(appearanceDefaultsSrc));
 checkTrue("mock 默认一言不限类型", /hitokotoTypes: \[\]/.test(mockSrc));
 checkTrue("渲染层类型声明包含 hitokotoTypes", /hitokotoTypes: string\[\]/.test(hkTypesSrc));
 checkTrue(
-  "设置页句子类型 chip 表与后端 TYPES 逐项一致（12 类）",
-  /HITOKOTO_TYPE_OPTIONS/.test(formSrc) &&
+  "个性化菜单句子类型 chip 表与后端 TYPES 逐项一致（12 类）",
+  /HITOKOTO_TYPE_OPTIONS/.test(personalizeSrcHk) &&
     ["a动画", "b漫画", "c游戏", "d文学", "e原创", "f来自网络", "g其他", "h影视", "i诗词", "j网易云", "k哲学", "l抖机灵"].every(
-      (pair) => formSrc.includes(`label: "${pair.slice(1)}", value: "${pair.slice(0, 1)}"`)
+      (pair) => personalizeSrcHk.includes(`label: "${pair.slice(1)}", value: "${pair.slice(0, 1)}"`)
     )
 );
 checkTrue(
-  "设置页把非法/缺失的类型当「不限」处理（不抛错）",
-  /Array\.isArray\(value\.notice\?\.hitokotoTypes\)/.test(formSrc)
+  "个性化菜单把非法/缺失的类型当「不限」处理（不抛错）",
+  /Array\.isArray\(appearance\?\.hitokotoTypes\)/.test(personalizeSrcHk)
 );
-// 取句三处（主进程 IPC / Web API / 推送）都必须把类型透传给后端
-checkTrue("主进程 hitokoto:get 透传全局配置的句子类型", /hitokoto\.get\(\{ types: globalConfig\.get\(\)\?\.notice\?\.hitokotoTypes \}\)/.test(hkMainSrc));
-checkTrue("Web API getHitokoto 透传句子类型", /hitokoto\.get\(\{ types: globalConfig\.get\(\)\?\.notice\?\.hitokotoTypes \}\)/.test(hkWebApiSrc));
-checkTrue("推送 quoteLine 透传句子类型", /hitokoto\.get\(\{ force, types: cfg\.hitokotoTypes \}\)/.test(notifySrc));
+// 取句三处（主进程 IPC / Web API / 推送）都必须把类型透传给后端，
+// 且都从 **appearance** 读（迁走后再读 notice 会永远拿到 undefined → 静默变「不限类型」）
+checkTrue(
+  "主进程 hitokoto:get 从 appearance 透传句子类型",
+  /hitokoto\.get\(\{ types: appearance\.get\(\)\?\.hitokotoTypes \}\)/.test(hkMainSrc)
+);
+checkTrue(
+  "主进程 hitokoto:get 不再读 notice.hitokotoTypes（字段已迁走）",
+  !/notice\?\.hitokotoTypes/.test(hkMainSrc)
+);
+checkTrue(
+  "Web API getHitokoto 从 appearance 透传句子类型",
+  /hitokoto\.get\(\{ types: appearance\.get\(\)\?\.hitokotoTypes \}\)/.test(hkWebApiSrc)
+);
+checkTrue(
+  "推送 quoteLine 从 appearance 透传句子类型（不是 notice）",
+  /appearance\.get\(\)\?\.hitokotoTypes/.test(notifySrc) && !/types: cfg\.hitokotoTypes/.test(notifySrc)
+);
+
+// —— 老配置迁移：hitokoto（老单开关）→ hitokotoInPush（推送新开关）——
+// 反例：0.14.14 拆分时若没做这层，老用户「关掉推送一言」的意图会在
+// deepMerge 补默认值（true）时悄悄复活 —— 属于静默丢用户配置。
+checkTrue(
+  "老配置 hitokoto=false 迁移成 hitokotoInPush=false（关推送一言的意图不丢）",
+  /function migrateNoticeHitokoto\(/.test(hkGlobalConfigSrc) &&
+    /if \("hitokotoInPush" in notice\) return cfg/.test(hkGlobalConfigSrc) &&
+    /notice\.hitokotoInPush = notice\.hitokoto === true/.test(hkGlobalConfigSrc)
+);
+checkTrue(
+  "迁移函数在 load() 与 set() 都生效（不会只在启动时跑一次）",
+  /cache = migrateNoticeHitokoto\(deepMerge\(GLOBAL_DEFAULTS, raw\)\)/.test(hkGlobalConfigSrc) &&
+    /const merged = migrateNoticeHitokoto\(deepMerge\(load\(\), patch/.test(hkGlobalConfigSrc)
+);
+checkTrue(
+  "推送开关读 hitokotoInPush（旧名 hitokoto 会当成没传 → 静默变 true）",
+  /cfg\.hitokotoInPush === false/.test(notifySrc)
+);
 
 // —— 一言「标题栏」位置 = 窗口原生标题栏（2026-10-01 用户反馈：应落在系统标题栏）——
 // 链路：App 上报 → preload 暴露 setWindowSubtitle → 主进程拼 base + 一言后 setTitle。

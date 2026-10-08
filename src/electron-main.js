@@ -2043,8 +2043,11 @@ function registerIpc() {
   // ---- 每日一言（界面取当天那一句，与推送共用同一份按天缓存）----
   ipcMain.handle("hitokoto:get", async () => {
     try {
-      // 句子类型来自全局设置（接口 c 参数）；空数组 = 不限类型
-      return await hitokoto.get({ types: globalConfig.get()?.notice?.hitokotoTypes });
+      // 句子类型来自外观设置（接口 c 参数，0.14.14 从 notice 迁到 appearance）；
+      // 空数组 = 不限类型。
+      // ⚠️ 推送侧用同一份类型（见 src/notify.js 的 quoteLine），
+      // 所以这里不能读 notice —— 那个字段已经搬走了。
+      return await hitokoto.get({ types: appearance.get()?.hitokotoTypes });
     } catch {
       return null;
     }
