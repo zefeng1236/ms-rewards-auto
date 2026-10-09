@@ -3990,8 +3990,39 @@ checkTrue(
   //   只写一个 `\.` 匹配不上（反例实测踩到，守卫会假绿）。
   // ⚠️ 同时必须要求最后是 `Method(` —— 否则 `"release-notes/$env:VER.md"`
   //    里的 `.md` 会被当成方法名误报（反例实测过）。
-  const chain = ciCode.match(/\$env:[A-Za-z_][A-Za-z0-9_]*\)?[\s.]*[A-Za-z][A-Za-z0-9_]*\s*\(/g) || [];
+  // 两种形态都要抓（反例实测各自都能绕过对方）：
+  //   A. `$env:VAR).Method(` —— 后面真的跟着链式调用；
+  //   B. `$env:VAR).` 出现在**行尾** —— 悬空的点，下一行是新语句，同样 ParserError。
+  const chainA = ciCode.match(/\$env:[A-Za-z_][A-Za-z0-9_]*\)?[\s.]*[A-Za-z][A-Za-z0-9_]*\s*\(/g) || [];
+  const chainB = ciCode.match(/\$env:[A-Za-z_][A-Za-z0-9_]*\)\s*\.[ \t]*$/gm) || [];
+  const chain = [...chainA, ...chainB];
   const dynamic = ciCode.match(/\$env:\s*\(/g) || [];
+  // 多行链式调用（无论点在哪一侧）都会踩坑：
+  //   点留在行尾 + 下一行也以点开头 → 连续两个点 → ParserError；
+  //   点只放下一行开头 → Windows PowerShell 5.1 不认（本机实测报错）。
+  // 0.15.0 的 release job 在这里连挂三次才定位到。统一要求逐行独立赋值。
+  const multilineChain = [];
+  {
+    const lines = ciRaw.split(/\r?\n/);
+    for (let i = 0; i < lines.length; i++) {
+      const cur = lines[i].trimEnd();
+      const next = (lines[i + 1] || "").trim();
+      // ① 行尾是点、下一行以点开头 → 双点
+      if (/\.\s*$/.test(cur) && /^\s*\.[A-Za-z]/.test(lines[i + 1] || "")) {
+        multilineChain.push(`L${i + 1}: 行尾的. + 下行开头的. → 双点`);
+        continue;
+      }
+      // ② 上一行以 ) 结尾、下一行以 .Method( 开头 → 5.1 不支持
+      if (/\)\s*$/.test(cur) && /^\s*\.[A-Za-z][A-Za-z0-9_]*\s*\(/.test(next)) {
+        multilineChain.push(`L${i + 1}: 点放下一行开头 → PS 5.1 不认`);
+      }
+    }
+  }
+  checkTrue(
+    "CI 的 PowerShell 不做多行链式调用（逐行独立赋值，兼容 PS 5.1 与 7）",
+    multilineChain.length === 0,
+    multilineChain.slice(0, 3).join("；")
+  );
   checkTrue(
     "CI 的 PowerShell 不在 $env: 变量上链式调用方法（会 ParserError）",
     chain.length === 0,

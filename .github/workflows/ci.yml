@@ -206,13 +206,20 @@ jobs:
           $bmSha = $env:BM_SHA
           $bmBytes = $env:BM_BYTES
           $bmName = $env:BM_NAME
-          $body = $body.Replace('{{VERSION}}', $ver).
-                        .Replace('{{SHA256_EXE}}', $exeSha).
-                        .Replace('{{BYTES_EXE}}', $exeBytes).
-                        .Replace('{{EXE_NAME}}', $exeName).
-                        .Replace('{{SHA256_BLOCKMAP}}', $bmSha).
-                        .Replace('{{BYTES_BLOCKMAP}}', $bmBytes).
-                        .Replace('{{BLOCKMAP_NAME}}', $bmName)
+          # ⚠️ 一律写成**逐行独立赋值**，不要用多行链式 —— 0.15.0 发版时
+          #    release job 在这里连挂三次（脚本第 25 行），三种写法都不行：
+          #     ① `.` 留在行尾 + 下行以 `.` 开头 → 拼成 `Method()..Method2()`
+          #        （连续两个点）→ ParserError；
+          #     ② `.` 只放下一行开头 → Windows PowerShell 5.1 不认，
+          #        报「无法将 .Replace 项识别为 cmdlet」（pwsh 7 才支持）。
+          #    逐行赋值在 5.1 与 7 上都能跑，不依赖续行规则，也更好读。
+          $body = $body.Replace('{{VERSION}}', $ver)
+          $body = $body.Replace('{{SHA256_EXE}}', $exeSha)
+          $body = $body.Replace('{{BYTES_EXE}}', $exeBytes)
+          $body = $body.Replace('{{EXE_NAME}}', $exeName)
+          $body = $body.Replace('{{SHA256_BLOCKMAP}}', $bmSha)
+          $body = $body.Replace('{{BYTES_BLOCKMAP}}', $bmBytes)
+          $body = $body.Replace('{{BLOCKMAP_NAME}}', $bmName)
 
           # ⚠️ 替换后必须自查还有没有残留占位符（2026-10-07 踩到）。
           # v0.14.9 线上正文里SHA256 全是 `{{SHA256_EXE}}` 字面量 —— 上一步的
