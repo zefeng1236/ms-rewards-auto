@@ -3967,6 +3967,43 @@ checkTrue(
   "又出现 maxWidth 内联 → 该弹窗会比别的窄一截"
 );
 
+// —— CI 里的 PowerShell 不能用 $env: 做链式调用 / 动态变量名 ——
+// 0.15.0 发版时 release job **连挂两次**，都是 ParserError：
+//   ① `$body.Replace('{{X}}', $env:VER).Replace(...)` → Missing property name
+//   ② `if (-not $env:($pair[0]))`                    → 动态变量名同样不行
+// 根因：`$env:` 是环境变量**驱动器**语法，后面只接受字面变量名。
+// 更值得记的是：这段脚本 0.14.x 从来没被真正执行过（历来是手工 gh release create 发的），
+// 所以两种错法一直躺在仓库里，直到真走自动发布才连着爆。
+{
+  const ciPath = path.join(ROOT, ".github", "workflows", "ci.yml");
+  const ciRaw = fs.readFileSync(ciPath, "utf8");
+  // 只看真正的代码行：剥掉纯注释行（本次修复的说明注释里会引用这些错误写法）
+  const ciCode = ciRaw
+    .split(/\r?\n/)
+    .filter((ln) => !/^\s*#/.test(ln))
+    .join("\n");
+  // ⚠️ 真正的错误形态是「$env:VAR 出现在方法实参里」，而且几乎总是跨行：
+  //      $body = $body.Replace('{{VERSION}}', $env:VER).
+  //                          .Replace('{{SHA256_EXE}}', $exeSha).
+  //                                                   ^^^^^^^^^^ 实参位置
+  //   注意 `$env:VER).` 与下一行的 `.Replace(` 之间隔了换行 —— 中间有**两个点**，
+  //   只写一个 `\.` 匹配不上（反例实测踩到，守卫会假绿）。
+  // ⚠️ 同时必须要求最后是 `Method(` —— 否则 `"release-notes/$env:VER.md"`
+  //    里的 `.md` 会被当成方法名误报（反例实测过）。
+  const chain = ciCode.match(/\$env:[A-Za-z_][A-Za-z0-9_]*\)?[\s.]*[A-Za-z][A-Za-z0-9_]*\s*\(/g) || [];
+  const dynamic = ciCode.match(/\$env:\s*\(/g) || [];
+  checkTrue(
+    "CI 的 PowerShell 不在 $env: 变量上链式调用方法（会 ParserError）",
+    chain.length === 0,
+    chain.length ? `还有 ${chain.slice(0, 3).join(" / ")} → 改成先存局部变量再调用` : ""
+  );
+  checkTrue(
+    "CI 的 PowerShell 不用 $env:(变量) 动态取环境变量（改用 GetEnvironmentVariable）",
+    dynamic.length === 0,
+    dynamic.length ? `还有 ${dynamic.length} 处 → 改用 [Environment]::GetEnvironmentVariable()` : ""
+  );
+}
+
 // —— CodeQL 通报的两类安全告警，修复必须留在代码里 ——
 // ① js/incomplete-multi-character-sanitization（notify-markdown.js #16/#17）：
 //    单次 replace 链剥不干净 markdown 强调标记 —— 移除后剩下的星号会重新
@@ -6363,7 +6400,9 @@ console.log("\n【0.14.7】CodeQL 安全告警修复守卫");
     );
     checkTrue(
       "CI 校验六个产物变量都非空后才写正文",
-      /foreach\s*\(\s*\$pair[\s\S]{0,400}为空/.test(ci),
+      // 放宽到 900 字符：现在这段里插了「为什么不能用 $env:(变量)」的说明注释，
+      // 400 的上限够不到后面的「为空」，会变成误报（守卫自己失配 = 假红）。
+      /foreach\s*\(\s*\$pair[\s\S]{0,900}为空/.test(ci),
       "光查残留占位符不够：若变量本身是空串，占位符会被替换成空串而检查不出来" +
         "（这正是 v0.14.9 线上正文哈希为空的成因）—— 必须逐个校验六个值非空"
     );

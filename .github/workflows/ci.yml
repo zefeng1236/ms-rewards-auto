@@ -229,7 +229,11 @@ jobs:
           foreach ($pair in @(@('EXE_SHA','SHA256_EXE'), @('EXE_BYTES','BYTES_EXE'),
                               @('EXE_NAME','EXE_NAME'), @('BM_SHA','SHA256_BLOCKMAP'),
                               @('BM_BYTES','BYTES_BLOCKMAP'), @('BM_NAME','BLOCKMAP_NAME'))) {
-            if (-not $env:($pair[0])) { throw "步骤变量 $($pair[0]) 为空，对应占位符 $($pair[1]) 没被真正替换" }
+            # ⚠️ 同上：`$env:($pair[0])` 这种「动态变量名」写法在 pwsh 7 / Linux
+            #    runner 上会 ParserError（0.15.0 第二次踩）。动态取环境变量要用
+            #   [Environment]::GetEnvironmentVariable()。
+            $val = [Environment]::GetEnvironmentVariable($pair[0])
+            if (-not $val) { throw "步骤变量 $($pair[0]) 为空，对应占位符 $($pair[1]) 没被真正替换" }
           }
 
           $body | Out-File -FilePath release-notes-rendered.md -Encoding utf8 -NoNewline
