@@ -372,11 +372,22 @@ const aboutSrc = fs.readFileSync(
   path.join(ROOT, "src-renderer", "src", "views", "About.tsx"),
   "utf8"
 );
-const aboutVersion = (aboutSrc.match(/APP_VERSION\s*=\s*"([^"]+)"/) || [])[1];
+// ⚠️ 必须**先剥注释**再找版本号：About.tsx 有一段历史说明注释里写着
+//    「之前是自声明的 const APP_VERSION = "0.14.13"」，不剥注释就会把这段
+//    历史文字当成真值 —— 0.14.14 发版时就假红了一次（实际 About 页早已改成
+//    从 ../version 导入 DISPLAY_VERSION，真值由 version.ts 那条守卫校验）。
+const aboutBody = aboutSrc
+  .replace(/\/\*[\s\S]*?\*\//g, "")
+  .replace(/^[ \t]*\/\/.*$/gm, "");
+const aboutVersion = (aboutBody.match(/(?:export\s+)?const\s+APP_VERSION\s*=\s*"([^"]+)"/) || [])[1];
+// 从 ../version 导入 = 版本真值在 version.ts（那条守卫单独盯着），此处不该再判字面量
+const aboutImportsVersion = /import\s*\{[^}]*DISPLAY_VERSION\s+as\s+APP_VERSION[^}]*\}/.test(aboutBody);
 checkTrue(
-  "关于页 APP_VERSION 与 package.json 一致",
-  aboutVersion === pkgVersion,
-  `关于页 ${aboutVersion}，package.json ${pkgVersion}`
+  "关于页版本与 package.json 一致（自声明字面量 或 从 ../version 导入）",
+  aboutImportsVersion ? true : aboutVersion === pkgVersion,
+  aboutImportsVersion
+    ? "已从 ../version 导入 DISPLAY_VERSION（真值由 version.ts 守卫校验）"
+    : `关于页 ${aboutVersion}，package.json ${pkgVersion}`
 );
 
 const readmeSrc = fs.readFileSync(path.join(ROOT, "README.md"), "utf8");
