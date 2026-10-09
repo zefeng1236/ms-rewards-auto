@@ -151,10 +151,15 @@ jobs:
         run: |
           # 按版本号精确匹配而不是「取第一个 exe」：本机 dist/ 会堆积历史产物
           # （实测能到 13 个），取第一个很可能把旧包挂到 Release 上。
-          # 产物名规则：MS-Rewards-Auto-Setup-<version>.<buildNumber>.exe
+          #
+          # ⚠️ 产物名有两种形态，必须都试（0.14.14 发版时在这里踩过）：
+          #   - 正式三段版（buildNumber=0）→ MS-Rewards-Auto-Setup-0.14.14.exe
+          #   - 四位热修版（buildNumber>0） → MS-Rewards-Auto-Setup-0.14.14.2.exe
+          # 早先只写 `-$ver.*.exe`，正式版文件名后面没有第四段，
+          # glob 匹配不到 → 「dist 里找不到版本 x 的安装包（打包异常）」假报错。
           $ver = node -p "require('./package.json').version"
-          $exe = Get-ChildItem "dist/MS-Rewards-Auto-Setup-$ver.*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-          $bm  = Get-ChildItem "dist/MS-Rewards-Auto-Setup-$ver.*.blockmap" -ErrorAction SilentlyContinue | Select-Object -First 1
+          $exe = Get-ChildItem "dist/MS-Rewards-Auto-Setup-$ver.exe", "dist/MS-Rewards-Auto-Setup-$ver.*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          $bm  = Get-ChildItem "dist/MS-Rewards-Auto-Setup-$ver.blockmap", "dist/MS-Rewards-Auto-Setup-$ver.*.blockmap" -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $exe) { throw "dist 里找不到版本 $ver 的安装包（打包异常）" }
           "ver=$ver"                | Out-File -Append $env:GITHUB_OUTPUT -Encoding utf8
           "exename=$($exe.Name)"    | Out-File -Append $env:GITHUB_OUTPUT -Encoding utf8
