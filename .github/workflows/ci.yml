@@ -193,13 +193,26 @@ jobs:
             "⚠️ 未找到 $f，已用骨架说明" | Write-Output
           }
           # 占位符全量替换（PowerShell 的 .Replace 换全部出现处，非仅首个）
-          $body = $body.Replace('{{VERSION}}', $env:VER).
-                        .Replace('{{SHA256_EXE}}', $env:EXE_SHA).
-                        .Replace('{{BYTES_EXE}}', $env:EXE_BYTES).
-                        .Replace('{{EXE_NAME}}', $env:EXE_NAME).
-                        .Replace('{{SHA256_BLOCKMAP}}', $env:BM_SHA).
-                        .Replace('{{BYTES_BLOCKMAP}}', $env:BM_BYTES).
-                        .Replace('{{BLOCKMAP_NAME}}', $env:BM_NAME)
+          #
+          # ⚠️ 必须先把环境变量存进局部变量再链式调用（0.15.0 发版时在这里踩过）：
+          #   `$env:VER.Replace(...)` 会报
+          #   "Missing property name after reference operator" ——
+          #   `$env:` 是环境变量**驱动器**语法，后面只能跟变量名，
+          #   不能直接接 `.Method()`；`$env:VER.` 里的点会被当成属性访问符。
+          $ver = $env:VER
+          $exeSha = $env:EXE_SHA
+          $exeBytes = $env:EXE_BYTES
+          $exeName = $env:EXE_NAME
+          $bmSha = $env:BM_SHA
+          $bmBytes = $env:BM_BYTES
+          $bmName = $env:BM_NAME
+          $body = $body.Replace('{{VERSION}}', $ver).
+                        .Replace('{{SHA256_EXE}}', $exeSha).
+                        .Replace('{{BYTES_EXE}}', $exeBytes).
+                        .Replace('{{EXE_NAME}}', $exeName).
+                        .Replace('{{SHA256_BLOCKMAP}}', $bmSha).
+                        .Replace('{{BYTES_BLOCKMAP}}', $bmBytes).
+                        .Replace('{{BLOCKMAP_NAME}}', $bmName)
 
           # ⚠️ 替换后必须自查还有没有残留占位符（2026-10-07 踩到）。
           # v0.14.9 线上正文里SHA256 全是 `{{SHA256_EXE}}` 字面量 —— 上一步的
