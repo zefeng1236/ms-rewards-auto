@@ -758,7 +758,12 @@ export function Personalize({ bgSrc, onShuffle }: { bgSrc: string; onShuffle?: (
           <div className="field-row">
             <div>
               <div>面板不透明度</div>
-              <div className="hint">仅在半透明类预设下有视觉差异</div>
+              {/* 2026-10-09 用户纠正：旧文案写「仅在半透明类预设下有视觉差异」是错的。
+                  AppCard 的 thickness 默认就是 "thin"（liquidGlassCompat.tsx），
+                  而 compat 层把 --panel-opacity 接在
+                  `.app-material-card[data-thickness=thin]` 的填充 alpha 上，
+                  所有内容卡都走这一条 → 滑块处处生效，没有例外。 */}
+              <div className="hint">调低让背景更透，调高让面板文字更易读</div>
             </div>
             <div className="range-field">
               <CommitSlider

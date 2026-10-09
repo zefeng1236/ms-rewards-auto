@@ -69,9 +69,18 @@ scrape-profile/
 /verify-out.txt
 /shots/
 /WinUI3Demo*/
-# gui-react/ 是构建产物目录：只跟踪 index.html / assets/ / icon.png，
-# 验证用的截图（*-login.png / wiz-*.png / srv-*.png …）不进仓库。
+# gui-react/ 是构建产物目录：只跟踪 index.html / assets/ 与**运行时真正引用的图**，
+# 验证用的截图（*-login.png / wiz-*.png / srv-*.png / flip-*.png …）不进仓库。
+#
+# ⚠️ 2026-10-09 修：这里曾是 `/gui-react/*.png` 一刀切，把登录页插图
+# login-art.png 一起忽略了 → **Docker 镜像与安装包里登录页左侧空白**
+# （dev 模式正常，所以极难自查）。与 package.json 的 build.files 是同一个坑。
+# 现在改成「先全忽略、再显式放行运行时所需」，加图时两处要同步：
+#   ① 这里加 ! 白名单  ② package.json build.files 加 "gui-react/<名字>"
+# selfcheck 会自动扫源码里的 ./xxx.png 引用，漏放行直接变红。
 /gui-react/*.png
+!/gui-react/icon.png
+!/gui-react/login-art.png
 
 # 内部交接文档（含测试服务器 IP / 账户名 / 构建路径 / 本机用户名），
 # 只在本地与桌面知识库维护，不进公开仓库。

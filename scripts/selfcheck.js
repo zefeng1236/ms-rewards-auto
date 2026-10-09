@@ -1010,6 +1010,128 @@ checkTrue(
   JSON.stringify(pkgRaw.build.files)
 );
 
+// —— 运行时用到的 gui-react 图片必须逐个放行 ——
+// 背景（2026-10-09 用户报"登录页左边空白"）：0.14.x 打包瘦身时为了甩掉
+// 30+ 张本地验证截图，加了 `!gui-react/*.png` 一刀切 —— 连带把登录页插图
+// login-art.png 一起排除了（electron-builder 按文件系统收集、不看 gitignore，
+// 但 build.files 的排除优先级最高）。**dev 模式正常、安装包空白**，极难自查。
+//
+// ⚠️ 不要再手写白名单：新增图片时一定会忘。判据改为「自动扫描源码里
+// 所有 ./xxx.png 引用 → 必须都在 build.files 里被显式放行」，
+// 这样漏一个就变红，行为跟着需求走而不是靠人记。
+{
+  const usedImages = new Set();
+  const collectRefs = (dir) => {
+    for (const name of fs.readdirSync(dir)) {
+      if (name === "node_modules" || name.startsWith(".")) continue;
+      const p = path.join(dir, name);
+      let st;
+      try {
+        st = fs.statSync(p);
+      } catch {
+        continue;
+      }
+      if (st.isDirectory()) collectRefs(p);
+      else if (/\.(tsx?|jsx?|html|css)$/.test(name)) {
+        const text = fs.readFileSync(p, "utf8");
+        for (const m of text.matchAll(/["'`]\.\/([A-Za-z0-9_.-]+\.(?:png|jpe?g|gif|svg|webp|avif))["'`]/g)) {
+          usedImages.add(m[1]);
+        }
+      }
+    }
+  };
+  collectRefs(path.join(ROOT, "src-renderer", "src"));
+  // public 目录下的文件会被 vite 原样拷到 gui-react 根，运行时引用形如 ./xxx.png
+  collectRefs(path.join(ROOT, "src-renderer", "public"));
+
+  const files = Array.isArray(pkgRaw.build.files) ? pkgRaw.build.files : [];
+  const missingAssets = [...usedImages]
+    .filter((img) => {
+      const srcOk = fs.existsSync(path.join(ROOT, "src-renderer", "public", img));
+      const entry = "gui-react/" + img;
+      // public 下的图 → 必须显式列出（因为有 !gui-react/*.png 在前面挡着）
+      if (srcOk) return !files.includes(entry);
+      // 放在 src/assets 之类目录里的 → 只要 gui-react/**/* 覆盖到即可
+      return !files.includes("gui-react/**/*");
+    })
+    .sort();
+  checkTrue(
+    "源码里引用到的每张图片都在 build.files 里放行（否则安装包里空白）",
+    usedImages.size > 0 && missingAssets.length === 0,
+    missingAssets.length
+      ? `build.files 漏了：${missingAssets.join("、")}（dev 正常但安装包空白）`
+      : `只扫到 ${usedImages.size} 张图（应 ≥ 2）`
+  );
+
+  // ⚠️ 上面的守卫只看 build.files，看不到 .gitignore 的同类坑。
+  //    反例实测：删掉 .gitignore 里的 `!/gui-react/login-art.png` 放行行后，
+  //    因为文件**已被 git add 过**，git ls-files 仍显示已跟踪 → 守卫照样全绿。
+  //    但下一个 clone 的人会拿不到这张图（已跟踪 ≠ 仓库里有大文件，
+  //    真正要防的是「规则被改后新加的文件默默丢失」）。
+  //    判据直接查规则文本：先有一刀切排除，就必须有对应的 ! 白名单行。
+  const giText = fs.readFileSync(path.join(ROOT, ".gitignore"), "utf8");
+  const giMissing = [...usedImages]
+    .filter((img) => fs.existsSync(path.join(ROOT, "src-renderer", "public", img)))
+    .filter((img) => {
+      if (!/^\/gui-react\/\*\.png\s*$/m.test(giText)) return false; // 没有一刀切就不需要放行
+      return !new RegExp("^!/gui-react/" + img.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*$", "m").test(giText);
+    });
+  checkTrue(
+    ".gitignore 一刀切排除 gui-react/*.png 时，运行时图片都有 ! 白名单行",
+    giMissing.length === 0,
+    giMissing.length
+      ? `.gitignore 缺：${giMissing.map((i) => "!/gui-react/" + i).join("、")}（别人 clone 后登录页空白）`
+      : "无需白名单（未启用一刀切）"
+  );
+}
+
+// —— 「面板不透明度」滑块必须真有消费方，且说明文案别说假话 ——
+// 背景（2026-10-09 用户纠正）：设置页那行 hint 写「仅在半透明类预设下有视觉差异」，
+// 但 AppCard 的 thickness 默认就是 "thin"（liquidGlassCompat.tsx），
+// compat 层把 --panel-opacity 接在 `.app-material-card[data-thickness=thin]`
+// 的填充 alpha 上 —— 所有内容卡都走这一条，滑块处处生效，那句提示是错的。
+// 这个滑块历史上就出过一次「只有 UI 没有消费方，拖动完全没反应」的问题。
+{
+  const appTsx = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "App.tsx"), "utf8");
+  const compatCss = fs.readFileSync(
+    path.join(ROOT, "src-renderer", "src", "components", "liquidGlassCompat.css"),
+    "utf8"
+  );
+  const compatTsx = fs.readFileSync(
+    path.join(ROOT, "src-renderer", "src", "components", "liquidGlassCompat.tsx"),
+    "utf8"
+  );
+  const personalize = fs.readFileSync(
+    path.join(ROOT, "src-renderer", "src", "views", "Personalize.tsx"),
+    "utf8"
+  );
+
+  checkTrue(
+    "面板不透明度：--panel-opacity 变量被挂到根节点（有消费方，不是死滑块）",
+    /"--panel-opacity"\s*:\s*String\(appearance\?\.opacity/.test(appTsx),
+    "App.tsx 不再下发 --panel-opacity → 滑块拖动没反应"
+  );
+  checkTrue(
+    "面板不透明度：compat 层真的用它调制 .app-material-card 的填充 alpha",
+    /--panel-opacity[^\n]*?\*\s*100%\)\s*,\s*transparent\)/.test(compatCss) ||
+      /var\(--panel-opacity/.test(compatCss),
+    "compat 层不消费 --panel-opacity → 滑块形同虚设"
+  );
+  checkTrue(
+    "面板不透明度：AppCard 默认 thickness=thin（否则默认路径不经过那条规则）",
+    /thickness\s*=\s*"thin"/.test(compatTsx),
+    "AppCard 默认 thickness 变了 → 需确认 --panel-opacity 挂在哪个选择器上"
+  );
+  checkTrue(
+    "面板不透明度：说明文案不再声称「仅半透明预设下有效」（实际处处生效）",
+    // ⚠️ 只认真正的 JSX 文案节点（className="hint" 后面那行），
+    //    不能整文件搜 —— 解释这次修改的**注释里**也会出现这句原话，
+    //    那样守卫会永远红（踩过 MODAL_WIDTH 那个坑）。
+    !/className="hint"[^>]*>\s*仅在半透明类预设下有视觉差异/.test(personalize),
+    "又写回「仅在半透明类预设下有视觉差异」→ 与实际行为不符"
+  );
+}
+
 // EULA：安装器必须带「禁止商用」的最终用户许可协议页。
 // 私有仓库 + 只发 exe 的现状下，「禁止他人商用」靠两层：源码层靠闭源（已天然实现）、
 // 二进制层靠 EULA。electron-builder 的 nsis.license 指向 build/license.txt，
@@ -3775,6 +3897,39 @@ const DOC_SECRET_PATTERNS = [
     docFiles.length > 0 && badSecrets.length === 0,
     badSecrets.length ? badSecrets.slice(0, 5).join("；") : `只扫到 ${docFiles.length} 个 md（应 ≥ 5）`
   );
+
+  // 演示 IP 的归属地/运营商必须与该 IP 的**真实**数据一致。
+  // 2026-10-09 用户发现：文档里写「8.8.8.8 + 台北/中国台湾 + Linkless Communications」
+  // —— 那是用户真实 VPS 的查询结果，只把 IP 换成了演示地址，归属地没跟着换。
+  // ip.sb 实测 8.8.8.8 = US / Mountain View / Google(AS15169)，
+  // 且 8.8.8.8 是 anycast，geo 在不同解析点可能不同（ip-api 报 Ashburn/Virginia）。
+  // 所以这里锁定「不得再挂非美国/非 Google 的归属地」，不锁死具体城市。
+  {
+    const demoIps = ["8.8.8.8"];
+    const wrongGeo = [];
+    for (const rel of tracked) {
+      if (!rel.endsWith(".md")) continue;
+      const f = path.join(ROOT, rel);
+      if (!fs.existsSync(f)) continue;
+      const text = fs.readFileSync(f, "utf8");
+      const lines = text.split(/\r?\n/);
+      for (let i = 0; i < lines.length; i++) {
+        const ln = lines[i];
+        if (!demoIps.some((ip) => ln.includes(ip))) continue;
+        // 同一段（前后 4 行）内出现与该 IP 无关的归属地 = 错配
+        const ctx = lines.slice(Math.max(0, i - 4), i + 5).join("\n");
+        const geoHit = ctx.match(
+          /🇨🇳\s*[A-Za-z ]+\/TW|台湾|Linkless Communications|Hong Kong\/HK|香港\/中国香港|Macau\/MO|澳门\/中国澳门/
+        );
+        if (geoHit) wrongGeo.push(`${rel}:${i + 1} → 8.8.8.8 旁边挂着「${geoHit[0]}」`);
+      }
+    }
+    checkTrue(
+      "演示 IP 8.8.8.8 的归属地/运营商与真实数据一致（US / Google，非任何亚太节点）",
+      wrongGeo.length === 0,
+      wrongGeo.slice(0, 4).join("；") || "未发现错配"
+    );
+  }
 }
 
 // —— 弹窗宽度统一「撑满可用宽度」（2026-10-09 用户定）——
