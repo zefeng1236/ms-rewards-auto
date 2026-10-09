@@ -3689,6 +3689,94 @@ checkTrue(
 );
 wl.reset();
 
+// —— 对外文档里不许出现真实 IP / webhook 凭据（2026-10-09 用户 VPS IP 差点随发布说明外泄）——
+// 起因：0.14.14 的发布说明里，区域拦截推送的示例直接用了真实 VPS 的出口 IP。
+// 那台机器是公开的境外代理出口，IP 本就能被任何人查到，但**示例文字不该带它**。
+// 判据：扫全部对外 .md（README / CHANGELOG / release-notes / docker 文档），
+// 公网 IPv4 一律禁止，只放行保留段与文档段。
+//
+// ⚠️ 匹配必须带前后边界断言（`(?<![\w.\-])…(?![\w.\-])`）：四段数字里
+//    版本号最多 —— `0.14.9.1`、`0.13.10.2` 满仓库都是，
+//    只用 \b 边界会把它们全判成 IP（第一版守卫就误报了 5 条）。
+const DOC_IP_ALLOW = [
+  // 回环 / 未指定 / 广播
+  /^0\./, /^127\./, /^255\.255\.255\.255$/, /^::1$/,
+  // 首段 0 整体放行：RFC 1122 规定 0.0.0.0/8 保留，**不可能是真实公网 IP**。
+  // 这一条顺带挡掉版本号 —— `0.14.9.1`、`0.13.10.2` 前面多是空格/标点，
+  // 靠边界断言拦不住，得靠「首段为 0」这个语义判据。
+  // （`^0\.` 已包含上面的未指定地址，故此处不重复列出。）
+  // RFC1918 私网
+  /^10\./, /^192\.168\./, /^172\.(1[6-9]|2\d|3[01])\./,
+  // 链路本地
+  /^169\.254\./,
+  // RFC5737 文档保留段（示例专用，就是给文档用的）
+  /^192\.0\.2\./, /^198\.51\.100\./, /^203\.0\.113\./,
+  // Google 公共 DNS：本就在 RIPE 公开广播、无隐私问题，
+  // 而且是「演示 IP」的事实标准写法（用户 2026-10-09 明确要求示例统一用它）。
+  /^8\.8\.8\.8$/, /^8\.8\.4\.4$/,
+];
+// 文档里出现这些前缀 = 大概率贴了自己的 webhook
+const DOC_SECRET_PATTERNS = [
+  /access_token=[A-Za-z0-9]{24,}/,
+  /(?:^|[\s"'`])(?:key|token|secret|password|passwd)=[A-Za-z0-9\-_]{20,}/im,
+  /https:\/\/qyapi\.weixin\.qq\.com\/cgi-bin\/webhook\/send\?key=[A-Za-z0-9-]{20,}/,
+];
+{
+  // ⚠️ 只扫**git 跟踪的** .md —— 以 git ls-files 为准，不遍历文件系统。
+  //    理由：dist/ 里堆着历次打包带出来的 RELEASE-NOTES-*.md（已 gitignore、
+  //    不会公开），扫它们等于对着本地垃圾报警，报多了守卫会被无视。
+  //
+  // ⚠️ 必须用 execFileSync **直接调 git**，不能走 execSync + shell ——
+  //    后者在 Windows 上会 spawnSync cmd.exe EBUSY（本项目踩过），
+  //    结果 tracked=[] → 一个文件都不扫 → **守卫假绿**，比没有守卫更糟
+  //    （注入真实公网 IP 实测不报错）。所以这里读不到索引时**直接判失败**。
+  let tracked = null;
+  try {
+    tracked = execFileSync("git", ["ls-files"], {
+      cwd: ROOT,
+      encoding: "utf8",
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "ignore"],
+    })
+      .split(/\r?\n/)
+      .filter(Boolean);
+  } catch (e) {
+    tracked = null;
+  }
+  checkTrue(
+    "能读到 git 索引（本段守卫的前提，读不到就必须失败而不是静默放行）",
+    Array.isArray(tracked),
+    "git ls-files 执行失败 —— 守卫无法工作，拒绝静默放行"
+  );
+  const docFiles = (tracked || [])
+    .filter((rel) => rel.endsWith(".md") && rel.split("/").length <= 3)
+    .map((rel) => path.join(ROOT, rel));
+  const badIps = [];
+  const badSecrets = [];
+  for (const f of docFiles) {
+    const text = fs.readFileSync(f, "utf8");
+    for (const m of
+      text.match(/(?<![\w.\-])\d{1,3}(?:\.\d{1,3}){3}(?![\w.\-])/g) || []) {
+      if (!DOC_IP_ALLOW.some((re) => re.test(m))) badIps.push(`${path.relative(ROOT, f)} → ${m}`);
+    }
+    for (const re of DOC_SECRET_PATTERNS) {
+      const hit = text.match(re);
+      if (hit) badSecrets.push(`${path.relative(ROOT, f)} → ${String(hit[0]).slice(0, 40)}…`);
+    }
+  }
+  checkTrue(
+    "对外文档不含真实公网 IP（演示统一用 8.8.8.8 这类公开示例地址）",
+    // 顺带自查覆盖面：扫到 0 个文件说明 git 索引没读到，守卫等于没运行
+    docFiles.length > 0 && badIps.length === 0,
+    badIps.length ? badIps.slice(0, 5).join("；") : `只扫到 ${docFiles.length} 个 md（应 ≥ 5）`
+  );
+  checkTrue(
+    "对外文档不含 webhook 凭据 / 密码（贴真实 key 等于公开密钥）",
+    docFiles.length > 0 && badSecrets.length === 0,
+    badSecrets.length ? badSecrets.slice(0, 5).join("；") : `只扫到 ${docFiles.length} 个 md（应 ≥ 5）`
+  );
+}
+
 // —— 目标勋章图标 ——
 const goalsSrc = fs.readFileSync(path.join(ROOT, "src", "goals.js"), "utf8");
 const goalsMod = require(path.join(ROOT, "src", "goals.js"));
