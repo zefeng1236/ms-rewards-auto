@@ -45,6 +45,22 @@ function setBusy(sel, busy) {
 
 /** 深合并到本地缓存，避免每次改设置都要重新拉一遍 IPC */
 const FORBIDDEN_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+/**
+ * 只在 base 上写「自有数据属性」，绝不触发原型链上的 setter。
+ *
+ * 为什么不用 `base[k] = v`：若原型链上（或 Object.prototype 上）存在同名的
+ * accessor 属性，直接赋值会去调用那个 setter，等于把不可信的键名变成了
+ * 一次任意写入 —— 这正是 CodeQL `js/prototype-pollution-utility`（告警 #10）
+ * 报的路径。defineProperty 只动 base 自身，是静态分析工具认可的写法。
+ */
+function assignOwn(base, k, v) {
+  Object.defineProperty(base, k, {
+    value: v,
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  });
+}
 function mergeInto(base, patch) {
   if (!base || typeof base !== "object") return base;
   if (!patch || typeof patch !== "object") return base;
@@ -54,10 +70,10 @@ function mergeInto(base, patch) {
     // 显式判自有属性（静态分析与人都能一眼看出这里做了防护）
     if (!Object.prototype.hasOwnProperty.call(patch, k)) continue;
     const v = patch[k];
-    if (v && typeof v === "object" && !Array.isArray(v) && base[k] && typeof base[k] === "object" && !Array.isArray(base[k])) {
+    if (v && typeof v === "object" && !Array.isArray(v) && Object.prototype.hasOwnProperty.call(base, k) && base[k] && typeof base[k] === "object" && !Array.isArray(base[k])) {
       mergeInto(base[k], v);
     } else {
-      base[k] = v;
+      assignOwn(base, k, v);
     }
   }
   return base;

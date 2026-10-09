@@ -46,23 +46,52 @@ const HR = "---";
  * 所以补关键词前必须先剥标记，否则用户设的关键词如果是正文里带 markdown 的
  * 那个词，永远匹配不上。
  */
-function stripMarkdown(s) {
-  // ⚠️ 所有含 `*` 的正则一律用字符串 + new RegExp 构造，**不要**写字面量：
-  //   字面量里的连续 `*/`（如 `[*]{2}/` 这类）会被 JS 当成**块注释结束符**，
-  //   提前闭合注释、后面整段当代码解析，报 `SyntaxError: Unexpected token`。
-  //   本项目同类坑已踩多次（cron.ts / cron.js 注释里写步长表达式）。
+/**
+ * 剥掉加粗 / 斜体的星号标记（stripMarkdown 与 stripMarksKeepLines 共用）。
+ *
+ * ⚠️ 必须**迭代到稳定**，单次扫描会漏 —— 这是 CodeQL
+ * `js/incomplete-multi-character-sanitization`（告警 #16/#17）指的那类问题：
+ *   ① 一轮 replace 之后，剩下的星号会**重新组合**出新的标记
+ *      （`**a**` 与 `**b**` 相邻时，移除后中间可能再拼出 `**`）；
+ *   ② 纯标记串 `****` 因为 `(.+?)` 至少要吃一个字符，两轮正则都匹配不到
+ *      → **完全不会被净化**（实测输入 `****` 原样输出四个星号）。
+ * 所以先循环到不再变化，再兜底清掉「只剩星号」的残渣。
+ *
+ * ⚠️ 所有含星号的正则一律用字符串 + new RegExp 构造，**不要**写字面量：
+ *   字面量里「星号紧跟斜杠」那两个字符连在一起会被 JS 当成块注释结束符，
+ *   提前闭合注释、后面整段被当代码解析，报 SyntaxError: Unexpected token。
+ *   本项目同类坑已踩多次（cron.ts / cron.js 注释里写步长表达式）——
+ *   所以本文件里凡是想写出那两个字符的地方，一律用反引号拆开描述。
+ *
+ * @param {string} s
+ * @returns {string}
+ */
+function stripEmphasis(s) {
   const boldRe = new RegExp("[*]{2}(.+?)[*]{2}", "g"); // 加粗
   const italicRe = new RegExp("[*]([^*\\n]+)[*]", "g"); // 斜体（不用 lookbehind）
-  return String(s == null ? "" : s)
-    .replace(/^#{1,6}\s+/gm, "") // 标题
-    .replace(boldRe, "$1")
-    .replace(italicRe, "$1")
-    .replace(/`{1,3}([^`]*)`{1,3}/g, "$1") // 行内/块代码
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1") // 链接 [文字](地址)
-    .replace(/^>\s?/gm, "") // 引用
-    .replace(/^[-*+]\s+/gm, "") // 无序列表
-    .replace(/^\d+\.\s+/gm, "") // 有序列表
-    .replace(/<[^>]+>/g, "") // HTML 标签（含企微 font color）
+  const bareLine = new RegExp("^[*]+$", "gm"); // 整行只剩星号（纯标记，无内容）
+  const triple = new RegExp("[*]{3,}", "g"); // 行内 3 个以上连续星号
+  let out = String(s == null ? "" : s);
+  // 上限兜底：极端输入下避免死循环（每轮至少吃掉一对标记，8 轮足够现实文本）
+  for (let i = 0; i < 8; i++) {
+    const prev = out;
+    out = out.replace(boldRe, "$1").replace(italicRe, "$1");
+    if (out === prev) break;
+  }
+  return out.replace(triple, "").replace(bareLine, "");
+}
+
+function stripMarkdown(s) {
+  return stripEmphasis(
+    String(s == null ? "" : s)
+      .replace(/^#{1,6}\s+/gm, "") // 标题
+      .replace(/`{1,3}([^`]*)`{1,3}/g, "$1") // 行内/块代码
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1") // 链接 [文字](地址)
+      .replace(/^>\s?/gm, "") // 引用
+      .replace(/^[-*+]\s+/gm, "") // 无序列表
+      .replace(/^\d+\.\s+/gm, "") // 有序列表
+      .replace(/<[^>]+>/g, "") // HTML 标签（含企微 font color）
+  )
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -327,18 +356,18 @@ function feishuBody(title, text) {
  * @returns {string}
  */
 function stripMarksKeepLines(s) {
-  const boldRe = new RegExp("[*]{2}(.+?)[*]{2}", "g");
-  const italicRe = new RegExp("[*]([^*\\n]+)[*]", "g");
-  return String(s == null ? "" : s)
-    .replace(boldRe, "$1")
-    .replace(italicRe, "$1")
-    .replace(/`{1,3}([^`]*)`{1,3}/g, "$1")
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
-    .replace(/^#{1,6}\s+/gm, "")
-    .replace(/^>\s?/gm, "")
-    .replace(/^[-*+]\s+/gm, "")
-    .replace(/^\d+\.\s+/gm, "")
-    .replace(/<[^>]+>/g, "")
+  // 与 stripMarkdown 共用 stripEmphasis（同样的迭代到稳定处理），
+  // 差别只在保留换行：这里不能把 \s+ 压成空格。
+  return stripEmphasis(
+    String(s == null ? "" : s)
+      .replace(/`{1,3}([^`]*)`{1,3}/g, "$1")
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+      .replace(/^#{1,6}\s+/gm, "")
+      .replace(/^>\s?/gm, "")
+      .replace(/^[-*+]\s+/gm, "")
+      .replace(/^\d+\.\s+/gm, "")
+      .replace(/<[^>]+>/g, "")
+  )
     .replace(/[ \t]+$/gm, "")
     .trim();
 }

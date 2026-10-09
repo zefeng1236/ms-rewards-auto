@@ -3967,6 +3967,56 @@ checkTrue(
   "又出现 maxWidth 内联 → 该弹窗会比别的窄一截"
 );
 
+// —— CodeQL 通报的两类安全告警，修复必须留在代码里 ——
+// ① js/incomplete-multi-character-sanitization（notify-markdown.js #16/#17）：
+//    单次 replace 链剥不干净 markdown 强调标记 —— 移除后剩下的星号会重新
+//    组合出新标记，而纯标记串（四个星号）因为 `(.+?)` 至少要吃一个字符
+//    根本匹配不到，实测原样输出。修法：抽出 stripEmphasis 迭代到稳定 + 兜底。
+// ② js/prototype-pollution-utility（gui/renderer.js #10）：
+//    mergeInto 用 `base[k] = v` 赋值会触发原型链上的 setter。
+//    修法：改走 Object.defineProperty 只写自有属性。
+{
+  const nmSrc = fs.readFileSync(path.join(ROOT, "src", "notify-markdown.js"), "utf8");
+  const nmFlat = nmSrc.replace(/\r\n/g, "\n");
+  checkTrue(
+    "notify-markdown 用 stripEmphasis 迭代剥离强调标记（单次 replace 会漏）",
+    /function stripEmphasis\(/.test(nmFlat) &&
+      // 必须真的在循环里反复替换，不能只是把两个 replace 挪进函数
+      /for \(let i = 0; i < \d+; i\+\+\)[\s\S]{0,200}?out\.replace\(boldRe/.test(nmFlat) &&
+      // 两个 strip 函数都要走它，不能只改一个。
+      // ⚠️ 不能用「全文出现次数 ≥ N」来判 —— 反例实测：只改一个函数时，
+      //    注释里提到 stripEmphasis 的次数把计数凑够了，守卫照样全绿。
+      //    必须**逐函数剥出函数体**再各自检查。
+      ["stripMarkdown", "stripMarksKeepLines"].every((fnName) => {
+        const at = nmFlat.indexOf("function " + fnName + "(");
+        if (at < 0) return false;
+        // 函数体 = 从签名到下一个顶层 "function " 或文件尾
+        const next = nmFlat.indexOf("\nfunction ", at + 1);
+        const body = nmFlat.slice(at, next < 0 ? nmFlat.length : next);
+        return /stripEmphasis\(/.test(body);
+      }),
+    "stripEmphasis 被移除了 / 退化成单次 replace / 只在一处生效 → CodeQL #16#17 会复现"
+  );
+  // 注：不再单独写「注释里不许出现某两个连续字符」的守卫 —— 块注释的合法
+  // 结尾本身就是那两个字符，没法区分「注释内容里误写」和「正常收尾」。
+  // 真写错了会直接 SyntaxError，node --check 会挡住，不需要额外守卫。
+
+  const guiSrc = fs.readFileSync(path.join(ROOT, "gui", "renderer.js"), "utf8");
+  const guiFlat = guiSrc.replace(/\r\n/g, "\n");
+  checkTrue(
+    "gui/renderer.js 的 mergeInto 用 defineProperty 赋值（不触发原型链 setter）",
+    /Object\.defineProperty\(base, k, \{/.test(guiFlat) &&
+      // 老写法 `base[k] = v` 不该再出现在 mergeInto 里
+      !/mergeInto\(base\[k\], v\);\s*\} else \{\s*base\[k\] = v;/.test(guiFlat),
+    "mergeInto 退回 `base[k] = v` → CodeQL #10 原型污染告警会复现"
+  );
+  checkTrue(
+    "mergeInto 递归前先判 base 自有属性（避免顺着原型链往上合并）",
+    /hasOwnProperty\.call\(base, k\)/.test(guiFlat),
+    "递归分支没判 hasOwnProperty(base,k) → 可沿原型链合并"
+  );
+}
+
 // —— 汇总行不得凭空断言用户没查到的结论 ——
 // 背景（2026-10-09 用户纠正）：① 签到行写死"已签入（无额外奖励）"，但微软每日签到
 // 奖励分是**变值**，signPoint 只在接口当场返回 activity.p 时才是真值，skip/跨天重置
@@ -4250,14 +4300,18 @@ checkTrue(
 );
 checkTrue(
   "推送 markdown：含星号的正则一律用 new RegExp 构造（字面量会凑出块注释结束符）",
-  // 正向：至少两处加粗正则走字符串构造（stripMarkdown / stripMarksKeepLines 各一）
-  (notifyMd.match(/new RegExp\("\[\*\]\{2\}/g) || []).length >= 2 &&
+  // 正向：加粗正则走字符串构造。
+  // ⚠️ 原来是「两处各一份」（stripMarkdown / stripMarksKeepLines 各写一遍），
+  //    0.15.0 抽成共用的 stripEmphasis 后只剩一处 —— 共用比复制好，
+  //    所以判据改成「至少一处 + stripEmphasis 存在」，别再按份数卡。
+  (notifyMd.match(/new RegExp\("\[\*\]\{2\}/g) || []).length >= 1 &&
+    /function stripEmphasis\(/.test(notifyMd) &&
     // 负向：源码里**不能出现**字面量形式的加粗正则。
     // ⚠️ 断言本身要写成能真正匹配到的那种形态，
     //   否则「负向条件恒为真」= 守卫假绿（case6 反例验证过这点）。
     !/const boldRe = \/\[\*\]/.test(notifyMd) &&
     !/const italicRe = \/\[\*\]/.test(notifyMd),
-  "加粗/斜体正则写成字面量时，其中的连续星号-斜杠会被 JS 当成块注释结束符，整个文件语法错误（本项目已踩 4 次）"
+  "加粗/斜体正则写成字面量时，其中的连续星号-斜杠会被 JS 当成块注释结束符，整个文件语法错误（本项目已踩 5 次）"
 );
 checkTrue(
   "推送关键词匹配按**纯文本**（先剥 markdown 标记再比对）",
