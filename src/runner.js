@@ -296,17 +296,23 @@ async function runOnce(ctxRaw, opts = {}) {
   const lines = [];
 
   // 签入：以「今日是否已完成」为准，不要只看分数。
-  // signPoint 为 0 是合法结果（当天已签过、无二次奖励），
-  // 只有真的没跑过才算「未运行」。
   // retry（跑了但被接口挡住）必须与「未运行」区分开，否则用户看到「未运行」
   // 会以为程序根本没执行，而实际上失败原因就写在任务返回的 reason 里。
+  //
+  // ⚠️ 「已签入」后**不要再断言"无额外奖励"**（2026-10-09 用户纠正）：
+  // 微软的每日签到奖励分是**变值**（随机/递增档位），signPoint 只在
+  // 本次接口调用当场返回了 `activity.p` 时才拿得到真值；以下两条路径拿不到：
+  //   ① taskSign 走 skip 分支（今天已签过 / 开关关闭）—— 沿用上一次的值；
+  //   ② 跨天重置把 signPoint 归 -1，被 tasks.js 修正成 0（"知道已签、不知分多少"）。
+  // 此时写"无额外奖励"等于凭空断言一个没查到的结论，用户看到会以为签到不给分。
+  // 正确做法：拿不到分就只说"已签入"，不修饰。
   const signDone = state.isTaskDoneToday("sign");
   lines.push(
     `📅 签入: ${
       signDone
         ? signPoint > 0
           ? `已签入 +${signPoint} 分`
-          : "已签入（无额外奖励）"
+          : "已签入"
         : rSign.unauthorized
         ? "跳过(未授权)"
         : rSign.status === "retry"
@@ -338,13 +344,57 @@ async function runOnce(ctxRaw, opts = {}) {
     }`
   );
 
-  // 每日活动：仅在开启该开关时显示一行，避免默认配置下汇总里多出无意义项
+  // 每日活动：同样区分「今天没有这组活动」与「没跑」（旧逻辑把两者都写成"未运行"）
   if (cfg.tasks.daily) {
     const dailyDone = state.isTaskDoneToday("daily");
-    lines.push(`📆 每日活动: ${dailyDone ? "已完成" + (dailyPoint > 0 ? ` +${dailyPoint} 分` : "") : rDaily && rDaily.status === "error" ? `失败(${rDaily.error || "未知错误"})` : "未运行"}`);
+    let dailyText;
+    if (dailyDone) {
+      // dailyPoint 为 0 只说明"已做但本次没拿到分数明细"，不追加" +N 分"
+      dailyText = dailyPoint > 0 ? `已完成 +${dailyPoint} 分` : "已完成（今日无额外积分）";
+    } else if (rDaily.status === "error") {
+      dailyText = `失败(${rDaily.error || "未知错误"})`;
+    } else {
+      dailyText = "未运行";
+    }
+    lines.push(`📆 每日活动: ${dailyText}`);
   }
 
-  lines.push(`🧩 积分活动: ${promosPoint > 0 ? promosPoint + " 分(累计)" : "未运行"}`);
+  // 积分活动：必须区分「今天本来就没有活动」与「今天还没跑」。
+  //
+  // ⚠️ 旧逻辑只看 promosPoint>0，否则一律写"未运行" —— 逻辑错误（2026-10-09 用户指出）：
+  // taskPromos 在 earn 页当天**确实一条活动都没有**时会走 `totalNewTasks < 1` 分支，
+  // 返回 {status:"done", points:0} 并 setTaskDone。这是「已完成，今天无此任务」，
+  // 跟「未运行」是两回事：写"未运行"会让用户以为程序漏跑了、去排查故障，
+  // 而实际上今天压根就没活动可做。
+  //
+  // 判据（按可信度从高到低）：
+  //   开关关 → 未启用（不是"未运行"）
+  //   status=done/skip+已完成标记 → 今日无此任务（earnMax=0）或已得分
+  //   status=partial → 做了 N 分，还剩 M 个（留给下轮，不是未运行）
+  //   status=error/retry → 如实报错
+  //   其余（真没跑）→ 未运行
+  const promosDone = state.isTaskDoneToday("promos");
+  let promosText;
+  if (!cfg.tasks.promos) {
+    promosText = "未启用";
+  } else if (promosPoint > 0) {
+    // partial 时把剩余数量也说清楚，否则用户看到"已完成"却下一轮又跑一遍会以为有 bug
+    promosText =
+      rPromos.status === "partial" && rPromos.pending > 0
+        ? `${promosPoint} 分(累计)，还剩 ${rPromos.pending} 个`
+        : `${promosPoint} 分(累计)`;
+  } else if (promosDone || rPromos.status === "done" || rPromos.status === "skip") {
+    promosText = "今日无此任务";
+  } else if (rPromos.status === "partial") {
+    promosText = rPromos.pending > 0 ? `还剩 ${rPromos.pending} 个` : "已完成";
+  } else if (rPromos.status === "error") {
+    promosText = `失败(${rPromos.error || "未知错误"})`;
+  } else if (rPromos.status === "retry") {
+    promosText = `未完成(${rPromos.reason || "接口异常"})`;
+  } else {
+    promosText = "未运行";
+  }
+  lines.push(`🧩 积分活动: ${promosText}`);
 
   // 搜索：显示「已完成多少、还剩多少」，而不是只说「已完成」
   const sp2 = (rSearch && rSearch.progress) || tasks.searchProgressSnapshot(state);

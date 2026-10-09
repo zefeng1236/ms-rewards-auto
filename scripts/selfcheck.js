@@ -3812,6 +3812,53 @@ checkTrue(
   "又出现 maxWidth 内联 → 该弹窗会比别的窄一截"
 );
 
+// —— 汇总行不得凭空断言用户没查到的结论 ——
+// 背景（2026-10-09 用户纠正）：① 签到行写死"已签入（无额外奖励）"，但微软每日签到
+// 奖励分是**变值**，signPoint 只在接口当场返回 activity.p 时才是真值，skip/跨天重置
+// 路径拿不到 → 断言等于编造；② 积分活动行只看 promosPoint>0 否则写"未运行"，而 earn
+// 页当天确实没有活动时 taskPromos 返回 {status:"done",points:0}，那是"今日无此任务"
+// 而非"未运行"，会让用户误以为程序漏跑。
+{
+  const runnerSrc = fs.readFileSync(path.join(ROOT, "src", "runner.js"), "utf8");
+  const summaryStart = runnerSrc.indexOf("const lines = [];");
+  const summaryBody = summaryStart >= 0 ? runnerSrc.slice(summaryStart) : "";
+
+  checkTrue(
+    "签到行不再断言「无额外奖励」（签到奖励分是变值，skip/重置路径拿不到真值）",
+    !/已签入（无额外奖励）/.test(summaryBody),
+    "「已签入（无额外奖励）」又回来了 → 拿不到 signPoint 时在编造结论"
+  );
+  checkTrue(
+    "积分活动行区分「今日无此任务」与「未运行」（earn 页当天没活动 ≠ 程序没跑）",
+    /今日无此任务/.test(summaryBody) && !/promosPoint > 0 \? promosPoint \+ " 分\(累计\)" : "未运行"/.test(summaryBody),
+    "积分活动行退回「有分才显示、否则一律未运行」的旧写法"
+  );
+  // ⚠️ 断言必须匹配**真实的判断结构**，不能只查 `"partial"` 这个词出现过。
+  //    反例实测：把条件改成 `rPromos.status === "__none__"`（永不匹配的死分支）后，
+  //    只查字样的守卫照样假绿通过 —— 字样在、分支却是死的。
+  //    所以这里要求 status 比较的左侧是 rPromos.status 本身，
+  //    且 pending 真的被拼进了文案。
+  // ⚠️ 匹配前先归一化行尾：仓库源文件是 CRLF，直接用跨行正则会永远不命中
+  //    （这跟"守卫静默空跑"是同一类假绿）。
+  const summaryFlat = summaryBody.replace(/\r\n/g, "\n");
+  checkTrue(
+    "积分活动行覆盖 partial（还剩几个）与未启用开关两种真实状态",
+    /rPromos\.status === "partial"/.test(summaryFlat) &&
+      /!cfg\.tasks\.promos/.test(summaryFlat) &&
+      /promosText\s*=\s*\n\s*rPromos\.status === "partial" && rPromos\.pending > 0\s*\n\s*\?\s*`\$\{promosPoint\} 分\(累计\)，还剩 \$\{rPromos\.pending\} 个`/.test(
+        summaryFlat
+      ),
+    "partial / 开关关闭时又会被写成「未运行」或漏掉（可能是永不匹配的死分支）"
+  );
+  checkTrue(
+    "每日活动行同样区分完成 / 失败 / 未运行",
+    /dailyText = dailyPoint > 0 \? `已完成 \+\$\{dailyPoint\} 分` : "已完成（今日无额外积分）"/.test(
+      summaryFlat
+    ) && /dailyText = `失败\(\$\{rDaily\.error/.test(summaryFlat),
+    "每日活动行退回旧的三元拼接写法（dailyDone 为真但无分数时会漏掉状态区分）"
+  );
+}
+
 // —— 目标勋章图标 ——
 const goalsSrc = fs.readFileSync(path.join(ROOT, "src", "goals.js"), "utf8");
 const goalsMod = require(path.join(ROOT, "src", "goals.js"));
