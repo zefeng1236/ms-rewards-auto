@@ -39,7 +39,9 @@ export function ReleaseNotesDialog({
 
   return createPortal(
     <dialog ref={ref} className="compat-modal" onCancel={onClose} onClose={onClose}>
-      <div className="compat-modal-panel" style={{ maxWidth: 680, padding: 20 }}>
+      {/* maxWidth 去掉：宽度由 .compat-modal-panel 的 width:100% 统一撑满
+          （用户 2026-10-09 要求弹窗宽度一致，maxWidth 会把卡片卡在 680） */}
+      <div className="compat-modal-panel" style={{ padding: 20 }}>
         <div style={{ display: "flex", alignItems: "center", marginBottom: 12, gap: 8 }}>
           <div style={{ flex: 1, fontSize: 16, fontWeight: 600 }}>
             更新日志

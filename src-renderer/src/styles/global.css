@@ -375,10 +375,15 @@ body::before {
   backdrop-filter: blur(2px);
 }
 
-/* 「自动更新」弹窗（对齐参考设计）：头部标题+频道 pill，主体检查中/结果两态，
-   底部「关闭 / 下载更新」。更新日志正文可上下滚动。 */
+/* 「自动更新」弹窗：头部标题+频道 pill，主体检查中/结果两态，
+   底部「关闭 / 下载更新」。更新日志正文可上下滚动。
+   ⚠️ 2026-10-09 起**不再限制宽度**：改由 .compat-modal-panel 的 width:100%
+   统一撑满（用户要求「弹窗宽度跟随内容但撑满可用宽度」）。
+   原来的 `width: min(620px, …)` 有两个问题：
+     ① 内容少时卡片被压成窄条（用户实测「正在下载」状态只有 ~360px）；
+     ② 这条规则还会被 liquidGlassCompat.css 后加载覆盖掉，形同虚设。 */
 .upd-dialog {
-  width: min(620px, calc(100vw - 48px));
+  /* 宽度由兼容层的 .compat-modal 统一给（calc(100vw - 32px)），此处不重复设 */
 }
 .upd-panel {
   display: flex;

@@ -71,7 +71,8 @@ export function UpdatePromptDialog({
 
   return createPortal(
     <dialog ref={ref} className="compat-modal" onCancel={dismiss} onClose={dismiss}>
-      <div className="compat-modal-panel" style={{ maxWidth: 640, padding: 20 }}>
+      {/* maxWidth 去掉：宽度由 .compat-modal-panel 的 width:100% 统一撑满 */}
+      <div className="compat-modal-panel" style={{ padding: 20 }}>
         <div style={{ display: "flex", alignItems: "center", marginBottom: 10 }}>
           <div style={{ flex: 1, fontSize: 16, fontWeight: 600 }}>
             {ready ? `新版本 ${payload.version} 已就绪` : `发现新版本 ${payload.version}`}

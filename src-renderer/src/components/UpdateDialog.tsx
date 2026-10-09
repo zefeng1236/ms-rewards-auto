@@ -154,7 +154,6 @@ export function UpdateDialog({
     <dialog
       ref={dialogRef}
       className="compat-modal upd-dialog"
-      style={{ maxWidth: 620 }}
       aria-label="自动更新"
       onCancel={(e) => {
         e.preventDefault();

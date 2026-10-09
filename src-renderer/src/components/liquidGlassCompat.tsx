@@ -410,17 +410,21 @@ export interface ConfirmOptions {
   locale?: "zh-CN" | "en-US";
 }
 
-const MODAL_WIDTH = { sm: 420, md: 560, lg: 780 } as const;
+// 2026-10-09：弹窗宽度统一「撑满可用宽度」，size 不再决定宽度，
+// 所以 MODAL_WIDTH 表整体删除（原先 sm/md/lg = 420/560/780），
+// 避免留下无人引用的死代码与「宽度还能按档位调」的错觉。
+// 需要窄版式时在内容侧用栅格/内边距控制，不要再靠弹窗总宽度区分。
 
 function ModalBase({
   open,
   onOpenChange,
   title,
   footer,
-  size = "md",
   closeOnOverlayClick = true,
   children,
 }: ModalProps) {
+  // ⚠️ 不解构 size：宽度统一由 CSS 决定后它不再有作用，
+  // 但 ModalProps 仍保留该字段（调用方传了不报错，只是不再影响宽度）。
   const dialogRef = useRef<HTMLDialogElement>(null);
 
   // 用原生 <dialog> + showModal()：焦点containment、top layer 与 Escape 都由平台提供，
@@ -440,7 +444,6 @@ function ModalBase({
     <dialog
       ref={dialogRef}
       className="compat-modal"
-      style={{ maxWidth: MODAL_WIDTH[size] }}
       aria-label={typeof title === "string" ? title : undefined}
       onCancel={(event) => {
         event.preventDefault();
