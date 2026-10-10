@@ -3932,40 +3932,60 @@ const DOC_SECRET_PATTERNS = [
   }
 }
 
-// —— 弹窗宽度统一「撑满可用宽度」（2026-10-09 用户定）——
-// 起因：弹窗面板宽度是 fit-content（随内容伸缩），内容一少卡片就被压成窄条。
-// 用户实测「正在下载」状态只有 ~360px 宽、读起来很扁，而有长路径的状态
-// 又撑到满窗 —— 同一个弹窗两个宽度。现在统一为撑满（视口 - 边距）。
+// —— 弹窗宽度按 size 档位**固定**（2026-10-10 用户改回）——
+// 来回改过两次，两边都有代价，判据要能同时挡住两种回退：
+//   ① fit-content（随内容伸缩）→ 内容少时被压成窄条（~360px 的「正在下载」）；
+//   ② 撑满（0.14.14 的做法，dialog 100vw + 面板 100%）
+//      → 不扁了但矫枉过正：几行字的确认框也从屏幕一头拉到另一头。
+// 现在：dialog 宽度由 JS 档位定死（sm/md/lg = 420/560/780），面板跟着填满 dialog。
 //
 // ⚠️ 关键实现点是 `.compat-modal-panel{width:100%}`：父级 .compat-modal 是
-//    flex 容器，不显式写这一条面板仍按内容宽（第一版只改 .compat-modal 无效）。
-checkTrue(
-  "弹窗面板撑满（.compat-modal-panel 有 width:100%）",
-  /\.compat-modal-panel\{[^}]*width:100%/.test(compatCss),
-  "缺 width:100% → 面板按内容宽，弹窗又会变回窄条"
-);
-checkTrue(
-  "弹窗不再按 size 档位限制宽度（MODAL_WIDTH 表已删除）",
-  // 只认**代码**里的定义/引用：注释里提到这个名字是留痕说明，不能算命中
-  !/^\s*(const|let|var)\s+MODAL_WIDTH\b/m.test(
-    fs.readFileSync(path.join(ROOT, "src-renderer", "src", "components", "liquidGlassCompat.tsx"), "utf8")
-  ) &&
-    !/MODAL_WIDTH\[/.test(
-      fs.readFileSync(path.join(ROOT, "src-renderer", "src", "components", "liquidGlassCompat.tsx"), "utf8")
-    ),
-  "MODAL_WIDTH 又回来了 → 不同 size 的弹窗宽度不一致"
-);
-checkTrue(
-  "各弹窗组件不再用 maxWidth 单独设宽度（宽度统一由 CSS 给）",
-  !/compat-modal-panel" style=\{\{ maxWidth/.test(
-    fs.readFileSync(path.join(ROOT, "src-renderer", "src", "components", "UpdateDialog.tsx"), "utf8")
-  ) &&
-    !/maxWidth: 6[0-9]0|maxWidth: 620/.test(
-      fs.readFileSync(path.join(ROOT, "src-renderer", "src", "components", "ReleaseNotesDialog.tsx"), "utf8") +
-        fs.readFileSync(path.join(ROOT, "src-renderer", "src", "components", "UpdatePromptDialog.tsx"), "utf8")
-    ),
-  "又出现 maxWidth 内联 → 该弹窗会比别的窄一截"
-);
+//    flex 居中容器，不显式写这一条面板仍按内容宽（第一版只改 .compat-modal 无效）。
+{
+  const lgSrc = fs.readFileSync(
+    path.join(ROOT, "src-renderer", "src", "components", "liquidGlassCompat.tsx"),
+    "utf8"
+  );
+  checkTrue(
+    "弹窗面板填满 dialog（.compat-modal-panel 有 width:100%）",
+    /\.compat-modal-panel\{[^}]*width:100%/.test(compatCss),
+    "缺 width:100% → 面板按内容宽，档位宽度白设"
+  );
+  checkTrue(
+    "弹窗宽度按 size 档位固定（MODAL_WIDTH 存在且被引用）",
+    // 只认**代码**里的定义/引用：注释里提到这个名字是留痕说明，不能算命中
+    /^\s*(const|let|var)\s+MODAL_WIDTH\b/m.test(lgSrc) && /MODAL_WIDTH\[size\]/.test(lgSrc),
+    "MODAL_WIDTH 被删了或没被引用 → 弹窗宽度又没了准数（要么撑满要么随内容伸缩）"
+  );
+  // ⚠️ 用负向后顾 `(?<![-a-z])` 排除 `max-width:` —— 不加的话
+  //    `max-width: calc(100vw - 32px)` 也会被当成"撑满"，守卫永远红。
+  checkTrue(
+    "dialog 不再写成撑满（.compat-modal 的 width 不许是 calc(100vw…)）",
+    !/\.compat-modal\{[^}]*(?<![-a-z])width:\s*calc\(100vw/.test(compatCss),
+    ".compat-modal 的 width 又写成 100vw → 弹窗重新撑满全屏"
+  );
+  checkTrue(
+    "dialog 保留小屏保护（max-width 用 100vw 计算，窄屏不溢出）",
+    /\.compat-modal\{[^}]*(?<![-a-z])max-width:\s*calc\(100vw/.test(compatCss),
+    "缺 max-width → 窄屏上固定宽度会顶出视口"
+  );
+  checkTrue(
+    "dialog 宽度走 fit-content 兜底（内联样式没生效时不至于撑开）",
+    /\.compat-modal\{[^}]*width:\s*fit-content/.test(compatCss),
+    "缺 width:fit-content → 万一内联 width 没生效，dialog 会按块级元素撑开"
+  );
+  checkTrue(
+    "各弹窗组件不再用 maxWidth 单独设宽度（宽度统一由档位给）",
+    !/compat-modal-panel" style=\{\{ maxWidth/.test(
+      fs.readFileSync(path.join(ROOT, "src-renderer", "src", "components", "UpdateDialog.tsx"), "utf8")
+    ) &&
+      !/maxWidth: 6[0-9]0|maxWidth: 620/.test(
+        fs.readFileSync(path.join(ROOT, "src-renderer", "src", "components", "ReleaseNotesDialog.tsx"), "utf8") +
+          fs.readFileSync(path.join(ROOT, "src-renderer", "src", "components", "UpdatePromptDialog.tsx"), "utf8")
+      ),
+    "又出现 maxWidth 内联 → 该弹窗会比别的窄一截"
+  );
+}
 
 // —— CI 里的 PowerShell 不能用 $env: 做链式调用 / 动态变量名 ——
 // 0.15.0 发版时 release job **连挂两次**，都是 ParserError：
