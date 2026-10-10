@@ -4061,17 +4061,35 @@ checkTrue(
         // 函数体 = 从签名到下一个顶层 "function " 或文件尾
         const next = nmFlat.indexOf("\nfunction ", at + 1);
         const body = nmFlat.slice(at, next < 0 ? nmFlat.length : next);
-        // 既要调用 stripEmphasis，也要**剥掉裸尖括号**（CodeQL #18/#19 的要求）
-        return /stripEmphasis\(/.test(body) && /replace\(\/\[<>\]\/g, ""\)/.test(body);
+        if (!/stripEmphasis\(/.test(body)) return false;
+        // 尖括号剥离必须是净化链的**第一招**（CodeQL #18/#19）。
+        // ⚠️ 放末尾不管用：静态分析顺着 `("$1")` 这种放行步骤判断时
+        //    不会跨越后面的兜底 replace。判据要锚定位置，不能只查「出现过」。
+        //
+        // ⚠️ 判位置前必须**剥掉注释** —— 这些函数的注释里引用了
+        //    `.replace(/<[^>]+>/g,"")` 这段旧代码做对比说明，
+        //    直接在原文里找位置会把注释里的示例当成第一招（反例实测踩到）。
+        const bodyCode = body
+          .replace(/\/\*[\s\S]*?\*\//g, "")
+          .split(/\r?\n/)
+          .map((ln) => ln.replace(/\/\/.*$/, ""))
+          .join("\n");
+        const first = bodyCode.match(/\.replace\(\/\[<>\]\/g, ""\)/);
+        if (!first) return false;
+        const before = bodyCode.slice(0, first.index);
+        return !/\.replace\(/.test(before);
       }),
-    "stripEmphasis 被移除了 / 退化成单次 replace / 只在一处生效 / 缺尖括号剥离 → CodeQL #16#17#18#19 会复现"
+    "stripEmphasis 被移除了 / 退化成单次 replace / 只在一处生效 / 尖括号剥离没放在链首 → CodeQL #16#17#18#19 会复现"
   );
-  // 威胁模型说明（一言来自 hitokoto 第三方 API，不是我们自己拼的字面量，
-  // 所以净化链不能假设输入里没有标签）—— 抽成常量便于两处共用与断言
   checkTrue(
-    "notify-markdown 净化链末尾剥掉裸尖括号（净化链不假设输入可信）",
+    "notify-markdown 净化链**首招**就是剥掉尖括号（净化链不假设输入可信）",
     (nmFlat.match(/\.replace\(\/\[<>\]\/g, ""\)/g) || []).length >= 2,
-    "只有一处或没有尖括号剥离 → CodeQL #18/#19 复现"
+    "不足两处尖括号剥离 → CodeQL #18/#19 复现"
+  );
+  checkTrue(
+    "notify-markdown 的链接捕获组排除尖括号（否则成 <script 的漏斗）",
+    !/\\\[\(\[\^\\\>\]{3}/.test(nmFlat) && /\\\[\(\[\^<>/.test(nmFlat),
+    "链接正则又简化成 [^]]+ 了 → 捕获组会让 <script 原样通过"
   );
   // 注：不再单独写「注释里不许出现某两个连续字符」的守卫 —— 块注释的合法
   // 结尾本身就是那两个字符，没法区分「注释内容里误写」和「正常收尾」。
