@@ -93,6 +93,12 @@ function stripMarkdown(s) {
       .replace(/<[^>]+>/g, "") // HTML 标签（含企微 font color）
   )
     .replace(/\s+/g, " ")
+    // ⚠️ 尖括号收尾（CodeQL #18/#19：净化链仍可能残留 `<script`）。
+    //    上面那条 `<[^>]+>` 只吃**成对**标签，`<script` 这种没有闭合 `>`
+    //    的残缺形态会原样漏过去。这里直接剥掉裸尖括号。
+    //    别觉得多余：这两个函数的输入里**确实有外部内容** ——
+    //    推送里的「一言」来自 hitokoto 第三方 API，不是我们自己拼的字面量。
+    .replace(/[<>]/g, "")
     .trim();
 }
 
@@ -369,6 +375,9 @@ function stripMarksKeepLines(s) {
       .replace(/<[^>]+>/g, "")
   )
     .replace(/[ \t]+$/gm, "")
+    // 同 stripMarkdown：剥掉裸尖括号（CodeQL #18/#19）。
+    // 一言来自 hitokoto 第三方 API，净化链不能假设输入里没有标签。
+    .replace(/[<>]/g, "")
     .trim();
 }
 

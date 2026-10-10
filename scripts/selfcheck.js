@@ -4061,9 +4061,17 @@ checkTrue(
         // 函数体 = 从签名到下一个顶层 "function " 或文件尾
         const next = nmFlat.indexOf("\nfunction ", at + 1);
         const body = nmFlat.slice(at, next < 0 ? nmFlat.length : next);
-        return /stripEmphasis\(/.test(body);
+        // 既要调用 stripEmphasis，也要**剥掉裸尖括号**（CodeQL #18/#19 的要求）
+        return /stripEmphasis\(/.test(body) && /replace\(\/\[<>\]\/g, ""\)/.test(body);
       }),
-    "stripEmphasis 被移除了 / 退化成单次 replace / 只在一处生效 → CodeQL #16#17 会复现"
+    "stripEmphasis 被移除了 / 退化成单次 replace / 只在一处生效 / 缺尖括号剥离 → CodeQL #16#17#18#19 会复现"
+  );
+  // 威胁模型说明（一言来自 hitokoto 第三方 API，不是我们自己拼的字面量，
+  // 所以净化链不能假设输入里没有标签）—— 抽成常量便于两处共用与断言
+  checkTrue(
+    "notify-markdown 净化链末尾剥掉裸尖括号（净化链不假设输入可信）",
+    (nmFlat.match(/\.replace\(\/\[<>\]\/g, ""\)/g) || []).length >= 2,
+    "只有一处或没有尖括号剥离 → CodeQL #18/#19 复现"
   );
   // 注：不再单独写「注释里不许出现某两个连续字符」的守卫 —— 块注释的合法
   // 结尾本身就是那两个字符，没法区分「注释内容里误写」和「正常收尾」。
