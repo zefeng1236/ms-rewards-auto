@@ -1301,6 +1301,141 @@ button.nav-version-btn:hover {
   margin-bottom: 10px;
 }
 
+/* —— 推送通知：标题行编辑按钮 / 通道状态点 / 已启用通道 chips（2026-10-11）—— */
+.sec-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.sec-head .sec-title {
+  margin-bottom: 0;
+}
+.sec-edit-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 0.14s ease, background 0.14s ease;
+}
+.sec-edit-btn:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+}
+.push-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.push-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 11px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.push-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.push-dot.on {
+  background: var(--accent-2);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--accent-2) 55%, transparent);
+}
+.push-dot.idle {
+  background: var(--warn);
+}
+.push-dot.off {
+  background: var(--danger);
+}
+
+/* 推送设置弹窗：左通道列表 / 右配置详情。弹窗 body 用 :has 去掉默认内边距，
+   把空间让给两栏；侧栏下缘圆角由面板的 overflow:hidden 裁出。 */
+.compat-modal-body:has(> .push-modal) {
+  padding: 0;
+}
+.push-modal {
+  display: flex;
+  align-items: stretch;
+  min-height: 360px;
+}
+.push-side {
+  width: 186px;
+  flex-shrink: 0;
+  padding: 12px 10px 14px;
+  border-right: 1px solid var(--border);
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.push-side-group {
+  margin: 8px 8px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+}
+.push-side-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: color 0.14s ease, background 0.14s ease;
+}
+.push-side-item:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+}
+.push-side-item.is-active {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+.push-side-item .push-dot {
+  margin-left: auto;
+}
+.push-detail {
+  flex: 1;
+  min-width: 0;
+  padding: 16px 18px;
+}
+.push-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.push-detail-name {
+  font-size: 15px;
+  font-weight: 700;
+}
+.push-detail .field-block {
+  margin-bottom: 12px;
+}
+
 /* 软件设置分区：侧栏选项卡点击定位时给滚动落点留出呼吸空间 */
 .sw-sec {
   scroll-margin-top: 12px;

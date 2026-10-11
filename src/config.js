@@ -92,8 +92,13 @@ const DEFAULTS = {
   },
   // 推送通知（留空则不启用）
   notice: {
+    // 通道级开关（默认全开）。关掉 = **保留配置但不再往该通道推送**（设置页显示为橙点）。
+    // ⚠️ 判定统一用 `xxxEnabled !== false`：旧配置没有这些字段（undefined），
+    //    按「默认开」语义必须当成启用 —— 用 `=== true` 会让老用户的全部通道静默失灵。
     wework: "",
+    weworkEnabled: true,
     dingding: "",
+    dingdingEnabled: true,
     dingdingKeyword: "",
     // 钉钉「加签」安全模式的密钥（SEC 开头那串），2026-10-11 用户定。
     // 钉钉三种安全模式相互独立、可任意叠加：
@@ -107,8 +112,11 @@ const DEFAULTS = {
     // 留空 = 不@ 人（本项目默认，避免误触发）。
     dingdingAtMobiles: "",
     feishu: "",
+    feishuEnabled: true,
     pushme: "",
+    pushmeEnabled: true,
     bark: "",
+    barkEnabled: true,
     // 企业微信是否用 markdown 排版。**默认关**（2026-10-09 用户定）。
     // 为什么默认关：企微群消息能被转发到**微信客户端**，而微信不支持 markdown，
     // 收到的是「**标题**」「`字段`」这种带标记的裸文本，很难读。

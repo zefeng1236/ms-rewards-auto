@@ -150,15 +150,25 @@ export interface AppConfig {
   };
   notice: {
     wework: string;
+    /** 企业微信通道总开关（默认开）；关掉 = 保留配置但不再推送 */
+    weworkEnabled: boolean;
     dingding: string;
+    /** 钉钉通道总开关（默认开）；关掉 = 保留配置但不再推送 */
+    dingdingEnabled: boolean;
     dingdingKeyword: string;
     /** 钉钉加签密钥（SEC 开头）；与关键词可同时开，留空则不加签 */
     dingdingSecret: string;
     /** 钉钉要 @ 的手机号（逗号/顿号/空格分隔，最多 20 个）；留空不@ 人 */
     dingdingAtMobiles: string;
     feishu: string;
+    /** 飞书通道总开关（默认开）；关掉 = 保留配置但不再推送 */
+    feishuEnabled: boolean;
     pushme: string;
+    /** PushMe 通道总开关（默认开）；关掉 = 保留配置但不再推送 */
+    pushmeEnabled: boolean;
     bark: string;
+    /** Bark 通道总开关（默认开）；关掉 = 保留配置但不再推送 */
+    barkEnabled: boolean;
     /**
      * 企业微信是否用 markdown 排版，**默认关闭**；开启则走 markdown 消息体。
      *

@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { GlassButton } from "@ttqtt/liquid-glass-react";
-import { Input, InputNumber, Select, SelectOption } from "./liquidGlassCompat";
+import { GlassButton, GlassSwitch } from "@ttqtt/liquid-glass-react";
+import { Input, InputNumber, Modal, Select, SelectOption } from "./liquidGlassCompat";
 import { NumberField, Section, SelectField, SwitchField, TextField, TimeField } from "./fields";
 import type { AppConfig, DeepPartial, GoalItem, ScheduleWindow } from "../types";
 
@@ -69,6 +69,56 @@ const IP_PROVIDER_OPTIONS: SelectOption[] = [  { label: "Bing 首页判定（默
 ];
 
 /**
+ * 推送通道清单（顺序 = 弹窗左侧列表顺序）。
+ * key 对应 notice 里的字段名：`${key}` 存配置值、`${key}Enabled` 是通道总开关。
+ */
+const PUSH_PROVIDERS = [
+  { key: "wework", label: "企业微信", desc: "群机器人 Webhook；可切换纯文本 / Markdown 排版" },
+  { key: "dingding", label: "钉钉", desc: "群机器人 Webhook；支持关键词 / 加签 / @人（可叠加）" },
+  { key: "feishu", label: "飞书", desc: "群机器人 Webhook（卡片消息）" },
+  { key: "pushme", label: "PushMe", desc: "push_key 推送到手机" },
+  { key: "bark", label: "Bark", desc: "iOS 推送，填 Key 或完整 URL" },
+] as const;
+
+type PushProviderKey = (typeof PUSH_PROVIDERS)[number]["key"];
+
+/** 通道是否已配置（填了 Webhook / Key）；只看值，不看开关 */
+function pushConfigured(notice: AppConfig["notice"] | undefined, key: PushProviderKey): boolean {
+  return !!String((notice && notice[key]) || "").trim();
+}
+
+/** 通道总开关；缺省（旧配置没有该字段）按开启处理，只有显式 false 才是停用 */
+function pushEnabled(notice: AppConfig["notice"] | undefined, key: PushProviderKey): boolean {
+  return notice?.[`${key}Enabled`] !== false;
+}
+
+/**
+ * 通道状态点三色语义（2026-10-11 用户定）：
+ *   未配置 = 红 · 已配置未启用 = 橙 · 已配置且启用 = 绿
+ */
+function pushDotClass(notice: AppConfig["notice"] | undefined, key: PushProviderKey): string {
+  if (!pushConfigured(notice, key)) return "push-dot off";
+  return pushEnabled(notice, key) ? "push-dot on" : "push-dot idle";
+}
+
+/** 标题行「编辑」按钮的铅笔图标（与侧边栏图标同一种笔法：24 视框 / 描边 / 圆角线帽） */
+const PENCIL_ICON = (
+  <svg
+    viewBox="0 0 24 24"
+    width={13}
+    height={13}
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={1.8}
+    strokeLinecap="round"
+    strokeLinejoin="round"
+  >
+    <path d="M12 20h9" />
+    <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+  </svg>
+);
+
+/**
  * 全局设置 / 账户独立设置共用的表单。
  *
  * 每次改动都通过 onChange 向上抛补丁，由调用方决定何时落盘
@@ -87,6 +137,11 @@ export function SettingsForm({
   showLogging?: boolean;
 }) {
   const [testing, setTesting] = useState(false);
+  const [pushOpen, setPushOpen] = useState(false);
+  // 收起态展示的「已启用通道」= 已配置且开关为开（只把真会收到推送的列出来）
+  const activePushProviders = PUSH_PROVIDERS.filter(
+    (p) => pushConfigured(value.notice, p.key) && pushEnabled(value.notice, p.key)
+  );
 
   const patchSchedule = (p: Partial<AppConfig["schedule"]>) =>
     onChange({ schedule: p } as DeepPartial<AppConfig>);
@@ -427,81 +482,38 @@ export function SettingsForm({
         </Section>
       )}
 
-      <Section title="推送通知" desc="留空则不启用该通道">
-        <div className="form-grid">
-          <TextField
-            label="企业微信 Webhook"
-            placeholder="https://qyapi.weixin.qq.com/..."
-            value={value.notice?.wework ?? ""}
-            onChange={(v) => onChange({ notice: { wework: v } })}
-          />
-          <TextField
-            label="钉钉 Webhook"
-            placeholder="https://oapi.dingtalk.com/robot/send?access_token=..."
-            value={value.notice?.dingding ?? ""}
-            onChange={(v) => onChange({ notice: { dingding: v } })}
-          />
-          <TextField
-            label="钉钉关键词"
-            hint="留空表示未启用"
-            placeholder="如 # 或 Rewards"
-            value={value.notice?.dingdingKeyword ?? ""}
-            onChange={(v) => onChange({ notice: { dingdingKeyword: v } })}
-          />
-          <TextField
-            label="钉钉加签密钥"
-            hint="SEC 开头。关键词与加签可同时开，都填最稳；都留空则只靠 URL"
-            placeholder="SECxxxxxxxx"
-            value={value.notice?.dingdingSecret ?? ""}
-            onChange={(v) => onChange({ notice: { dingdingSecret: v } })}
-          />
-          <TextField
-            label="钉钉 @手机号"
-            hint="逗号/顿号/空格分隔，最多 20 个。留空不@人"
-            placeholder="如 13800138000,13900139000"
-            value={value.notice?.dingdingAtMobiles ?? ""}
-            onChange={(v) => onChange({ notice: { dingdingAtMobiles: v } })}
-          />
-          <TextField
-            label="飞书 Webhook"
-            placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..."
-            value={value.notice?.feishu ?? ""}
-            onChange={(v) => onChange({ notice: { feishu: v } })}
-          />
-          <TextField
-            label="PushMe Key"
-            placeholder="push_key"
-            value={value.notice?.pushme ?? ""}
-            onChange={(v) => onChange({ notice: { pushme: v } })}
-          />
-          <TextField
-            label="Bark Key"
-            placeholder="https://api.day.app/XXXX"
-            value={value.notice?.bark ?? ""}
-            onChange={(v) => onChange({ notice: { bark: v } })}
-          />
-        </div>
-        <div style={{ marginTop: 10 }} />
-        <SwitchField
-          label="企业微信 Markdown 排版"
-          hint="开启后企业微信推送用 Markdown（标题加粗、字段等宽、列表排版）。如果这条消息会被转发到微信客户端，请关掉 —— 微信不支持 Markdown，会显示成带 ** 和 ` 的裸文本。只影响企业微信，钉钉/飞书不受影响"
-          checked={value.notice?.weworkMarkdown !== false}
-          onChange={(v) => onChange({ notice: { weworkMarkdown: v } })}
-        />
-        <SwitchField
-          label="推送附加一言"
-          hint="开启后，每条推送的末尾会自动追加当天的一句一言作为签名（位置 / 句子类型在「软件设置 → 个性化」里管）。界面显示开关不受影响，已迁去个性化菜单"
-          checked={value.notice?.hitokotoInPush !== false}
-          onChange={(v) => onChange({ notice: { hitokotoInPush: v } })}
-        />
-        {onTestPush && (
-          <div style={{ marginTop: 12 }}>
-            <GlassButton variant="glassProminent" controlSize="small" onClick={onTest} loading={testing}>
-              🔔 测试推送
-            </GlassButton>
+      <Section
+        title="推送通知"
+        desc="已启用的通道会接收任务运行推送与汇总报告"
+        action={
+          <button type="button" className="sec-edit-btn" onClick={() => setPushOpen(true)}>
+            {PENCIL_ICON}
+            编辑
+          </button>
+        }
+      >
+        {activePushProviders.length === 0 ? (
+          <div className="hint">还没有启用任何推送通道 —— 点右上角「编辑」配置</div>
+        ) : (
+          <div className="push-chips">
+            {activePushProviders.map((p) => (
+              <span key={p.key} className="push-chip">
+                <span className="push-dot on" />
+                {p.label}
+              </span>
+            ))}
           </div>
         )}
       </Section>
+
+      <PushSettingsModal
+        open={pushOpen}
+        onClose={() => setPushOpen(false)}
+        value={value}
+        onChange={onChange}
+        onTest={onTestPush ? () => void onTest() : undefined}
+        testing={testing}
+      />
 
       <Section
         title="积分目标"
@@ -556,5 +568,199 @@ export function SettingsForm({
         )}
       </Section>
     </div>
+  );
+}
+
+/**
+ * 推送设置弹窗：左侧通道列表（带三色状态点）+ 右侧选中通道的配置详情。
+ *
+ * 组件放在本文件（而不是新开组件文件）是有意的：既有多条守卫把
+ * 「企业微信 Markdown 排版」「推送附加一言」锚定在 SettingsForm.tsx 上
+ * （selfcheck 的 wmFormSrc / formSrc 段），把开关搬去别的文件会让守卫失锚。
+ */
+function PushSettingsModal({
+  open,
+  onClose,
+  value,
+  onChange,
+  onTest,
+  testing,
+}: {
+  open: boolean;
+  onClose: () => void;
+  value: AppConfig;
+  onChange: (patch: DeepPartial<AppConfig>) => void;
+  onTest?: () => void;
+  testing?: boolean;
+}) {
+  const [sel, setSel] = useState<PushProviderKey | "hitokoto">("wework");
+  const notice = value.notice;
+  const setNotice = (patch: Partial<AppConfig["notice"]>) =>
+    onChange({ notice: patch } as DeepPartial<AppConfig>);
+  const meta = PUSH_PROVIDERS.find((p) => p.key === sel);
+
+  return (
+    <Modal
+      open={open}
+      onOpenChange={(o) => {
+        if (!o) onClose();
+      }}
+      title="推送设置"
+      size="lg"
+      footer={
+        <div style={{ display: "flex", alignItems: "center", gap: 10, width: "100%" }}>
+          <span className="hint">测试会发送到所有已启用的通道</span>
+          <div style={{ flex: 1 }} />
+          {onTest && (
+            <GlassButton variant="glassProminent" controlSize="small" onClick={onTest} loading={testing}>
+              🔔 测试推送
+            </GlassButton>
+          )}
+        </div>
+      }
+    >
+      <div className="push-modal">
+        <aside className="push-side">
+          <div className="push-side-group">推送通道</div>
+          {PUSH_PROVIDERS.map((p) => (
+            <button
+              key={p.key}
+              type="button"
+              className={"push-side-item" + (sel === p.key ? " is-active" : "")}
+              onClick={() => setSel(p.key)}
+            >
+              <span>{p.label}</span>
+              <span
+                className={pushDotClass(notice, p.key)}
+                title={
+                  !pushConfigured(notice, p.key)
+                    ? "未配置"
+                    : pushEnabled(notice, p.key)
+                      ? "已启用"
+                      : "已配置，未启用"
+                }
+              />
+            </button>
+          ))}
+          <div className="push-side-group">通用</div>
+          <button
+            type="button"
+            className={"push-side-item" + (sel === "hitokoto" ? " is-active" : "")}
+            onClick={() => setSel("hitokoto")}
+          >
+            <span>附加一言</span>
+          </button>
+        </aside>
+
+        <div className="push-detail">
+          {sel === "hitokoto" ? (
+            <>
+              <div className="push-detail-head">
+                <div>
+                  <div className="push-detail-name">附加一言</div>
+                  <div className="hint">每条推送的末尾是否附加当天的一句一言</div>
+                </div>
+              </div>
+              <SwitchField
+                label="推送附加一言"
+                hint="开启后，每条推送的末尾会自动追加当天的一句一言作为签名（位置 / 句子类型在「软件设置 → 个性化」里管）。界面显示开关不受影响，已迁去个性化菜单"
+                checked={value.notice?.hitokotoInPush !== false}
+                onChange={(v) => onChange({ notice: { hitokotoInPush: v } })}
+              />
+            </>
+          ) : (
+            <>
+              <div className="push-detail-head">
+                <div>
+                  <div className="push-detail-name">{meta?.label}</div>
+                  <div className="hint">{meta?.desc}</div>
+                </div>
+                <GlassSwitch
+                  aria-label={`启用${meta?.label ?? ""}通道`}
+                  checked={pushEnabled(notice, sel as PushProviderKey)}
+                  onCheckedChange={(v) => setNotice({ [`${sel}Enabled`]: v } as Partial<AppConfig["notice"]>)}
+                />
+              </div>
+
+              {sel === "wework" && (
+                <>
+                  <TextField
+                    label="企业微信 Webhook"
+                    placeholder="https://qyapi.weixin.qq.com/..."
+                    value={value.notice?.wework ?? ""}
+                    onChange={(v) => onChange({ notice: { wework: v } })}
+                  />
+                  <SwitchField
+                    label="企业微信 Markdown 排版"
+                    hint="开启后企业微信推送用 Markdown（标题加粗、字段等宽、列表排版）。如果这条消息会被转发到微信客户端，请关掉 —— 微信不支持 Markdown，会显示成带 ** 和 ` 的裸文本。只影响企业微信，钉钉/飞书不受影响"
+                    checked={value.notice?.weworkMarkdown !== false}
+                    onChange={(v) => onChange({ notice: { weworkMarkdown: v } })}
+                  />
+                </>
+              )}
+
+              {sel === "dingding" && (
+                <>
+                  <TextField
+                    label="钉钉 Webhook"
+                    placeholder="https://oapi.dingtalk.com/robot/send?access_token=..."
+                    value={value.notice?.dingding ?? ""}
+                    onChange={(v) => onChange({ notice: { dingding: v } })}
+                  />
+                  <TextField
+                    label="钉钉关键词"
+                    hint="留空表示未启用"
+                    placeholder="如 # 或 Rewards"
+                    value={value.notice?.dingdingKeyword ?? ""}
+                    onChange={(v) => onChange({ notice: { dingdingKeyword: v } })}
+                  />
+                  <TextField
+                    label="钉钉加签密钥"
+                    hint="SEC 开头。关键词与加签可同时开，都填最稳；都留空则只靠 URL"
+                    placeholder="SECxxxxxxxx"
+                    value={value.notice?.dingdingSecret ?? ""}
+                    onChange={(v) => onChange({ notice: { dingdingSecret: v } })}
+                  />
+                  <TextField
+                    label="钉钉 @手机号"
+                    hint="逗号/顿号/空格分隔，最多 20 个。留空不@人"
+                    placeholder="如 13800138000,13900139000"
+                    value={value.notice?.dingdingAtMobiles ?? ""}
+                    onChange={(v) => onChange({ notice: { dingdingAtMobiles: v } })}
+                  />
+                </>
+              )}
+
+              {sel === "feishu" && (
+                <TextField
+                  label="飞书 Webhook"
+                  placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..."
+                  value={value.notice?.feishu ?? ""}
+                  onChange={(v) => onChange({ notice: { feishu: v } })}
+                />
+              )}
+
+              {sel === "pushme" && (
+                <TextField
+                  label="PushMe Key"
+                  placeholder="push_key"
+                  value={value.notice?.pushme ?? ""}
+                  onChange={(v) => onChange({ notice: { pushme: v } })}
+                />
+              )}
+
+              {sel === "bark" && (
+                <TextField
+                  label="Bark Key"
+                  placeholder="https://api.day.app/XXXX"
+                  value={value.notice?.bark ?? ""}
+                  onChange={(v) => onChange({ notice: { bark: v } })}
+                />
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </Modal>
   );
 }

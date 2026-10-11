@@ -48,13 +48,18 @@ const DEFAULT_CONFIG: AppConfig = {
   },
   notice: {
     wework: "",
+    weworkEnabled: true,
     dingding: "",
+    dingdingEnabled: true,
     dingdingKeyword: "",
     dingdingSecret: "",
     dingdingAtMobiles: "",
     feishu: "",
+    feishuEnabled: true,
     pushme: "",
+    pushmeEnabled: true,
     bark: "",
+    barkEnabled: true,
     // 企业微信是否用 markdown（默认关 → 纯文本，转发到微信时可读）
     weworkMarkdown: false,
     // 推送是否附加一言（界面侧三件套已迁到 DEFAULT_APPEARANCE）

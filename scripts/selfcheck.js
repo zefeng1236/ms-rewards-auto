@@ -4481,6 +4481,57 @@ const DOC_SECRET_PATTERNS = [
   );
 }
 
+// —— 推送通道总开关（2026-10-11）：五个 xxxEnabled 四处对齐 + notify 真正生效 ——
+// 为什么单列一段：这五个字段是「界面三色点」的数据基础，也是「停用」语义的唯一开关。
+// 漏任一处都会静默改变推送行为：notify 里写成 `=== true` 会把旧配置（没有该字段）
+// 的通道全部停掉（老用户突然收不到推送，且无任何报错）。
+{
+  const chCfgSrc = fs.readFileSync(path.join(ROOT, "src", "config.js"), "utf8");
+  const chGlobalSrc = fs.readFileSync(path.join(ROOT, "src", "global-config.js"), "utf8");
+  const chTypesSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "types", "index.ts"), "utf8");
+  const chMockSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "api", "mock.ts"), "utf8");
+  const chNotifySrc = fs.readFileSync(path.join(ROOT, "src", "notify.js"), "utf8");
+  const chKeys = ["wework", "dingding", "feishu", "pushme", "bark"];
+  const chMissing = [];
+  for (const k of chKeys) {
+    const f = `${k}Enabled`;
+    if (!new RegExp(`${f}:\\s*true`).test(chCfgSrc)) chMissing.push(`config.js:${f}`);
+    if (!new RegExp(`${f}:\\s*true`).test(chGlobalSrc)) chMissing.push(`global-config.js:${f}`);
+    if (!new RegExp(`${f}:\\s*boolean`).test(chTypesSrc)) chMissing.push(`types:${f}`);
+    if (!new RegExp(`${f}:\\s*true`).test(chMockSrc)) chMissing.push(`mock:${f}`);
+    // notify 必须用 !== false（默认开）；写成 === true 会把旧配置的通道静默停掉
+    if (!new RegExp(`notice\\.${f} !== false`).test(chNotifySrc)) chMissing.push(`notify:${f}`);
+  }
+  checkTrue(
+    "通道开关五字段：四处默认对齐 + notify 按 !== false 放行",
+    chMissing.length === 0,
+    `缺/写错：${chMissing.join(", ")} → 「停用」语义会在某一端静默失效`
+  );
+  const chFormSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "components", "SettingsForm.tsx"), "utf8");
+  const chCssSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "styles", "global.css"), "utf8");
+  checkTrue(
+    "通道状态点三色语义：未配置=红 / 已配置未启用=橙 / 已配置且启用=绿",
+    // 判定逻辑（pushDotClass 的两个分支）与 CSS 映射（--danger / --warn / --accent-2）两头都要钉住
+    /if \(!pushConfigured\(notice, key\)\) return "push-dot off";/.test(chFormSrc) &&
+      /return pushEnabled\(notice, key\) \? "push-dot on" : "push-dot idle";/.test(chFormSrc) &&
+      /\.push-dot\.off\s*\{[^}]*var\(--danger\)/.test(chCssSrc) &&
+      /\.push-dot\.idle\s*\{[^}]*var\(--warn\)/.test(chCssSrc) &&
+      /\.push-dot\.on\s*\{[^}]*var\(--accent-2\)/.test(chCssSrc),
+    "点色与语义错位 → 用户按颜色判断配置状态会被误导"
+  );
+  // 类名与 CSS 逐字一致（同 upd-note 守卫的思路：拼错一个字母样式静默失效，页面上看不出异常）
+  const usedPush = new Set();
+  for (const m of chFormSrc.matchAll(/["']((?:push-|sec-edit-btn)[^"']*)["']/g)) {
+    for (const c of m[1].split(/\s+/)) if (c.startsWith("push-") || c === "sec-edit-btn") usedPush.add(c);
+  }
+  const missingPush = [...usedPush].filter((c) => !chCssSrc.includes(`.${c}`));
+  checkTrue(
+    "推送弹窗用到的 push-* / sec-edit-btn 类名都在 CSS 里有定义（拼错即静默失效）",
+    usedPush.size >= 8 && missingPush.length === 0,
+    `CSS 里缺：${missingPush.join(", ")}（只收集到 ${usedPush.size} 个类名，扫描逻辑可能失效）`
+  );
+}
+
 // —— 安全中心：审计与策略不许失效（2026-10-11 第二、三层）——
 // 这层的价值全在「出事之后还能查」。一旦某处为了顺手把审计调用删掉，
 // 现场没有任何报错，功能测试也照样过 —— 只有真出事才发现查不到东西。

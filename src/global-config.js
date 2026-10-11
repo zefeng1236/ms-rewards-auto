@@ -73,16 +73,23 @@ const GLOBAL_DEFAULTS = {
     randomDelayMax: 300,
   },
   notice: {
+    // 通道级开关（默认全开）。关掉 = **保留配置但不再往该通道推送**（设置页显示为橙点）。
+    // ⚠️ 判定统一用 `xxxEnabled !== false`：旧配置没有这些字段（undefined），
+    //    按「默认开」语义必须当成启用 —— 用 `=== true` 会让老用户的全部通道静默失灵。
+    // 必须先与 config.js 的 DEFAULTS.notice 逐字段对齐（项目铁律）。
     wework: "",
+    weworkEnabled: true,
     dingding: "",
+    dingdingEnabled: true,
     dingdingKeyword: "",
-    // ⚠️ 必须与 config.js 的 DEFAULTS.notice 逐字段对齐（项目铁律）——
-    // 少一个字段会在「旧配置加载」时缺字段，深层 merge 补默认值。
     dingdingSecret: "",
     dingdingAtMobiles: "",
     feishu: "",
+    feishuEnabled: true,
     pushme: "",
+    pushmeEnabled: true,
     bark: "",
+    barkEnabled: true,
     // 企业微信是否用 markdown 排版。**默认关**（转发到微信时不会显示标记）。
     // ⚠️ 必须与 src/config.js 的 DEFAULTS.notice 逐字段对齐。
     weworkMarkdown: false,

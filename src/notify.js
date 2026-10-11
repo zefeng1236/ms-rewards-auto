@@ -208,8 +208,10 @@ function buildRequests(notice, title, text) {
   const content = String(text == null ? "" : text);
   const list = [];
 
+  // 通道开关：xxxEnabled 默认开，**只有显式 false 才停推**（旧配置没有该字段，
+  // 用 `=== true` 会把老用户的全部通道静默判成停用）。
   const weworkUrl = normalizeWebhook(notice.wework, "wework");
-  if (weworkUrl) {
+  if (weworkUrl && notice.weworkEnabled !== false) {
     list.push({
       channel: "企业微信",
       platform: "wework",
@@ -233,7 +235,7 @@ function buildRequests(notice, title, text) {
     });
   }
   const dingdingUrl = normalizeWebhook(notice.dingding, "dingding");
-  if (dingdingUrl) {
+  if (dingdingUrl && notice.dingdingEnabled !== false) {
     const mdText = md.buildMarkdown(title, content);
     // 关键词补在 markdown 化**之后**、发送之前，保证补进去的词也在正文里
     const ddText = ensureKeyword(mdText, notice.dingdingKeyword);
@@ -257,7 +259,7 @@ function buildRequests(notice, title, text) {
     });
   }
   const feishuUrl = normalizeWebhook(notice.feishu, "feishu");
-  if (feishuUrl) {
+  if (feishuUrl && notice.feishuEnabled !== false) {
     list.push({
       channel: "飞书",
       platform: "feishu",
@@ -270,7 +272,7 @@ function buildRequests(notice, title, text) {
       },
     });
   }
-  if (notice.pushme) {
+  if (notice.pushme && notice.pushmeEnabled !== false) {
     list.push({
       channel: "PushMe",
       platform: "pushme",
@@ -278,7 +280,7 @@ function buildRequests(notice, title, text) {
       init: { method: "GET" },
     });
   }
-  if (notice.bark) {
+  if (notice.bark && notice.barkEnabled !== false) {
     const key = notice.bark.replace(/^https?:\/\/(api\.day\.app)\//, "").split("/")[0];
     list.push({
       channel: "Bark",
@@ -587,8 +589,8 @@ async function testPush(notice, label = "测试") {
   const reqs = buildRequests(cfg, title, content);
 
   if (!reqs.length) {
-    logger.warn("推送测试：没有配置任何通道，请先填写至少一个 Webhook 或 Key");
-    return { ok: false, total: 0, results: [], reason: "未配置任何推送通道" };
+    logger.warn("推送测试：没有可用通道（未配置，或已在通道开关里停用）");
+    return { ok: false, total: 0, results: [], reason: "没有可用的推送通道（未配置或已停用）" };
   }
 
   logger.log("📨", `推送测试开始，共 ${reqs.length} 个通道：${reqs.map((r) => r.channel).join("、")}`);

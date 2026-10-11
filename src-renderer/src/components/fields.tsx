@@ -141,19 +141,24 @@ export function TimeField({
   );
 }
 
-/** 分节标题 */
+/** 分节标题（action = 标题行最右侧的操作区，如「编辑」按钮） */
 export function Section({
   title,
   desc,
+  action,
   children,
 }: {
   title: string;
   desc?: string;
+  action?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
     <section className="sec">
-      <div className="sec-title">{title}</div>
+      <div className="sec-head">
+        <div className="sec-title">{title}</div>
+        {action}
+      </div>
       {desc && <div className="hint" style={{ marginBottom: 8 }}>{desc}</div>}
       {children}
     </section>
