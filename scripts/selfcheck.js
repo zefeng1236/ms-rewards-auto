@@ -4125,6 +4125,39 @@ const DOC_SECRET_PATTERNS = [
       !/NOTES:\s*\$\{\{\s*steps\.notes\.outputs\.path\s*\}\}/.test(ciCode2),
     "建 Release 时仍用未签名的原文 → 客户端下载入口直接拒绝"
   );
+  checkTrue(
+    "stripSignatureBlock 真能剥掉签名块、且不动普通正文（行为实测）",
+    (() => {
+      const sig = require(path.join(ROOT, "src", "update-signature.js"));
+      if (typeof sig.stripSignatureBlock !== "function") return false;
+      const block = `${sig.SIG_START}\nversion=0.15.1\nfile=x.exe\nsha256=${"a".repeat(64)}\nkeyid=k\nsig=s\n${sig.SIG_END}`;
+      const stripped = sig.stripSignatureBlock(`# 标题\n\n正文段落\n\n${block}\n`);
+      const clean = sig.stripSignatureBlock("没有任何签名的正文");
+      return (
+        !stripped.includes(sig.SIG_START) &&
+        !stripped.includes(sig.SIG_END) &&
+        stripped.includes("# 标题") &&
+        stripped.includes("正文段落") &&
+        clean === "没有任何签名的正文"
+      );
+    })(),
+    "签名块没被剥（界面会露出来）或正常正文被误删"
+  );
+  checkTrue(
+    "发布说明交给界面的三个出口都用剥过的副本，且验签仍用原始 body",
+    // 出口 = checkAppUpdate 的 releaseNotes + fetchReleaseNotes 的两处 notes。
+    // 必须逐出口锚定：只查「函数存在/有过一处调用」的话，漏改某一处照样全绿
+    // （2026-10-11 用户实测 0.15.0 检查更新时就在弹窗里看到了签名块）。
+    /releaseNotes:\s*updateSignature\.stripSignatureBlock\(body\)/.test(updCode) &&
+      /notes:\s*updateSignature\.stripSignatureBlock\(r\.body\)/.test(updCode) &&
+      /notes:\s*updateSignature\.stripSignatureBlock\(String\(hit\.body \|\| ""\)\)/.test(updCode) &&
+      !/releaseNotes:\s*body\b/.test(updCode) &&
+      !/notes:\s*r\.body\b/.test(updCode) &&
+      !/notes:\s*String\(hit\.body/.test(updCode) &&
+      // 验签必须拿原始 body：若有人先把 body 就地剥了，签名块随之消失 → 所有更新被拒
+      !/\bbody\s*=\s*[^;\n]*stripSignatureBlock/.test(updCode),
+    "某出口仍把原始正文交给界面（会露出签名块），或验签前把 body 剥了（更新全被拒）"
+  );
 }
 
 // —— 跨客户端汇总：HTTP 上报链路的口径与安全（2026-10-11 重构）——

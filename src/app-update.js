@@ -1,6 +1,7 @@
 const logger = require("./logger");
 const fs = require("fs");
 const path = require("path");
+const updateSignature = require("./update-signature");
 
 const OWNER = "zefeng1236";
 const REPO = "ms-rewards-auto";
@@ -183,7 +184,7 @@ async function checkAppUpdate(currentVersion) {
      *
      * @see src/update-signature.js 的信任模型与「存量版本仍接受未签名」的固有代价
      */
-    const verdict = require("./update-signature").verifyReleaseSignature(body);
+    const verdict = updateSignature.verifyReleaseSignature(body);
     if (!verdict.ok) {
       logger.warn(`更新包签名校验失败：${verdict.error}（Release: ${pageUrl}）`);
     } else if (verdict.block.sha256 && asset?.name && verdict.block.file !== asset.name) {
@@ -202,7 +203,8 @@ async function checkAppUpdate(currentVersion) {
       downloadUrl: asset?.url || "",
       assetName: asset?.name || "",
       pageUrl,
-      releaseNotes: body,
+      // 交界面的是剥过签名块的副本（验签用的 body 保持原文，见上方注释）
+      releaseNotes: updateSignature.stripSignatureBlock(body),
       publishedAt: latest.published_at || "",
       // 供应链（2026-10-11）：只有验签通过才给出可信哈希
       signatureVerified: !!verdict.ok,
@@ -232,7 +234,7 @@ async function fetchReleaseNotes(version) {
       headers: { Accept: "application/vnd.github+json" },
     });
     if (r && typeof r.body === "string") {
-      return { ok: true, version: v, notes: r.body, pageUrl: r.html_url || "" };
+      return { ok: true, version: v, notes: updateSignature.stripSignatureBlock(r.body), pageUrl: r.html_url || "" };
     }
     // 单条接口不通（镜像对 /tags/ 支持不齐）→ 退回列表里找
     const list = await fetchJsonWithMirror(RELEASES_API, {
@@ -243,7 +245,7 @@ async function fetchReleaseNotes(version) {
       (x) => String(x && x.tag_name || "").trim().replace(/^v/i, "") === v
     );
     if (!hit) return { ok: false, error: `未找到版本 ${v} 的发布信息` };
-    return { ok: true, version: v, notes: String(hit.body || ""), pageUrl: hit.html_url || "" };
+    return { ok: true, version: v, notes: updateSignature.stripSignatureBlock(String(hit.body || "")), pageUrl: hit.html_url || "" };
   } catch (e) {
     return { ok: false, error: e.message || "获取更新日志失败" };
   }

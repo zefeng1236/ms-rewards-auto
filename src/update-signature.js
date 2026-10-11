@@ -95,6 +95,29 @@ function parseSignatureBlock(body) {
 }
 
 /**
+ * 剥掉正文里的签名块 —— **交给界面的正文不该带机器读的注释**。
+ *
+ * GitHub 渲染 Markdown 时 HTML 注释不显示；但更新弹窗/更新日志的
+ * markdown-lite 渲染器不隐藏注释，不剥的话更新日志末尾会整段露出
+ * `<!-- msr-signature … -->`（2026-10-11 用户实测：0.15.0 检查更新、
+ * 读的是最新版 0.15.1 的正文，签名块被原样显示出来）。
+ *
+ * ⚠️ 只用于「展示副本」。验签必须用**原始正文** —— 先剥再验会把块本身删掉，
+ *    验签必然失败，等于把所有更新都拒掉。
+ *
+ * @param {string} text Release 正文
+ * @returns {string} 剥掉签名块（含其周围空行）的正文；无签名块时原样返回
+ */
+function stripSignatureBlock(text) {
+  const s = String(text || "");
+  if (!s.includes(SIG_START)) return s;
+  const esc = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return s
+    .replace(new RegExp(`\\n*${esc(SIG_START)}[\\s\\S]*?${esc(SIG_END)}\\n*`, "g"), "\n")
+    .replace(/\s+$/, "");
+}
+
+/**
  * 构造被签名的字节串。
  *
  * ⚠️ 字段顺序必须**固定且两端一致**，否则签名永远对不上。
@@ -161,6 +184,7 @@ module.exports = {
   SIG_START,
   SIG_END,
   parseSignatureBlock,
+  stripSignatureBlock,
   signingPayload,
   verifyReleaseSignature,
   sign,
