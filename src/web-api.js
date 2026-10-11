@@ -530,7 +530,11 @@ function createApi({ emit }) {
       return fpBrowser.checkUpdate();
     },
     // 应用本身更新检查：查询 GitHub Releases 最新正式版（自动走 gh-proxy 加速）。
-    checkAppUpdate() {
+    //
+    // 供应链（2026-10-11）：这里也会验 Ed25519 签名（app-update.js 内部做的），
+    // Docker 版不下载安装包，但**签名状态要透给界面** —— 用户在 Web 界面
+    // 点「查看更新」时应当看得出这个包是不是我们签发过的。
+    async checkAppUpdate() {
       return appUpdate.checkAppUpdate(displayVersion());
     },
     // 指定版本的更新日志（Docker 版也能看「当前版本改了什么」）

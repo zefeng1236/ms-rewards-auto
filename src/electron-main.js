@@ -405,6 +405,54 @@ let fingerprintStagedController = null;
 let fingerprintCommitTimer = null;
 /** 内置下载更新安装包时的取消控制器（同一时刻只允许一个下载任务） */
 let updateDownloadController = null;
+
+/**
+ * 更新包的**签名可信哈希**缓存（2026-10-11 供应链）。
+ *
+ * 形状：`{ [assetName]: { sha256, version, at } }`
+ *
+ * ⚠️ 为什么要在主进程缓存、而不是让界面把 expectedSha256 传回来：
+ *   下载入口 `app:downloadUpdate` 的参数完全来自渲染层。若哈希从界面传入，
+ *   那么「控制界面」等价于「控制安装什么」—— 供应链签名就白做了。
+ *   主进程自己验签、自己缓存，界面只负责发起动作。
+ *
+ * ⚠️ 缓存里没有对应资产 ⇒ 拒绝下载（fail-closed）。
+ *   宁可「先点一次检查更新再下载」也不能「无签名直接放行」：
+ *   正常流程本就是 check → 弹窗 → 下载，不存在被迫跳过的场景。
+ */
+const signedUpdateHashes = new Map();
+/** 缓存有效期：超过就不认了（避免拿到签名后放很久才用） */
+const SIGNED_HASH_TTL_MS = 6 * 60 * 60 * 1000;
+
+/** 记下一个通过验签的资产哈希 */
+function rememberSignedHash(info) {
+  try {
+    if (!info || !info.signatureVerified || !info.assetName || !info.expectedSha256) return;
+    signedUpdateHashes.set(info.assetName, {
+      sha256: String(info.expectedSha256),
+      version: String(info.latestVersion || ""),
+      at: Date.now(),
+    });
+  } catch (e) {
+    logger.warn(`记录签名哈希失败：${e && e.message ? e.message : e}`);
+  }
+}
+
+/**
+ * 取某个资产的可信哈希；没有或过期返回空串。
+ * @param {string} assetName
+ * @returns {string}
+ */
+function takeSignedHash(assetName) {
+  const name = String(assetName || "");
+  const hit = signedUpdateHashes.get(name);
+  if (!hit) return "";
+  if (Date.now() - hit.at > SIGNED_HASH_TTL_MS) {
+    signedUpdateHashes.delete(name);
+    return "";
+  }
+  return hit.sha256;
+}
 /** 批次运行中、用户在排队阶段就要求「停止此账号」的 id 集合（轮到时直接跳过） */
 const batchSkip = new Set();
 
@@ -1696,7 +1744,13 @@ function registerIpc() {
   ipcMain.handle("app:checkFingerprintUpdate", () => fpBrowser.checkUpdate());
 
   // 应用本身更新检查：查询 GitHub Releases 最新正式版（自动走 gh-proxy 加速），只查不下载。
-  ipcMain.handle("app:checkAppUpdate", () => appUpdate.checkAppUpdate(displayVersion()));
+  ipcMain.handle("app:checkAppUpdate", async () => {
+    const r = await appUpdate.checkAppUpdate(displayVersion());
+    // 供应链（2026-10-11）：验签通过的结果存进主进程缓存，供下载环节取用。
+    // 界面拿到的只是展示用的 sha256/签名状态，**下载时不采信界面传的哈希**。
+    rememberSignedHash(r);
+    return r;
+  });
 
   // 运行时版本号（与窗口标题同源，读 package.json）。
   // 渲染层 version.ts 是编译期常量，改了不重新 build:web 就会与标题栏分叉。
@@ -1783,6 +1837,19 @@ function registerIpc() {
     const safeName = String(assetName || "MS-Rewards-Auto-Setup.exe")
       .replace(/[\\/:*?"<>|]/g, "_");
     const destFile = path.join(updateDir || app.getPath("downloads"), safeName);
+
+    // 供应链（2026-10-11）：**没有通过验签的哈希就不给下**。
+    // 这个哈希来自主进程自己验签后的缓存（见 rememberSignedHash），
+    // 不接受界面传值 —— 否则「控制界面」= 「控制装什么」，签名就白做了。
+    const trustedSha = takeSignedHash(assetName);
+    if (!trustedSha) {
+      const msg = "这个更新包没有通过签名校验，已拒绝下载。请先「检查更新」再下载。";
+      logger.warn(`${msg}（asset=${safeName}）`);
+      try {
+        require("./security-audit").denied("downloadUpdate", assetName, msg, "ipc:app:downloadUpdate");
+      } catch {}
+      return { ok: false, error: msg };
+    }
     if (fallback) {
       logger.info(`更新包目录回落到用户数据目录（安装目录不可写）: ${updateDir}`);
     }
@@ -1805,6 +1872,20 @@ function registerIpc() {
         logger.info(`更新安装包已下载：${destFile}（${r.bytes} 字节）`);
         // 记录待装包信息（路径 + 版本 + 大小 + 哈希），供「点安装」时复核。
         // ⚠️ version 从调用参数取：downloadUpdate 只负责搬字节，不知道版本号。
+        // ⚠️ readySha256 用**验签得到可信的那个**，不是本次下载重算的值。
+        //    重算值只能证明「没下坏」，证明不了「来源可信」；
+        //    两者相等说明传输无损，不相等说明中途被换过 —— 后者直接废掉这个包。
+        if (r.sha256 && r.sha256 !== trustedSha) {
+          const msg = `下载内容与签名承诺的哈希不一致（期望 ${trustedSha.slice(0, 12)}…，实得 ${r.sha256.slice(0, 12)}…），已作废`;
+          logger.error(msg);
+          try {
+            require("./security-audit").denied("downloadUpdate.verify", destFile, msg, "download");
+          } catch {}
+          try {
+            fs.rmSync(destFile, { force: true });
+          } catch {}
+          return { ok: false, error: msg };
+        }
         try {
           const cfg = globalConfig.get() || {};
           const prev = cfg.update || {};
@@ -1815,7 +1896,7 @@ function registerIpc() {
               readyFile: r.path || destFile,
               readyVersion,
               readyBytes: r.bytes || 0,
-              readySha256: r.sha256 || "",
+              readySha256: trustedSha || r.sha256 || "",
             },
           });
         } catch (e) {

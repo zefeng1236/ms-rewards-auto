@@ -246,13 +246,41 @@ jobs:
           $body | Out-File -FilePath release-notes-rendered.md -Encoding utf8 -NoNewline
           "path=release-notes-rendered.md" | Out-File -Append $env:GITHUB_OUTPUT -Encoding utf8
 
+      - name: 给发布说明加 Ed25519 签名（供应链）
+        id: sign
+        env:
+          # 私钥只从仓库 Secret 读，**绝不进版本库**。
+          # 没配这个 Secret 时本步骤会失败 —— 这是有意的：
+          # 宁可不发版，也不要发一个客户端会拒绝的包（验签是 fail-closed）。
+          MSR_UPDATE_SIGN_KEY: ${{ secrets.MSR_UPDATE_SIGN_KEY }}
+          VER: ${{ steps.sha.outputs.ver }}
+          EXE_NAME: ${{ steps.sha.outputs.exename }}
+          EXE_SHA: ${{ steps.sha.outputs.exesha }}
+          BODY: ${{ steps.notes.outputs.path }}
+        run: |
+          if [ -z "$MSR_UPDATE_SIGN_KEY" ]; then
+            echo "::error::仓库 Secret MSR_UPDATE_SIGN_KEY 未配置。更新包签名是 fail-closed 的 ——"
+            echo "::error::没签名的话每个客户端都会拒绝这个更新，所以这里直接失败而不是发一个装不上的包。"
+            echo "::error::生成方法：node .workbuddy/tmp/gen-update-key.js（私钥别提交，用完存进 Secret）"
+            exit 1
+          fi
+          # 脚本内部会用 src/update-signature.js 里内置的公钥自检一遍，
+          # 签不出/验不过就不会落盘，不会把坏签名推到 Release 上。
+          node scripts/sign-release.js \
+            --body "$BODY" \
+            --version "$VER" \
+            --file "$EXE_NAME" \
+            --sha256 "$EXE_SHA" \
+            --out release-notes-signed.md
+          echo "path=release-notes-signed.md" >> "$GITHUB_OUTPUT"
+
       - name: 建草稿 Release 并挂安装包
         env:
           # 内置 GITHUB_TOKEN（contents: write 已在本 job 声明），无需配置 secret。
           # tag 取自 GitHub 上下文而非用户输入，脚本里无字符串拼接进命令的注入面。
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
-          NOTES: ${{ steps.notes.outputs.path }}
+          NOTES: ${{ steps.sign.outputs.path }}
           EXE_NAME: ${{ steps.sha.outputs.exename }}
           BM_NAME: ${{ steps.sha.outputs.bmname }}
           VER: ${{ steps.sha.outputs.ver }}

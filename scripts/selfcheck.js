@@ -104,7 +104,7 @@ function checkTrue(name, cond, extra = "") {
 /**
  * 剥掉 JS 里的注释，只留可执行代码。
  *
- * ⚠️ 为什么需要它（这是本文件最常见的一类假红/假绿来源，**踩过 4 次**）：
+ * ⚠️ 为什么需要它（这是本文件最常见的一类假红/假绿来源，**踩过 5 次**）：
  *   守卫想在源码里找「有没有某个危险写法」，但项目代码习惯在注释里
  *   **引用旧代码做对比说明** —— 例如：
  *     · MODAL_WIDTH 守卫，命中了注释里「原先有 MODAL_WIDTH 表」；
@@ -125,7 +125,12 @@ function checkTrue(name, cond, extra = "") {
  */
 function stripJsComments(src) {
   return String(src == null ? "" : src)
-    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
+    // ⚠️⚠️ 块注释只认「独占一行开头」的那种（2026-10-11 修，见上方说明）：
+    //    朴素写法 /\/\*[\s\S]*?\*\//g 会从**行中间的 /*`** 一路吃到最近的 */，
+    //    中间整段代码被当注释删掉 → 依赖它的守卫**静默失效（假绿）**。
+    //    仓库里的真实触发源：注释里写路径 `updates/**`（那个 /** 恰好是完整块注释）、
+    //    URL 里的 `login.live.com/*`（后面没配对的 */，直接吞到文件末尾）。
+    .replace(/^[ \t]*\/\*[\s\S]*?\*\//gm, (m) => m.replace(/[^\n]/g, " "))
     .split(/\r?\n/)
     .map((ln) => ln.replace(/\/\/.*$/, ""))
     .join("\n");
@@ -3970,6 +3975,93 @@ const DOC_SECRET_PATTERNS = [
       wrongGeo.slice(0, 4).join("；") || "未发现错配"
     );
   }
+}
+
+// —— 更新包签名：供应链信任链不许失效（2026-10-11）——
+// 这一层的价值全在「攻击者改不动」。任何一处为了让流程跑通而绕过验签，
+// 后果都是「所有客户端静默接受被投毒的安装包」，而现场不会有任何报错。
+//
+// 原先的缺口（app-update.js 自己的注释就承认过）：
+//   「抓不到『上游当初给的就是坏的』。这层是防损坏，不是防投毒。」
+// —— 因为 expectedSha256 和 exe 是同一个可篡改来源，属于自己证明自己。
+{
+  const signSrc = fs.readFileSync(path.join(ROOT, "src", "update-signature.js"), "utf8");
+  const signCode = stripJsComments(signSrc);
+  const updCode = stripJsComments(fs.readFileSync(path.join(ROOT, "src", "app-update.js"), "utf8"));
+  const mainCode4 = stripJsComments(fs.readFileSync(path.join(ROOT, "src", "electron-main.js"), "utf8"));
+  const ciRaw2 = fs.readFileSync(path.join(ROOT, ".github", "workflows", "ci.yml"), "utf8");
+  const ciCode2 = ciRaw2.split(/\r?\n/).filter((ln) => !/^\s*#/.test(ln)).join("\n");
+  const signScript = stripJsComments(fs.readFileSync(path.join(ROOT, "scripts", "sign-release.js"), "utf8"));
+
+  checkTrue(
+    "update-signature 的公钥硬编码在源码里（随 exe 打包，攻击者改不了）",
+    /UPDATE_KEYS\s*=\s*\[/.test(signCode) &&
+      /BEGIN PUBLIC KEY/.test(signSrc) &&
+      /keyId:\s*"[0-9a-f]{64}"/.test(signCode),
+    "公钥没在源码里 → 私钥放 CI 也没意义（客户端无从信任）"
+  );
+  checkTrue(
+    "update-signature 是 fail-closed（没签名/坏签名一律拒绝，不存在跳过分支）",
+    /function verifyReleaseSignature\([\s\S]{0,1400}?return \{ ok: false/.test(signCode) &&
+      /if \(!block\)/.test(signCode) &&
+      !/verifyReleaseSignature\([\s\S]{0,1400}?catch[^{]*\{[^}]*return \{ ok: true/.test(signCode),
+    "验签失败却可能返回 ok:true → 攻击者删掉签名块就能降级"
+  );
+  checkTrue(
+    "私钥只从环境变量读（不来自源码/仓库）",
+    /process\.env\.MSR_UPDATE_SIGN_KEY/.test(signScript) &&
+      /process\.env\.MSR_UPDATE_SIGN_KEY_FILE/.test(signScript) &&
+      !/require\([^)]*private-key|readFileSync\([^)]*\.git/.test(signScript),
+    "签名脚本从文件或仓库里读私钥 → 私钥可能已经进了版本库"
+  );
+  checkTrue(
+    "仓库里没有私钥文件（提交进版本库等于公开签名能力）",
+    (() => {
+      const tracked = (() => {
+        try {
+          return execSync('git ls-files | grep -iE "private-key|\\.pem$|secret.*key"', {
+            cwd: ROOT, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"],
+          });
+        } catch {
+          return ""; // grep 无命中时退出码非 0，属正常
+        }
+      })().trim();
+      return tracked === "";
+    })(),
+    "git 跟踪了私钥文件 → 立刻 git rm --cached 并轮换密钥"
+  );
+  checkTrue(
+    "下载入口要求主进程缓存里的可信哈希（不采信界面传值）",
+    /const trustedSha = takeSignedHash\(/.test(mainCode4) &&
+      /if \(!trustedSha\)[\s\S]{0,400}?return \{ ok: false/.test(mainCode4) &&
+      /function rememberSignedHash\(/.test(mainCode4),
+    "下载时不查缓存或缺哈希不拒绝 → 「控制界面」=「控制装什么」，签名白做"
+  );
+  checkTrue(
+    "下载内容与签名哈希不符时作废该包（传输被换过）",
+    /r\.sha256 !== trustedSha/.test(mainCode4) &&
+      /rmSync\(destFile/.test(mainCode4),
+    "只记录不处置 → 被换过的包仍会留在 updates/ 里等安装"
+  );
+  checkTrue(
+    "checkAppUpdate 验签失败时不下发可信哈希",
+    /verifyReleaseSignature\(body\)/.test(updCode) &&
+      /expectedSha256:\s*verdict\.ok\s*\?\s*verdict\.block\.sha256\s*:\s*""/.test(updCode),
+    "expectedSha256 无条件下发 → 验签形同虚设"
+  );
+  checkTrue(
+    "CI 发版时用 Secret 里的私钥签名，缺 Secret 即失败",
+    /secrets\.MSR_UPDATE_SIGN_KEY/.test(ciCode2) &&
+      /scripts\/sign-release\.js/.test(ciCode2) &&
+      /sign-release\.js[\s\S]{0,400}?--out release-notes-signed\.md/.test(ciCode2),
+    "CI 没有签名步骤或没读 Secret → 发出去的包客户端一律拒绝"
+  );
+  checkTrue(
+    "Release 正文用的是**签名后**那份（不是渲染后的原文）",
+    /NOTES:\s*\$\{\{\s*steps\.sign\.outputs\.path\s*\}\}/.test(ciCode2) &&
+      !/NOTES:\s*\$\{\{\s*steps\.notes\.outputs\.path\s*\}\}/.test(ciCode2),
+    "建 Release 时仍用未签名的原文 → 客户端下载入口直接拒绝"
+  );
 }
 
 // —— 安全中心：审计与策略不许失效（2026-10-11 第二、三层）——

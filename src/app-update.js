@@ -164,6 +164,36 @@ async function checkAppUpdate(currentVersion) {
     }
     const asset = normalizeAsset((latest.assets || []).find((a) => /\.exe$/i.test(a.name || "")) || latest.assets?.[0]);
     const pageUrl = latest.html_url ? String(latest.html_url) : `https://github.com/${OWNER}/${REPO}/releases/latest`;
+    const body = String(latest.body || "");
+
+    /**
+     * ⚠️⚠️ 供应链信任链的关键一步（2026-10-11）
+     *
+     * 原先这里直接返回 `releaseNotes: latest.body`，后续 verifyUpdateFile
+     * 用「下载时自己算的 sha256」复核 —— 但那个 hash 也是**从这个 Release 来的**。
+     * 攻击者只要能改 GitHub Release（账号被盗 / token 泄露 / 供应链投毒），
+     * 就能同时换上新 exe 和新 hash，两者一起改，哈希校验立刻失效。
+     * 那是自己证明自己的循环论证，代码原注释也承认了「这层是防损坏，不是防投毒」。
+     *
+     * 现在改成：先验签正文里的签名块（公钥硬编码在本进程内，私钥只在 CI），
+     * **只有验签通过才把 expectedSha256 交出去**，之后下载完用这个值复核。
+     *
+     * ⚠️ fail-closed：验不过就没有 expectedSha256，下载链路会拒绝安装。
+     *    绝不能「验不过就跳过」—— 那样攻击者只要删掉签名块就能降级。
+     *
+     * @see src/update-signature.js 的信任模型与「存量版本仍接受未签名」的固有代价
+     */
+    const verdict = require("./update-signature").verifyReleaseSignature(body);
+    if (!verdict.ok) {
+      logger.warn(`更新包签名校验失败：${verdict.error}（Release: ${pageUrl}）`);
+    } else if (verdict.block.sha256 && asset?.name && verdict.block.file !== asset.name) {
+      logger.warn(
+        `签名里的文件名(${verdict.block.file})与实际资产(${asset.name})不一致，按不信任处理`
+      );
+      verdict.ok = false;
+      verdict.error = "签名指向的文件与实际下载的资产不一致";
+    }
+
     return {
       ok: true,
       updateAvailable: compareVersion(latestVersion, currentVersion || "0.0.0") > 0,
@@ -172,8 +202,12 @@ async function checkAppUpdate(currentVersion) {
       downloadUrl: asset?.url || "",
       assetName: asset?.name || "",
       pageUrl,
-      releaseNotes: String(latest.body || ""),
+      releaseNotes: body,
       publishedAt: latest.published_at || "",
+      // 供应链（2026-10-11）：只有验签通过才给出可信哈希
+      signatureVerified: !!verdict.ok,
+      signatureError: verdict.ok ? "" : verdict.error,
+      expectedSha256: verdict.ok ? verdict.block.sha256 : "",
     };
   } catch (e) {
     logger.warn(`检查应用更新失败: ${e.message || e}`);
