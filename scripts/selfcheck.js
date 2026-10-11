@@ -101,6 +101,46 @@ function checkTrue(name, cond, extra = "") {
   console.log(`${cond ? "  ✅" : "  ❌"} ${name}${cond ? "" : ` — ${extra}`}`);
 }
 
+/**
+ * 剥掉 JS 里的注释，只留可执行代码。
+ *
+ * ⚠️ 为什么需要它（这是本文件最常见的一类假红/假绿来源，**踩过 4 次**）：
+ *   守卫想在源码里找「有没有某个危险写法」，但项目代码习惯在注释里
+ *   **引用旧代码做对比说明** —— 例如：
+ *     · MODAL_WIDTH 守卫，命中了注释里「原先有 MODAL_WIDTH 表」；
+ *     · 「文案不许出现某句话」守卫，命中了注释里引用的原话；
+ *     · 尖括号剥离位置守卫，命中了注释里 `.replace(/<[^>]+>/g,"")` 这段旧代码；
+ *     · 账户 id 裸 join 守卫，命中了注释里 `path.join(ACCOUNTS_DIR, id)` 的举例。
+ *   于是断言「源码里没有 X」会因为注释里提到 X 而永远红（假红），
+ *   或者「源码里有 X」会因为注释里的示例而误判（假绿）。
+ *
+ * 所以：**凡是断言「某写法不存在 / 某位置是第几个」，都必须在剥掉注释后判断。**
+ *
+ * 处理顺序有讲究：先剥块注释再剥行注释 —— 否则块注释里的 `//` 会把后半行吃掉。
+ * 字符串字面量里的 `//`（如 "https://…"）会被误剥，但只影响断言位置判断，
+ * 不会让守卫失配；真需要精确时用 stripJsCommentsFull（保留字符串内容）。
+ *
+ * @param {string} src
+ * @returns {string}
+ */
+function stripJsComments(src) {
+  return String(src == null ? "" : src)
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
+    .split(/\r?\n/)
+    .map((ln) => ln.replace(/\/\/.*$/, ""))
+    .join("\n");
+}
+
+/**
+ * 在**剥掉注释**的源码里做正则匹配（判断"某写法存在/不存在"时的正确姿势）。
+ * @param {string} src
+ * @param {RegExp} re 必须是 /g 或无标记均可（用 test/match 会受 lastIndex 影响时自行加 g）
+ * @returns {boolean}
+ */
+function codeHas(src, re) {
+  return re.test(stripJsComments(src));
+}
+
 /* ============ 1. 密码强度 ============ */
 console.log("\n【1】密码强度 evaluatePassword");
 const { evaluatePassword } = requireTs("src-renderer/src/utils/passwordStrength.ts");
@@ -3932,6 +3972,69 @@ const DOC_SECRET_PATTERNS = [
   }
 }
 
+// —— 路径边界：三个真问题不许回退（2026-10-11 安全中心第一层）——
+// 这三个都是「外部可控 id/路径 → 落到磁盘操作」的通路，修掉之后
+// 一旦改回去不会有人立刻发现（功能测试照样过，因为没人传 ..），所以必须静态锁死。
+{
+  const spSrc = fs.readFileSync(path.join(ROOT, "src", "storage-path.js"), "utf8");
+  const acctSrc = fs.readFileSync(path.join(ROOT, "src", "account.js"), "utf8");
+  const mainSrc = fs.readFileSync(path.join(ROOT, "src", "electron-main.js"), "utf8");
+  // ⚠️ 全部在剥掉注释后的代码里判断：这几个守卫要找的写法，
+  //    恰好都以「注释里引用旧代码」的形式出现过（见 stripJsComments 的说明）。
+  const spCode = stripJsComments(spSrc);
+  const acctCode = stripJsComments(acctSrc);
+  const mainCode = stripJsComments(mainSrc);
+
+  // ① storage-path 的 resolve 不能退化回纯 join
+  const resolveBody = /resolveIn\(\.\.\.sub\)\s*\{[\s\S]{0,900}?\n\}/.exec(spCode);
+  checkTrue(
+    "storage-path 的 resolveIn 用 path.relative 判越界（不是字符串前缀比较）",
+    !!resolveBody &&
+      /path\.relative\(/.test(resolveBody[0]) &&
+      /rel\.startsWith\("\.\."\)/.test(resolveBody[0]) &&
+      /path\.isAbsolute\(rel\)/.test(resolveBody[0]),
+    "resolveIn 缺 path.relative 越界判定 → sp.resolve('../..') 又能逃出 storage"
+  );
+  checkTrue(
+    "storage-path 的 resolve 走 resolveIn（不再直接 path.join 放行）",
+    /resolve\(\.\.\.sub\)\s*\{\s*return resolveIn\(\.\.\.sub\)/.test(spCode),
+    "resolve 又变回 path.join → 越界静默放行"
+  );
+
+  // ② 账户 id 必须校验，且所有按 id 拼路径处都要走校验出口
+  //
+  // ⚠️ 判据必须包含「函数体里真的有 throw」：只查「函数存在 + UUID_RE 存在」
+  //    的话，把条件改成 `if (false)` 就能绕过而守卫照样全绿（反例实测踩到）。
+  const assertIdBody = /function assertAccountId\([^)]*\)\s*\{[\s\S]{0,700}?\n\}/.exec(acctCode);
+  checkTrue(
+    "account.js 有账户 id 校验且真的会抛错（不是 if(false) 空壳）",
+    !!assertIdBody &&
+      /UUID_RE/.test(assertIdBody[0]) &&
+      /throw new Error/.test(assertIdBody[0]) &&
+      /if\s*\(/.test(assertIdBody[0]),
+    "assertAccountId 缺 throw / 条件被改成恒假 → 传 .. 仍可递归删任意目录"
+  );
+  checkTrue(
+    "account.js 的按 id 拼路径统一走 accountDir（不再裸 path.join(ACCOUNTS_DIR, id)）",
+    /function accountDir\(/.test(acctCode) &&
+      /accountDir\(\s*safe\s*\)/.test(acctCode) &&
+      /getDir[\s\S]{0,80}return accountDir\(id\)/.test(acctCode) &&
+      // 允许的裸 join 只剩 index.json（硬编码）与 accountDir 内部那处已复检过的
+      !/path\.join\(ACCOUNTS_DIR,\s*(id|meta\.id)\b/.test(acctCode),
+    "有地方又用裸 join 拼 id → 路径穿越重新可走"
+  );
+
+  // ③ 界面传来的安装包路径必须做归属校验
+  checkTrue(
+    "app:runUpdateInstaller / app:revealUpdateFile 校验路径归属后再交 shell",
+    /function assertInsideUpdateDir\(/.test(mainCode) &&
+      /resolveUpdateDir\(app\.getPath\("userData"\)\)/.test(mainCode) &&
+      /app:runUpdateInstaller[\s\S]{0,900}assertInsideUpdateDir\(p/.test(mainCode) &&
+      /app:revealUpdateFile[\s\S]{0,400}assertInsideUpdateDir\(p/.test(mainCode),
+    "两个 channel 少了归属校验 → 界面可让本体 openPath 任意磁盘文件"
+  );
+}
+
 // —— 弹窗宽度按 size 档位**固定**（2026-10-10 用户改回）——
 // 来回改过两次，两边都有代价，判据要能同时挡住两种回退：
 //   ① fit-content（随内容伸缩）→ 内容少时被压成窄条（~360px 的「正在下载」）；
@@ -4089,11 +4192,8 @@ const DOC_SECRET_PATTERNS = [
         // ⚠️ 判位置前必须**剥掉注释** —— 这些函数的注释里引用了
         //    `.replace(/<[^>]+>/g,"")` 这段旧代码做对比说明，
         //    直接在原文里找位置会把注释里的示例当成第一招（反例实测踩到）。
-        const bodyCode = body
-          .replace(/\/\*[\s\S]*?\*\//g, "")
-          .split(/\r?\n/)
-          .map((ln) => ln.replace(/\/\/.*$/, ""))
-          .join("\n");
+        //    这里用共用的 stripJsComments，不再各写一套。
+        const bodyCode = stripJsComments(body);
         const first = bodyCode.match(/\.replace\(\/\[<>\]\/g, ""\)/);
         if (!first) return false;
         const before = bodyCode.slice(0, first.index);

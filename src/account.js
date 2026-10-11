@@ -10,6 +10,46 @@ const sp = require("./storage-path");
 const ACCOUNTS_DIR = sp.accountsDir;
 const INDEX_FILE = path.join(ACCOUNTS_DIR, "index.json");
 
+/**
+ * 校验账户 id，拒绝任何可能拼出越界路径的值。
+ *
+ * ⚠️ 为什么必须校验（2026-10-11 安全中心）：
+ *   id 会从界面 / IPC / HTTP 接口一路传进来，而下面 remove() 直接
+ *   `path.join(ACCOUNTS_DIR, id)` + `fs.rmSync(dir, {recursive:true})` ——
+ *   传一个 `..` 进来就会**递归删除 accounts 之外整个目录**。
+ *   path.join 会正常处理 `..`，它不会替你兜底。
+ *
+ *   规则取「必须是小写 hex UUID」而不是「过滤掉非法字符」：
+ *   id 由 crypto.randomUUID() 生成（见 create()），形态固定；
+ *   过滤式清洗会把非法 id 悄悄改成另一个字符串，
+ *   结果是「操作没报错但作用在错误的账户上」—— 比直接拒绝更难查。
+ *
+ * @param {string} id
+ * @returns {string} 原样返回（合法时）
+ * @throws {Error} id 不合法时抛出
+ */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+function assertAccountId(id) {
+  const s = String(id == null ? "" : id);
+  if (!UUID_RE.test(s)) {
+    throw new Error(`账户 id 非法：${JSON.stringify(s)}（应为 36 位 UUID）`);
+  }
+  return s;
+}
+
+/**
+ * 账户目录 —— 所有「按 id 拼路径」的唯一出口。
+ * 内部做双重校验：id 形态 + 结果确实在 accounts 之内。
+ */
+function accountDir(id) {
+  const safe = assertAccountId(id);
+  const dir = path.join(ACCOUNTS_DIR, safe);
+  if (!sp.isInside(ACCOUNTS_DIR, dir)) {
+    throw new Error(`账户目录越界：${safe}`);
+  }
+  return dir;
+}
+
 function ensureDirs() {
   fs.mkdirSync(ACCOUNTS_DIR, { recursive: true });
   if (!fs.existsSync(INDEX_FILE)) {
@@ -52,7 +92,7 @@ function create(name = "") {
     createdAt: Date.now(),
     enabled: true,
   };
-  const dir = path.join(ACCOUNTS_DIR, id);
+  const dir = accountDir(id);
   // 不再创建 profile/ 目录：浏览器改为「临时目录 + 注入 Cookie」，
   // 登录态唯一的落地副本是 state.json 里的密文（见 browser.js 说明）。
   fs.mkdirSync(dir, { recursive: true });
@@ -70,11 +110,12 @@ function create(name = "") {
 
 /** 删除账户（连同其目录） */
 function remove(id) {
-  const dir = path.join(ACCOUNTS_DIR, id);
+  const safe = assertAccountId(id);
+  const dir = accountDir(safe);
   if (fs.existsSync(dir)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
-  writeIndex(readIndex().filter((a) => a.id !== id));
+  writeIndex(readIndex().filter((a) => a.id !== safe));
 }
 
 /**
@@ -106,7 +147,7 @@ function setEnabled(id, enabled) {
 
 /** 账户目录 */
 function getDir(id) {
-  return path.join(ACCOUNTS_DIR, id);
+  return accountDir(id);
 }
 
 /**
@@ -117,7 +158,7 @@ function getDir(id) {
  * 存量目录由 vault/migrate.js 在启用加密时清理。
  */
 function getProfileDir(id) {
-  return path.join(ACCOUNTS_DIR, id, "profile");
+  return path.join(accountDir(id), "profile");
 }
 
 /**
@@ -317,6 +358,9 @@ module.exports = {
   setEnabled,
   getDir,
   getProfileDir,
+  // 2026-10-11 安全中心：导出路径校验器，供 selfcheck 与 IPC 入口层做前置断言
+  assertAccountId,
+  accountDir,
   context,
   describe,
   describeAll,

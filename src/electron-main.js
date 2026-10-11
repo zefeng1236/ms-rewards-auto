@@ -79,6 +79,36 @@ if (!IS_SMOKE) {
   }
 }
 
+/**
+ * 校验渲染层传来的文件路径确实落在**更新目录**内。
+ *
+ * ⚠️ 背景（2026-10-11 安全中心）：
+ *   `app:runUpdateInstaller` 会用 `shell.openPath(p)` 打开文件，而 p 来自渲染层。
+ *   只判 `fs.existsSync` 的话，界面上任何能影响该参数的地方都能让本体
+ *   执行磁盘上的任意 exe/脚本 —— 这是典型的「界面指挥本体执行任意文件」。
+ *
+ * 为什么以「更新目录」为准而不是 storage 根：
+ *   更新包按用户要求落在**软件安装目录下的 updates/**（不可写时才回落 AppData），
+ *   它本来就不在 storage 里 —— 详见 app-update.js resolveUpdateDir 的注释。
+ *
+ * @param {string} p 渲染层传来的路径
+ * @param {string} what 出错时用于提示的称呼
+ * @returns {{error?: string}} 通过时是空对象
+ */
+function assertInsideUpdateDir(p, what) {
+  const dir = appUpdate.resolveUpdateDir(app.getPath("userData")).dir;
+  const abs = path.resolve(String(p || ""));
+  if (!sp.isInside(dir, abs)) {
+    return { error: `${what}路径不在更新目录内，已拒绝打开` };
+  }
+  // 再看一眼扩展名：更新目录里只应该出现安装包与它的 blockmap
+  const ext = path.extname(abs).toLowerCase();
+  if (![".exe", ".blockmap"].includes(ext)) {
+    return { error: `${what}类型异常（${ext || "无扩展名"}），已拒绝` };
+  }
+  return {};
+}
+
 /** 探测 Vite dev server 是否已就绪（短超时，避免拖慢启动） */
 function devServerReady() {
   return new Promise((resolve) => {
@@ -1769,9 +1799,19 @@ function registerIpc() {
 
   // 打开已下载的安装包（2026-10-08 回归原始形态：**普通权限**打开，
   // UAC 由安装包自己弹、用户手点完成；先退出本体，避免自己占着文件）
+  //
+  // ⚠️ 2026-10-11 安全中心：路径必须**归属校验**，不能只判文件存在。
+  //   filePath 来自渲染层（前端可控），原来的 `fs.existsSync(p)` 形同虚设 ——
+  //   传任何一个磁盘上存在的 exe/脚本路径，软件就会用 shell.openPath 把它跑起来。
+  //   这是「界面能指挥本体执行任意文件」。现在要求它落在更新目录内。
   ipcMain.handle("app:runUpdateInstaller", async (_e, filePath) => {
     const p = String(filePath || "");
     if (!p || !fs.existsSync(p)) return { ok: false, error: "安装包不存在" };
+    const own = assertInsideUpdateDir(p, "安装包");
+    if (own.error) {
+      logger.warn(`拒绝打开越界的安装包路径: ${p}（${own.error}）`);
+      return { ok: false, error: own.error };
+    }
     let openErr = "";
     try {
       openErr = openInstaller(p) || "";
@@ -1795,6 +1835,11 @@ function registerIpc() {
   ipcMain.handle("app:revealUpdateFile", (_e, filePath) => {
     const p = String(filePath || "");
     if (!p || !fs.existsSync(p)) return { ok: false, error: "安装包不存在" };
+    const own = assertInsideUpdateDir(p, "更新文件");
+    if (own.error) {
+      logger.warn(`拒绝定位越界的更新文件: ${p}（${own.error}）`);
+      return { ok: false, error: own.error };
+    }
     shell.showItemInFolder(p);
     return { ok: true };
   });
