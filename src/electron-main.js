@@ -1016,6 +1016,9 @@ async function startClusterWork() {
   }
   return { ok: true, role: s.role, listenPort: role === "hub" ? clusterHttp.port() : 0 };
 }
+
+/**
+ * 按需触发后台下载/闲时替换。
  *
  * 触发条件：
  *   1. 指纹功能开启
