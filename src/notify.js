@@ -540,6 +540,35 @@ async function sendSummary(ctx, summary) {
 }
 
 /**
+ * 用**指定的推送配置**发一条带自定义标题的消息（不绑定账户上下文）。
+ *
+ * 用途：跨客户端汇总报告 —— 它不是某个账户的运行结果，而是所有客户端的总览，
+ * 所以不该带「用户名：xxx」那一行（ctx 传 null 即可）。
+ * 与 sendText 的差别是 notice 直接传值，这样调用方能决定用哪份配置
+ * （比如汇总机用全局配置里的 notice，而不是某个账户自己的 notice）。
+ *
+ * 版式仍由 withAccountHeader 统一拼装（一言在末尾、标题走各平台 title 字段），
+ * 所以汇总报告和每日汇总看起来是一套东西，不会割裂。
+ *
+ * @param {object} notice 推送配置（直接传值）
+ * @param {string} title  标题
+ * @param {string} text   正文（markdown）
+ * @returns {Promise<Array<{ok:boolean, channel?:string, error?:string}>>}
+ */
+async function sendTitleText(notice, title, text) {
+  const cfg = notice || {};
+  // ctx 传 null：汇总报告不属于任何账户，不该带用户名行。
+  // force:true 让一言取最新句（与真实推送同一口径）。
+  const content = await withAccountHeader(null, text, { notice: cfg, force: true });
+  const reqs = buildRequests(cfg, title, content);
+  if (!reqs.length) return [];
+  const settled = await Promise.allSettled(reqs.map((r) => fire(r)));
+  return settled.map((s, i) =>
+    s.status === "fulfilled" ? s.value : { channel: reqs[i].channel, ok: false, error: String(s.reason) }
+  );
+}
+
+/**
  * 测试推送：把配置好的通道全都试一遍，日志里打出具体地址与响应
  *
  * @param {object} notice 推送配置（直接传值，方便测试「尚未保存」的表单内容）
@@ -578,6 +607,7 @@ async function testPush(notice, label = "测试") {
 module.exports = {
   sendText,
   sendSummary,
+  sendTitleText,
   testPush,
   withAccountHeader,
   accountHeaderLine,

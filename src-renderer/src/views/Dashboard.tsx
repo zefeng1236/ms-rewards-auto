@@ -1,11 +1,11 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { GlassButton, GlassSwitch } from "@ttqtt/liquid-glass-react";
 import { AppCard, Empty, Input, Table, Tag, toast, type TableColumn } from "../components/liquidGlassCompat";
 import { api, IS_WEB } from "../api/ipc";
 import { useAppState } from "../hooks/useAppState";
 import { AskTextModal } from "../components/AskTextModal";
 import { WebLoginModal } from "../components/WebLoginModal";
-import type { Account, AccountRunStatus } from "../types";
+import type { Account, AccountRunStatus, ClusterRuntimeState } from "../types";
 
 /** 千分位格式化（仪表盘大数字每三位加逗号；强制 en-US 分组，不随系统 locale 变化） */
 const fmtNum = (n: number | null | undefined) => (n ?? 0).toLocaleString("en-US");
@@ -80,6 +80,34 @@ export function Dashboard({ onOpenAccount }: { onOpenAccount?: (id: string) => v
   const [addOpen, setAddOpen] = useState(false);
   /** 勾选要批量运行的账号 id */
   const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  /**
+   * 跨客户端汇总状态（用户 2026-10-11 要求：启用时在仪表盘显示）。
+   *
+   * 只在 role !== off 时拉 —— 关着的时候仪表盘不该出现这块，
+   * 否则所有人都会看到一个跟自己无关的「跨客户端」卡片。
+   * 每 30 秒回读一次：在线状态和最后上报时间是会变的，不刷新就成了摆设。
+   */
+  const [cluster, setCluster] = useState<ClusterRuntimeState | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const r = await api.clusterState?.();
+        if (!alive) return;
+        const role = r?.state?.role;
+        setCluster(r?.ok && role && role !== "off" ? r.state || null : null);
+      } catch {
+        if (alive) setCluster(null);
+      }
+    };
+    void load();
+    const t = setInterval(() => void load(), 30000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, []);
 
   const rows = useMemo(() => {
     const k = kw.trim().toLowerCase();
@@ -396,6 +424,101 @@ export function Dashboard({ onOpenAccount }: { onOpenAccount?: (id: string) => v
           <div className="stat-hint">已收工 / 已启用账号</div>
         </AppCard>
       </div>
+
+      {/* 跨客户端汇总：启用时才显示（role=off 时 cluster 为 null，整块不渲染）。
+          只放「谁在线 / 谁没做完 / 最近一次报告成没成」这三件最要紧的事，
+          详细配置在「软件设置 → 跨客户端汇总」，这里不重复一份表单。 */}
+      {cluster && (
+        <div className="block">
+          <div className="block-head">
+            <div>
+              <div className="block-title">跨客户端汇总</div>
+              <div className="block-sub">
+                {cluster.role === "hub" ? "本机为汇总机" : "本机为客户端"}
+                {cluster.lastReportAt
+                  ? ` · 最近报告 ${new Date(cluster.lastReportAt).toLocaleString("zh-CN", { hour12: false })}`
+                  : ""}
+                {cluster.role === "client" && cluster.lastPushAt
+                  ? ` · 最近上报 ${new Date(cluster.lastPushAt).toLocaleString("zh-CN", { hour12: false })}`
+                  : ""}
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              {cluster.role === "hub" && (
+                <GlassButton
+                  variant="glass"
+                  controlSize="small"
+                  onClick={() => {
+                    void (async () => {
+                      const r = await api.clusterReportNow?.();
+                      if (r?.ok) toast.success("汇总报告已发送");
+                      else toast.error(r?.error || "生成报告失败");
+                    })();
+                  }}
+                >
+                  立即生成报告
+                </GlassButton>
+              )}
+              {cluster.role === "client" && (
+                <GlassButton
+                  variant="glass"
+                  controlSize="small"
+                  onClick={() => {
+                    void (async () => {
+                      const r = await api.clusterPushNow?.();
+                      if (r?.ok) toast.success("已上报");
+                      else toast.error(r?.error || "上报失败");
+                    })();
+                  }}
+                >
+                  立即上报
+                </GlassButton>
+              )}
+            </div>
+          </div>
+
+          <AppCard padding={16} radius={16}>
+            {/* 报告/上报的成败必须显示出来：静默失败的话用户会一直以为在汇总 */}
+            {cluster.lastReportAt && !cluster.lastReportOk && (
+              <div className="hint" style={{ color: "var(--danger, #ff6b6b)", marginBottom: 6 }}>
+                最近一次报告失败：{cluster.lastReportError || "未知错误"}
+              </div>
+            )}
+            {cluster.role === "client" && cluster.lastPushAt && !cluster.lastPushOk && (
+              <div className="hint" style={{ color: "var(--danger, #ff6b6b)", marginBottom: 6 }}>
+                最近一次上报失败：{cluster.lastPushError || "未知错误"}
+              </div>
+            )}
+            {cluster.view?.clients?.length ? (
+              cluster.view.clients.map((c) => {
+                const accs = c.payload?.accounts || [];
+                const doneN = accs.filter((a) => a.done).length;
+                return (
+                  <div
+                    key={c.clientId}
+                    className="hint"
+                    style={{ display: "flex", gap: 10, alignItems: "center", padding: "3px 0" }}
+                  >
+                    <span>{c.online ? "🟢" : "🔴"}</span>
+                    <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {c.host || c.clientId.slice(0, 12)}
+                    </span>
+                    <span>{c.isMe ? "（本机）" : ""}</span>
+                    <span>
+                      {accs.length ? `${doneN}/${accs.length} 已完成` : "无账号数据"}
+                    </span>
+                    <span style={{ marginLeft: "auto" }}>
+                      {c.at ? new Date(c.at).toLocaleTimeString("zh-CN", { hour12: false }) : "从未上报"}
+                    </span>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="hint">还没有任何客户端上报</div>
+            )}
+          </AppCard>
+        </div>
+      )}
 
       <div className="block">
         <div className="block-head">

@@ -75,13 +75,17 @@ const DEFAULT_CONFIG: AppConfig = {
   //    AppGlobalConfig.security 对齐（铁律：四处缺一 → 白屏）
   security: { approvalMode: "auto" },
   cluster: {
-    hubClientId: "",
+    role: "off",
+    reportUrl: "",
+    reportToken: "",
+    pushIntervalMin: 5,
+    listenPort: 3210,
+    expectedAccounts: "",
+    reportIntervalMin: 60,
+    reportVia: "notice",
     appKey: "",
     appSecret: "",
     openConversationId: "",
-    expectedAccounts: "",
-    reportIntervalMin: 60,
-    reportChannel: "dingding",
   },
 };
 
@@ -811,6 +815,60 @@ export function createMockApi(): ElectronApi {
       const mode = raw === "ask" || raw === "full" ? raw : "auto";
       return { ok: true, policy: { mode } };
     },
+    // —— 跨客户端汇总（2026-10-11）：预览模式给一份形态一致的假数据 ——
+    clusterState: async () => ({
+      ok: true,
+      state: {
+        started: true,
+        role: "hub" as const,
+        lastReportAt: new Date().toISOString(),
+        lastReportOk: true,
+        lastReportError: "",
+        lastPushAt: "",
+        lastPushOk: false,
+        lastPushError: "",
+        reportCount: 3,
+        pushCount: 0,
+        view: {
+          me: { clientId: "mock-hub-01", host: "DESKTOP-MOCK" },
+          clients: [
+            {
+              clientId: "mock-hub-01",
+              host: "DESKTOP-MOCK",
+              at: new Date().toISOString(),
+              online: true,
+              isMe: true,
+              payload: {
+                accounts: [
+                  { account: "示例账号A", points: 96, pc: { progress: 9, max: 9 }, m: { progress: 6, max: 6 }, done: true },
+                  { account: "示例账号B", points: 42, pc: { progress: 3, max: 9 }, m: { progress: 6, max: 6 }, done: false },
+                ],
+              },
+            },
+            {
+              clientId: "mock-client-02",
+              host: "LAPTOP-MOCK",
+              at: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
+              online: false,
+              isMe: false,
+              payload: { accounts: [] },
+            },
+          ],
+        },
+      },
+      http: { running: true, port: 3210 },
+      identity: { clientId: "mock-hub-01", host: "DESKTOP-MOCK" },
+      config: defaultConfig.cluster,
+    }),
+    clusterReportNow: async () => ({
+      ok: true,
+      text: "📊 **多客户端运行汇总**（mock）\n\n**❌ 未完成**\n- 示例账号B（在线，未做满）",
+      stats: { total: 2, done: 1, missing: 1, online: 2, clients: 2 },
+    }),
+    clusterPushNow: async () => ({ ok: true, status: 200 }),
+    clusterTest: async () => ({ ok: true, note: "（预览模式）测试消息已发送" }),
+    clusterRestart: async () => ({ ok: true, role: "hub", listenPort: 3210 }),
+    clusterClear: async () => ({ ok: true }),
     // 预览模式点「立即检查」：直接复用上面 fake 数据，省一层自引用
     checkUpdateNow: async () => ({
       ok: true,

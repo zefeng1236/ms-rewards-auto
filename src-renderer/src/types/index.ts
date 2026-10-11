@@ -241,22 +241,36 @@ export interface AppConfig {
     approvalMode: "ask" | "auto" | "full";
   };
 
-  /** 跨客户端汇总：多台客户端推同一个钉钉群时，一眼看出谁没完成 */
+  /** 跨客户端汇总：多台客户端推同一个群时，一眼看出谁没完成 */
   cluster: {
-    /** 主实例的 clientId。留空 = 按 clientId 字典序自动选主（确定性，跨机一致） */
-    hubClientId: string;
-    /** 钉钉 Client ID（后台「凭证与基础信息」），与 appSecret 一起才起 Stream */
-    appKey: string;
-    /** 钉钉 Client Secret */
-    appSecret: string;
-    /** 群 ID（openConversationId）。自定义 webhook 读不到消息，只有 Stream 能收 */
-    openConversationId: string;
+    /**
+     * 本机角色。
+     * off = 不参与；hub = 汇总机（收上报 + 定时发群）；client = 客户端（定时上报）。
+     */
+    role: "off" | "hub" | "client";
+    /**
+     * 汇总机上报地址（客户端填）。带协议，可含端口与路径。
+     * 网络怎么打通交给用户：ZeroTier/Tailscale 虚拟 IP、Cloudflare Tunnel 域名、公网地址都行。
+     */
+    reportUrl: string;
+    /** 共享密钥。汇总机用它校验来源；留空则汇总机拒收（防公网裸奔） */
+    reportToken: string;
+    /** 客户端上报间隔（分钟） */
+    pushIntervalMin: number;
+    /** 汇总机内置监听端口（Electron 版用；Docker 版复用主服务端口） */
+    listenPort: number;
     /** 应做账号清单（逗号/换行分隔）。留空则「未完成」段为空 */
     expectedAccounts: string;
     /** 汇总报告间隔（分钟）。0 = 不定时推送，只手动触发 */
     reportIntervalMin: number;
-    /** 汇总报告推到哪个通道 */
-    reportChannel: string;
+    /** 报告发送方式：notice = 复用推送通知里已配的 webhook；app = 企业内部应用机器人 */
+    reportVia: "notice" | "app";
+    /** 企业内部应用 Client ID（reportVia=app 时必填，同时作 robotCode） */
+    appKey: string;
+    /** 企业内部应用 Client Secret */
+    appSecret: string;
+    /** 群 ID（openConversationId），不是群名 */
+    openConversationId: string;
   };
 }
 
@@ -264,6 +278,69 @@ export interface AppConfig {
 export type DeepPartial<T> = {
   [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K];
 };
+
+// ============ 跨客户端汇总（cluster） ============
+
+/** 本机身份：clientId = 主机名派生的十六进制串，跨机唯一且稳定 */
+export interface ClusterIdentity {
+  clientId: string;
+  host: string;
+  createdAt?: string;
+}
+
+/** 报告统计（生成报告后的摘要，用于界面回显） */
+export interface ClusterReportStats {
+  /** 账号总行数（展开到账号级后去重过） */
+  total: number;
+  /** 已完成账号数 */
+  done: number;
+  /** 未完成账号数（含从未上报 + 在线没做满） */
+  missing: number;
+  /** 处于在线窗口内的账号行数 */
+  online: number;
+  /** 参与的客户端台数 */
+  clients: number;
+}
+
+/** 一台客户端上报上来的单个账号摘要（⚠️ 不含 cookie/token 等敏感字段） */
+export interface ClusterAccountRow {
+  account: string;
+  points: number;
+  balance?: number;
+  pc: { progress: number; max: number };
+  m: { progress: number; max: number };
+  done: boolean;
+  loggedIn?: boolean;
+  date?: string;
+}
+
+/** 集群运行期状态（界面上的「跨客户端汇总」面板据此回显） */
+export interface ClusterRuntimeState {
+  started: boolean;
+  role: "off" | "hub" | "client";
+  /** 最后一次生成报告的时间（ISO 串），未生成过为空 */
+  lastReportAt: string;
+  lastReportOk: boolean;
+  lastReportError: string;
+  /** 最后一次上报到汇总机的时间（ISO 串），客户端专用 */
+  lastPushAt: string;
+  lastPushOk: boolean;
+  lastPushError: string;
+  reportCount: number;
+  pushCount: number;
+  /** 各机上报快照（含本机），仪表盘据此显示在线/完成情况 */
+  view?: {
+    me?: ClusterIdentity & { host?: string };
+    clients?: Array<{
+      clientId: string;
+      host: string;
+      at: string;
+      online: boolean;
+      isMe?: boolean;
+      payload?: { accounts?: ClusterAccountRow[] };
+    }>;
+  };
+}
 
 // ============ 账户 ============
 

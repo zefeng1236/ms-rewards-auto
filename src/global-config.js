@@ -154,33 +154,60 @@ const GLOBAL_DEFAULTS = {
   security: {
     approvalMode: "auto",
   },
-  // 跨客户端汇总（多台/多地客户端推送到同一个钉钉群时，一眼看出谁没完成）
+  // 跨客户端汇总（多台/多地客户端推送到同一个群时，一眼看出谁没完成）
   //
-  // 【为什么必须有「唯一主实例」】群里只有一条消息流。若每台都连 Stream，
-  // 同一条 @消息被投递 N 次，且每台只知道自己那部分数据，谁都拼不出完整清单。
-  // 所以只有 hubClientId 指定的那台才连 Stream，其余只上报本地状态。
+  // 【为什么是「上报到汇总机」而不是「读群消息」】（2026-10-11 实测定案）
+  //   最初设想是客户端推送时 @统计机器人，汇总机从群里读回这些消息。**实测走不通**：
+  //     ① 官方文档：群聊中「只有 AT 机器人的消息才能被机器人收到，其他消息无法投递」
+  //     ② 钉钉应用机器人**没有 userId**，无法被其他机器人用标准 @ 机制触发
+  //        （官方插件仓库 issue #288 明确结论：两个机器人相互 @ 无法实现）
+  //     ③ 拉群聊天记录的接口不存在（im/chat/scenes/messages → 404）
+  //   所以改成：**客户端把状态 POST 给汇总机**，汇总机聚合后发群。不依赖钉钉读消息。
   //
-  // 【Stream 模式不需要公网地址】走 WebSocket 长连接（官方 SDK 负责重连），
-  // 不用域名/ TLS / 内网穿透，内网机器直接能跑。
+  // 【为什么只存一个 URL 而不是内置组网客户端】
+  //   ZeroTier / Tailscale / EasyTier / Cloudflare Tunnel 都需要**系统级虚拟网卡
+  //   驱动**（TUN/TAP）+ 管理员权限，Electron 运行时去装内核驱动既装不干净，
+  //   又容易被杀软拦、和用户已有网络栈打架。所以内置不可取。
+  //   本软件只认「上报地址 URL + 共享密钥」，**网络怎么打通完全交给用户**：
+  //   装了 ZeroTier 就填它的虚拟 IP，用了 Tailscale 就填 MagicDNS 名字，
+  //   走了 Cloudflare Tunnel 就填域名，有公网机就填公网地址。
+  //   对软件完全透明 → 以后出任何新组网方案都不用改一行代码。
   //
-  // 【与自定义 webhook 的分工】自定义 webhook 只能发不能收（官方明确不支持
-  // 应答机制），所以「读群消息」只能靠企业内部应用机器人的 Stream。
-  // 原有notice.dingding 那套 webhook 推送**继续保留**，两者不冲突：
-  // webhook 负责把消息发进群，Stream 负责读回来做统计。
+  // 【两个角色】role 决定这台机器干什么：
+  //   off    —— 不参与（默认）
+  //   hub    —— 汇总机：开监听收各机上报，定时把汇总发进群
+  //   client —— 客户端：定时把自己的账号状态 POST 给汇总机
   cluster: {
-    // 主实例的 clientId（留空 = 按 clientId 字典序自动选主，见 cluster-hub.shouldBeHub）
-    hubClientId: "",
-    // 钉钉 Client ID / Client Secret（后台「凭证与基础信息」）
-    appKey: "",
-    appSecret: "",
-    // 群ID（openConversationId）。用钉钉客户端「群设置 → 机器人」或 JSAPI 扫码获取
-    openConversationId: "",
+    // 本机角色：off | hub | client
+    role: "off",
+    // —— 客户端（role=client）——
+    // 汇总机上报地址。带协议，可含端口与路径，如
+    //   http://100.64.0.5:3210        （ZeroTier / Tailscale 虚拟 IP）
+    //   http://hub-pc:3210            （Tailscale MagicDNS / 内网主机名）
+    //   https://msr.example.com       （Cloudflare Tunnel / 公网域名）
+    reportUrl: "",
+    // 共享密钥：汇总机校验上报来源。**留空则汇总机拒收**（防公网裸奔）。
+    // 两边填同一个值即可，不需要多复杂 —— 它只是挡陌生扫描，不是账号密码。
+    reportToken: "",
+    // 客户端上报间隔（分钟）。太密费流量，太疏统计不及时，5 分钟是个平衡点。
+    pushIntervalMin: 5,
+    // —— 汇总机（role=hub）——
+    // 内置监听端口。Electron 版没有 HTTP 服务，所以要自己在主进程开一个；
+    // Docker 版复用已有的 server.js，这个端口不生效（用主服务端口）。
+    listenPort: 3210,
     // 应做账号清单（逗号/换行分隔）。留空则「未完成」段为空，只看完成清单。
     expectedAccounts: "",
-    // 汇总报告间隔（分钟）。0 = 不定时推送，只在手动触发时生成
+    // 汇总报告间隔（分钟）。0 = 不定时推送，只在仪表盘点按钮时生成
     reportIntervalMin: 60,
-    // 汇总报告推送到哪个通道：dingding（钉钉）· wework · feishu
-    reportChannel: "dingding",
+    // 报告怎么发进群：
+    //   notice —— 复用「推送通知」里已配好的 webhook（最省事，用户多半已配）
+    //   app    —— 用企业内部应用机器人 groupMessages/send（需要下面三项）
+    reportVia: "notice",
+    // 企业内部应用机器人（reportVia=app 时必填）。
+    // robotCode 取 Client ID；openConversationId 是群 ID（不是群名）。
+    appKey: "",
+    appSecret: "",
+    openConversationId: "",
   },
   // 积分目标。可配多个，按账户总积分余额判断，可选设置奖品与详情页显示。
   // 达成判定：当前余额 >= target；奖品数量按 floor(余额 / target) 计算。

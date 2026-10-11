@@ -12,6 +12,9 @@ import type {
   CheckFingerprintUpdateResult,
   ChromiumStatus,
   CloseAction,
+  ClusterIdentity,
+  ClusterReportStats,
+  ClusterRuntimeState,
   DeepPartial,
   DownloadResult,
   FingerprintStatus,
@@ -235,6 +238,19 @@ export interface ElectronApi {
   securityPolicy(): Promise<{ ok: boolean; policy?: SecurityPolicy; error?: string }>;
   /** 设置策略档位 */
   securitySetPolicy(next?: string | { mode?: string }): Promise<{ ok: boolean; policy?: SecurityPolicy; error?: string }>;
+  // —— 跨客户端汇总（2026-10-11）——
+  /** 读集群运行状态：角色、上次报告/上报结果、HTTP 监听、本机身份与当前配置 */
+  clusterState(): Promise<{ ok: boolean; state?: ClusterRuntimeState; http?: { running: boolean; port: number }; identity?: ClusterIdentity; config?: AppConfig["cluster"]; error?: string }>;
+  /** 手动生成并发一份汇总报告（汇总机） */
+  clusterReportNow(): Promise<{ ok: boolean; text?: string; stats?: ClusterReportStats; error?: string }>;
+  /** 客户端手动上报一次（不等下个周期） */
+  clusterPushNow(): Promise<{ ok: boolean; status?: number; error?: string }>;
+  /** 测发送通道：notice 真发一条测试消息；app 只验 token/会话 ID（不打扰群） */
+  clusterTest(): Promise<{ ok: boolean; note?: string; error?: string }>;
+  /** 配置改完立即重启编排（改端口/角色/间隔必须走这条才生效） */
+  clusterRestart(): Promise<{ ok: boolean; role?: string; listenPort?: number; error?: string }>;
+  /** 清空汇总表（换环境 / 排查脏数据） */
+  clusterClear(): Promise<{ ok: boolean; error?: string }>;
   /**
    * 安装已下载的更新包：先校验文件确实存在，再校验完整性（大小 + PE 头 + sha256），
    * 通过后才启动安装包。静默下载场景尤其必要 —— 下完到点安装可能隔好几天。

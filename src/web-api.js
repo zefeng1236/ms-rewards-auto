@@ -40,6 +40,9 @@ const wallpapers = require("./wallpapers");
 const hitokoto = require("./hitokoto");
 const limit = require("./wallpaper-limit");
 const core = require("./app-core");
+const clusterService = require("./cluster-service");
+const clusterSend = require("./cluster-send");
+const clusterHub = require("./cluster-hub");
 
 /** 壁纸本地缓存目录（与 electron-main 保持一致：storage/cache） */
 const BG_CACHE_DIR = path.join(path.dirname(appearance.FILE), "cache");
@@ -286,6 +289,14 @@ function createApi({ emit }) {
       const r = globalConfig.set(patch);
       if (patch && patch.logging) logger.cleanupHistory(r.logging?.retentionDays || 7);
       pushAccounts();
+      // 集群配置变了要立刻重启编排，否则改了端口/角色/间隔不生效（用户会以为没保存）
+      if (patch && patch.cluster) {
+        try {
+          startCluster();
+        } catch (e) {
+          logger.warn(`集群配置重启失败：${e.message}`);
+        }
+      }
       return r;
     },
 
@@ -584,6 +595,63 @@ function createApi({ emit }) {
       };
     },
 
+    // —— 跨客户端汇总（2026-10-11）——
+    // 与 electron-main.js 的 cluster:* 通道一一对应；Docker 版没有独立监听端口，
+    // 收上报走 server.js 上的 /api/cluster/report（复用主服务端口）。
+    async clusterState() {
+      try {
+        return {
+          ok: true,
+          state: clusterService.getState(),
+          // Docker 版恒为「跑在主服务端口上」，listenPort 字段对它没意义
+          http: { running: true, port: Number(process.env.PORT) || 25560, via: "server" },
+          identity: clusterHub.getIdentity(),
+          config: (globalConfig.get() || {}).cluster || {},
+        };
+      } catch (err) {
+        return { ok: false, error: String((err && err.message) || err) };
+      }
+    },
+    async clusterReportNow() {
+      try {
+        return await clusterService.reportNow({ manual: true });
+      } catch (err) {
+        return { ok: false, error: String((err && err.message) || err) };
+      }
+    },
+    async clusterPushNow() {
+      try {
+        return await clusterService.pushNow();
+      } catch (err) {
+        return { ok: false, error: String((err && err.message) || err) };
+      }
+    },
+    async clusterTest() {
+      try {
+        return await clusterSend.testSend();
+      } catch (err) {
+        return { ok: false, error: String((err && err.message) || err) };
+      }
+    },
+    // 配置改完立即重启编排（先停后起，幂等）
+    async clusterRestart() {
+      try {
+        startCluster();
+        const s = clusterService.getState();
+        return { ok: true, role: s.role, listenPort: Number(process.env.PORT) || 25560 };
+      } catch (err) {
+        return { ok: false, error: String((err && err.message) || err) };
+      }
+    },
+    clusterClear() {
+      try {
+        clusterHub.clearAll();
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, error: String((err && err.message) || err) };
+      }
+    },
+
     /* --------------------------- Web 专属 --------------------------- */
     /** 登出：只销毁本浏览器会话，保险库保持解锁，后台任务不受影响 */
     logout() {
@@ -609,7 +677,27 @@ function createApi({ emit }) {
     return methods[m](...args);
   }
 
-  return { dispatch, methods, KNOWN, startAutoPush, pushAccounts, pushChromiumStatus, bgSrc };
+  /**
+   * 启动/重启跨客户端汇总编排（Docker 版）。
+   *
+   * 与 electron-main.js 的 startClusterWork() 对应，差别只在 HTTP 层：
+   * 桌面版没有服务端，要自己在主进程开端口；Docker 版直接复用 server.js
+   * 已有的 /api/cluster/report 路由，所以这里只做「注入发送器 + 启动编排」。
+   *
+   * 幂等：clusterService.start() 内部先 stopTimers 再按新配置起，改完配置重调即可。
+   */
+  function startCluster() {
+    clusterService.configure({
+      sendReport: (report) => clusterSend.sendReport(report),
+    });
+    const s = clusterService.start();
+    if (s.role === "client" && !String((globalConfig.get() || {}).cluster?.reportUrl || "").trim()) {
+      logger.warn("[上报] 客户端模式已启用，但未填汇总机地址 —— 请在设置里补上");
+    }
+    return s;
+  }
+
+  return { dispatch, methods, KNOWN, startAutoPush, pushAccounts, pushChromiumStatus, bgSrc, startCluster };
 }
 
 module.exports = { createApi, BG_CACHE_DIR, UPLOAD_DIR, downloadImage };

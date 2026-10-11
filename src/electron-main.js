@@ -39,6 +39,10 @@ const vault = require("./vault");
 const { displayVersion } = require("./version");
 const vaultMigrate = require("./vault/migrate");
 const wipe = require("./wipe");
+const clusterService = require("./cluster-service");
+const clusterSend = require("./cluster-send");
+const clusterHttp = require("./cluster-http");
+const clusterHub = require("./cluster-hub");
 
 const ROOT = path.join(__dirname, "..");
 const IS_SMOKE = process.argv.includes("--smoke");
@@ -972,10 +976,46 @@ function startBackgroundWork() {
   }
 
   maybeStartBackgroundFingerprint();
+
+  // 跨客户端汇总（role=hub 开接收服务，role=client 定时上报）
+  startClusterWork();
 }
 
 /**
- * 按需触发后台下载/闲时替换。
+ * 启动/重启跨客户端汇总。
+ *
+ * 【为什么单独抽一个函数】设置页改了 role/端口/间隔之后要能**立即生效**，
+ * 所以要能从 IPC 再调一次。重复调用必须是幂等的（先停后起）。
+ *
+ * 汇总机模式下要开 HTTP 监听 —— 如果用户没配密钥，**照样启动监听但会拒收所有上报**
+ * （见 cluster-service.handleReport）。这样用户能在界面上看到「服务在跑但缺密钥」，
+ * 比"端口都没开"更容易定位问题。
+ */
+async function startClusterWork() {
+  const cfg = (globalConfig.get() || {}).cluster || {};
+  const role = String(cfg.role || "off");
+
+  // 注入发送器：两条路（复用 webhook / 企业内部应用机器人）在 cluster-send 里分派
+  clusterService.configure({
+    sendReport: (report) => clusterSend.sendReport(report),
+  });
+
+  if (role === "hub") {
+    const r = await clusterHttp.start(cfg.listenPort || 3210);
+    if (!r.ok) {
+      logger.warn(`[汇总] 接收服务未能启动：${r.error}（可能是端口被占用，换个端口试试）`);
+    }
+  } else {
+    // 从 hub 切成 client/off 时要把旧监听关掉，否则端口一直占着
+    clusterHttp.stop();
+  }
+
+  const s = clusterService.start();
+  if (s.role === "client" && !String(cfg.reportUrl || "").trim()) {
+    logger.warn("[上报] 客户端模式已启用，但未填汇总机地址 —— 请在设置里补上");
+  }
+  return { ok: true, role: s.role, listenPort: role === "hub" ? clusterHttp.port() : 0 };
+}
  *
  * 触发条件：
  *   1. 指纹功能开启
@@ -1318,6 +1358,11 @@ function registerIpc() {
     if (patch && patch.logging) logger.cleanupHistory(r.logging?.retentionDays || 7);
     // 全局值变了，遵循全局的账户其有效配置随之改变，立刻推一次让界面同步
     pushAccounts();
+    // 集群配置改了要立即重启编排（角色/端口/间隔）——先停后起，幂等。
+    // 不等它：用户改完端口以为生效，实际监听的还是旧端口（最难查的那类"没保存"）。
+    if (patch && patch.cluster) {
+      startClusterWork().catch((e) => logger.warn(`集群配置重启失败：${e.message}`));
+    }
     return r;
   });
 
@@ -1819,6 +1864,65 @@ function registerIpc() {
   ipcMain.handle("security:setPolicy", (_e, next) => {
     try {
       return { ok: true, policy: require("./security-policy").set(next) };
+    } catch (err) {
+      return { ok: false, error: String((err && err.message) || err) };
+    }
+  });
+
+  // ---- 跨客户端汇总（2026-10-11）----
+  // 界面「跨客户端汇总」面板用这几个通道：看状态、手动生成报告、
+  // 客户端手动上报一次、测试发送通道、改完配置立即重启编排。
+  ipcMain.handle("cluster:getState", () => {
+    try {
+      const st = clusterService.getState();
+      return {
+        ok: true,
+        state: st,
+        http: { running: clusterHttp.isRunning(), port: clusterHttp.port() },
+        identity: clusterHub.getIdentity(),
+        config: (globalConfig.get() || {}).cluster || {},
+      };
+    } catch (err) {
+      return { ok: false, error: String((err && err.message) || err) };
+    }
+  });
+  // 手动生成并发一份汇总报告（汇总机；仪表盘「立即生成报告」按钮）
+  ipcMain.handle("cluster:reportNow", async () => {
+    try {
+      return await clusterService.reportNow({ manual: true });
+    } catch (err) {
+      return { ok: false, error: String((err && err.message) || err) };
+    }
+  });
+  // 客户端手动上报一次（不等下个周期，改完配置立刻验通不通）
+  ipcMain.handle("cluster:pushNow", async () => {
+    try {
+      return await clusterService.pushNow();
+    } catch (err) {
+      return { ok: false, error: String((err && err.message) || err) };
+    }
+  });
+  // 测发送通道：notice 路真发一条测试消息，app 路只验 token/会话 ID（不打扰群）
+  ipcMain.handle("cluster:test", async () => {
+    try {
+      return await clusterSend.testSend();
+    } catch (err) {
+      return { ok: false, error: String((err && err.message) || err) };
+    }
+  });
+  // 配置改完立即生效（先停后起，幂等）：改端口/角色/间隔都要走这条
+  ipcMain.handle("cluster:restart", async () => {
+    try {
+      return await startClusterWork();
+    } catch (err) {
+      return { ok: false, error: String((err && err.message) || err) };
+    }
+  });
+  // 清空汇总表（换环境 / 排查脏数据时用）
+  ipcMain.handle("cluster:clear", () => {
+    try {
+      clusterHub.clearAll();
+      return { ok: true };
     } catch (err) {
       return { ok: false, error: String((err && err.message) || err) };
     }

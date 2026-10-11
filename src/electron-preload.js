@@ -139,6 +139,20 @@ contextBridge.exposeInMainWorld("api", {
   securityAuditClear: () => ipcRenderer.invoke("security:auditClear"),
   securityPolicy: () => ipcRenderer.invoke("security:policy"),
   securitySetPolicy: (next) => ipcRenderer.invoke("security:setPolicy", next),
+
+  // —— 跨客户端汇总（2026-10-11）——
+  // 状态里含运行态（role / 上次报告与上报结果）、HTTP 监听、本机身份与当前配置
+  clusterState: () => ipcRenderer.invoke("cluster:getState"),
+  // 手动生成并发一份汇总报告（汇总机）
+  clusterReportNow: () => ipcRenderer.invoke("cluster:reportNow"),
+  // 客户端手动上报一次（不等下个周期）
+  clusterPushNow: () => ipcRenderer.invoke("cluster:pushNow"),
+  // 测发送通道（notice 真发一条；app 只验 token/会话 ID）
+  clusterTest: () => ipcRenderer.invoke("cluster:test"),
+  // 配置改完立即重启编排（改端口/角色/间隔必须走这条才生效）
+  clusterRestart: () => ipcRenderer.invoke("cluster:restart"),
+  // 清空汇总表
+  clusterClear: () => ipcRenderer.invoke("cluster:clear"),
   // 安装已下载的更新包：先校验文件存在，再校验完整性（大小 + PE 头 + sha256）
   installUpdate: (payload) => ipcRenderer.invoke("app:installUpdate", payload),
   // 关掉更新提示：当天不再弹

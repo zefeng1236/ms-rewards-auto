@@ -4,6 +4,7 @@ import { LaunchSettings } from "./LaunchSettings";
 import { FingerprintBrowserPanel } from "../components/FingerprintBrowserPanel";
 import { VaultPanel } from "../components/VaultPanel";
 import { UpdatePanel } from "../components/UpdatePanel";
+import { ClusterPanel } from "../components/ClusterPanel";
 import { IS_WEB } from "../api/ipc";
 import type { ReleaseNotesResult } from "../types";
 
@@ -20,6 +21,7 @@ export const SOFTWARE_SECTIONS: { key: string; label: string }[] = IS_WEB
       { key: "personalize", label: "个性化" },
       { key: "browser", label: "浏览器" },
       { key: "security", label: "安全" },
+      { key: "cluster", label: "跨客户端汇总" },
       { key: "update", label: "更新" },
     ]
   : [
@@ -27,6 +29,7 @@ export const SOFTWARE_SECTIONS: { key: string; label: string }[] = IS_WEB
       { key: "launch", label: "启动与托盘" },
       { key: "browser", label: "浏览器" },
       { key: "security", label: "安全" },
+      { key: "cluster", label: "跨客户端汇总" },
       { key: "update", label: "更新" },
     ];
 
@@ -138,8 +141,16 @@ export function SoftwareSettingsView({
         <VaultPanel />
       </div>
 
-      {/* 分类 ⑤：更新（静默下载开关 / 当前版本 / 平台 / 检查更新 / 更新日志） */}
-      <div className="sec sw-sec" id="swsec-update">
+      {/* 分类 ⑤：跨客户端汇总（多机推进同一个钉钉群，一眼看出谁没完成） */}
+      <div className="sec sw-sec" id="swsec-cluster">
+        <div className="sec-title">跨客户端汇总</div>
+        <div className="hint" style={{ marginBottom: 8 }}>
+          多台/多地客户端推进同一个群时，定时汇总各账号完成情况；网络层自备（虚拟内网或隧道均可）
+        </div>
+        <ClusterPanel />
+      </div>
+
+      {/* 分类 ⑥：更新（静默下载开关 / 当前版本 / 平台 / 检查更新 / 更新日志） */}      <div className="sec sw-sec" id="swsec-update">
         <div className="sec-title">更新</div>
         <div className="hint" style={{ marginBottom: 8 }}>
           {IS_WEB

@@ -4068,27 +4068,110 @@ const DOC_SECRET_PATTERNS = [
   );
 }
 
-// —— 跨客户端汇总：主实例唯一性 + 报告口径（2026-10-11）——
-// 【为什么这些必须锁死】群里只有一条消息流，若多台同时连Stream，
-// 同一条消息被投递 N 次且谁都拼不出完整清单 —— 这是**静默错**：
-// 界面一切正常，只是统计结果不对，不加守卫没人发现得了。
+// —— 跨客户端汇总：HTTP 上报链路的口径与安全（2026-10-11 重构）——
+// 【背景】原方案「客户端@统计机器人、读它返回的群消息」实测走不通：
+//   ① 钉钉没有读取群历史的接口（404）；② 机器人没有 userId，互相@不了；
+//   ③ 群读权限 403。已改为**客户端 HTTP POST → 汇总机聚合 → 发报告进群**。
+// 【为什么这些必须锁死】全是**静默错**：界面一切正常，只是统计不对 / 密钥泄露 /
+//   敏感字段上了网，不加守卫没人发现得了。
 {
   const hubSrc = stripJsComments(fs.readFileSync(path.join(ROOT, "src", "cluster-hub.js"), "utf8"));
   const streamSrc = stripJsComments(fs.readFileSync(path.join(ROOT, "src", "dingtalk-stream.js"), "utf8"));
   const repSrc = stripJsComments(fs.readFileSync(path.join(ROOT, "src", "dingtalk-report.js"), "utf8"));
+  const svcSrc = stripJsComments(fs.readFileSync(path.join(ROOT, "src", "cluster-service.js"), "utf8"));
+  // ⚠️ 原文另存一份：stripJsComments 会把行内 `//` 之后整行删掉，
+  //    而 `if (!/^https?:\/\//i...` 这种正则里就含 `//`，剥完会把后面的赋值一起吃掉，
+  //    拿剥过的文本断言 `http://${u}` 必然假红（已踩过一次）。
+  const svcRaw = fs.readFileSync(path.join(ROOT, "src", "cluster-service.js"), "utf8");
+  const httpSrc = stripJsComments(fs.readFileSync(path.join(ROOT, "src", "cluster-http.js"), "utf8"));
+  const sendSrc = stripJsComments(fs.readFileSync(path.join(ROOT, "src", "cluster-send.js"), "utf8"));
+  const gcRaw = fs.readFileSync(path.join(ROOT, "src", "global-config.js"), "utf8");
+
+  /** 抽出一个顶层函数的完整函数体（到第一个顶格 } 为止） */
+  const fnBody = (src, name) => {
+    const m = new RegExp(`function ${name}\\([\\s\\S]*?\\n\\}`).exec(src);
+    return m ? m[0] : "";
+  };
+  const collectBody = fnBody(svcSrc, "collectAccounts");
+  const handleBody = fnBody(svcSrc, "handleReport");
+  const normBody = fnBody(svcSrc, "normalizeReportUrl");
+  const doneBody = fnBody(repSrc, "isAccountDone");
 
   checkTrue(
-    "主实例裁决：显式指名优先，其次按 clientId 字典序选主（确定性、跨机一致）",
-    /function shouldBeHub\(/i.test(hubSrc) &&
-      /named === me|me === named/.test(hubSrc) &&
-      /\.sort\(\)/.test(hubSrc) &&
-      /\ball\[0\] \|\| me\b/.test(hubSrc),
-    "选主规则变了 → 多台可能同时自认主，群消息被重复处理"
+    "角色是显式三态 off/hub/client，旧的 shouldBeHub 自动选举已彻底移除",
+    /role:\s*"off"/.test(gcRaw) &&
+      !/shouldBeHub/.test(hubSrc + svcSrc) &&
+      /if \(role === "hub"\)/.test(svcSrc) &&
+      /state\.role = role/.test(svcSrc) &&
+      // 客户端分支是隐式的 else，用「只有 client 才会起 pushTimer」来锁
+      /pushTimer = setInterval/.test(svcSrc),
+    "重新引入选举 → 与 HTTP 上报链路打架：多台自认汇总机，同一条报告发 N 次"
   );
   checkTrue(
-    "非主实例不连 Stream（否则群消息重复投递 + 统计被重复累加）",
-    /function shouldBeHub\(/.test(hubSrc) && /isHub: me === named/.test(hubSrc) && /isHub: me === elected/.test(hubSrc),
-    "裁决不再返回 isHub → 无法区分主从"
+    "汇总机按 clientId 去重，缺 clientId 的上报直接 400 拒收",
+    /function upsertClient\(/.test(hubSrc) &&
+      /status: 400/.test(handleBody) &&
+      /缺少 clientId/.test(handleBody),
+    "空 clientId 互相覆盖 → 两台机器的统计只剩最后一台"
+  );
+  checkTrue(
+    "上报内容只带账号摘要（积分/进度/完成），不带 cookie/token/密码",
+    !!collectBody &&
+      /account:/.test(collectBody) &&
+      /points:/.test(collectBody) &&
+      /done:/.test(collectBody) &&
+      !/cookie|password|vault|sessionWebhook|refreshToken/i.test(collectBody),
+    "这是要跨网络发出去的数据，多一个敏感字段就多一分泄露面"
+  );
+  checkTrue(
+    "共享密钥放请求头 X-Cluster-Token（URL 会进日志、进代理记录）",
+    /"X-Cluster-Token"/.test(svcSrc) &&
+      /headers:\s*\{[\s\S]{0,160}"X-Cluster-Token"/.test(svcSrc) &&
+      /fetch\(normalizeReportUrl\(/.test(svcSrc),
+    "密钥拼进 URL → 到处留痕，等于没锁"
+  );
+  checkTrue(
+    "汇总机未配密钥时**拒收**（403），密钥不符 401 —— 不默认放行",
+    /status: 403/.test(handleBody) && /status: 401/.test(handleBody) && /共享密钥/.test(handleBody),
+    "默认放行 → 公网/隧道上任何人都能往里灌数据，统计被污染"
+  );
+  checkTrue(
+    "上报地址规范化：缺协议补 http://，路径缺 /api/cluster/report 补齐、已有不重复加",
+    // 全部看原文：剥注释会把 `/^https?:\/\//i` 那一行从 `//` 起截断，赋值语句跟着没
+    svcRaw.includes("`http://${u}`") &&
+      svcRaw.includes("${u}/api/cluster/report") &&
+      svcRaw.includes("\\/api\\/cluster\\/report$/i.test(u)") &&
+      // 负向条件必须看**剥掉注释后**的文本：原文的注释里就写着
+      // `.../report/api/cluster/report` 当反例说明，直接判原文必然假红。
+      !/report\/api\/cluster\/report/.test(svcSrc),
+    "拼成重复路径 → 客户端 404 静默失败，汇总机看起来在跑却一条数据都收不到"
+  );
+  checkTrue(
+    "内置接收服务：只开一个上报路径 + 限 1MB 请求体 + 出错显式返回 {ok:false}",
+    /REPORT_PATH\s*=\s*"\/api\/cluster\/report"/.test(httpSrc) &&
+      // ⚠️ 必须锁**具体上限**：只写 `MAX_BODY\s*=` 的话，把值改成
+      //    Number.MAX_SAFE_INTEGER 反而照样通过（反例实测踩到，假绿）。
+      /const MAX_BODY = 1024 \* 1024/.test(httpSrc) &&
+      /resolve\(\{\s*ok:\s*false/.test(httpSrc),
+    "不设上限 → 内存被灌爆；server error 不返回 → 用户以为在收，其实端口早挂了"
+  );
+  checkTrue(
+    "报告发送走统一分派（webhook 复用 / 企业机器人），sendReport 本身不手搓版式",
+    (() => {
+      const m = /async function sendReport\([\s\S]*?\n\}/.exec(sendSrc);
+      if (!m) return false;
+      const body = m[0];
+      // 分派到两条路，且**不自己**调 sendTitleText（版式唯一拼装点纪律）
+      return (
+        /sendViaApp\(cfg, report\)/.test(body) &&
+        /return sendViaNotice\(report\)/.test(body) &&
+        !/sendTitleText/.test(body)
+      );
+    })() &&
+      /async function sendViaNotice\(/.test(sendSrc) &&
+      /async function sendViaApp\(/.test(sendSrc) &&
+      /notify\.sendTitleText/.test(sendSrc),
+    "两处各拼一份标题正文 → 版式分叉（推送版式唯一拼装点纪律）"
   );
   checkTrue(
     "Stream 收到消息后必须 ack（不 ack 会被钉钉判连接异常并重投）",
@@ -4110,9 +4193,19 @@ const DOC_SECRET_PATTERNS = [
     "只算「从未上报」→ 在线摸鱼的账号漏出未完成段，违背用户核心诉求"
   );
   checkTrue(
-    "报告的完成判定用搜索进度满额，不拿「心跳上报的日期」当完成",
-    /const isDone = pcFull \|\| mFull;/.test(repSrc) && !/const isDone = .*reportedToday/.test(repSrc),
-    "拿日期当完成 → 客户端只心跳就判✅，满屏绿字反漏掉真没做的人"
+    "报告的完成判定：不拿日期当完成，且**两侧各自**做满才算完成（不是任一侧满就行）",
+    !!doneBody &&
+      /acc\.done === true/.test(doneBody) &&
+      // 2026-10-11 冒烟实测抓到的真 bug：PC 2/9 + 手机 6/6 用 || 会判✅，
+      // 正是「满屏绿字反漏掉真没做的人」那一类失效 → 必须 && 收口
+      /return pcFull && mFull/.test(doneBody) &&
+      !/pcFull \|\| mFull/.test(doneBody) &&
+      // 两侧都没在统计时判不出完成 → 按未完成处理（宁可催一下也不误报✅）
+      /if \(!pcOn && !mOn\) return false/.test(doneBody) &&
+      /const pcOn = Number\(pc\.max\) > 0/.test(doneBody) &&
+      /const mOn = Number\(m\.max\) > 0/.test(doneBody) &&
+      !/date/.test(doneBody),
+    "拿日期当完成 / 任一侧满就算完成 → 客户端只心跳或只做手机就判✅，漏掉真没做满的人"
   );
   checkTrue(
     "在线判定用**固定 now** 参数，不在函数里取真实时间（守卫铁律）",
@@ -4128,18 +4221,111 @@ const DOC_SECRET_PATTERNS = [
     "解析抛错 → 一条无关消息把整份报告搞崩"
   );
   checkTrue(
-    "cluster 设置项在 config.js / global-config.js / types / mock 四处对齐",
-    ["hubClientId", "appKey", "appSecret", "openConversationId", "expectedAccounts"].every((f) => {
-      const g = fs.readFileSync(path.join(ROOT, "src", "global-config.js"), "utf8");
-      const t = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "types", "index.ts"), "utf8");
-      const m = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "api", "mock.ts"), "utf8");
-      return (
-        new RegExp(`${f}:\\s*""`).test(g) &&
-        new RegExp(`${f}:\\s*string`).test(t) &&
-        new RegExp(`${f}:\\s*""`).test(m)
-      );
+    "cluster 设置项在 global-config / types / mock 三处对齐（cluster 是全局项，不进 config.js）",
+    ["reportUrl", "reportToken", "appKey", "appSecret", "openConversationId", "expectedAccounts"].every(
+      (f) => {
+        const t = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "types", "index.ts"), "utf8");
+        const m = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "api", "mock.ts"), "utf8");
+        return (
+          new RegExp(`\\b${f}:\\s*""`).test(gcRaw) &&
+          new RegExp(`\\b${f}:\\s*string`).test(t) &&
+          new RegExp(`\\b${f}:\\s*""`).test(m)
+        );
+      }
+    ) &&
+      /role:\s*"off"/.test(gcRaw) &&
+      /pushIntervalMin:\s*5/.test(gcRaw) &&
+      /reportIntervalMin:\s*60/.test(gcRaw) &&
+      /reportVia:\s*"notice"/.test(gcRaw) &&
+      /role:\s*"off" \| "hub" \| "client"/.test(
+        fs.readFileSync(path.join(ROOT, "src-renderer", "src", "types", "index.ts"), "utf8")
+      ),
+    "少一处 → 界面读不到或旧配置缺字段（0.9.4 白屏事故同款）"
+  );
+}
+
+// —— 跨客户端汇总的**接线**（2026-10-11）——
+// 配置字段对齐只保证「读得到」，接线才保证「点得动」。
+// 这里守四条最容易漏、且漏了表现为**按钮点了没反应**的链路：
+//   ① 主进程有通道 → ② preload 暴露 → ③ 渲染层有类型与两端适配 → ④ Docker 版有路由。
+// 少任何一环，桌面版能用而 Web 版白屏（或反过来），很难在单端测出来。
+{
+  const mainSrc = fs.readFileSync(path.join(ROOT, "src", "electron-main.js"), "utf8");
+  const preloadSrc = fs.readFileSync(path.join(ROOT, "src", "electron-preload.js"), "utf8");
+  const webApiSrc = fs.readFileSync(path.join(ROOT, "src", "web-api.js"), "utf8");
+  const serverSrc = fs.readFileSync(path.join(ROOT, "src", "server.js"), "utf8");
+  const webTs = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "api", "web.ts"), "utf8");
+  const dTs = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "types", "electron.d.ts"), "utf8");
+
+  // 面板用到的六个动作，三端（主进程/preload/web-api）必须同名齐备
+  const CLUSTER_METHODS = [
+    ["cluster:getState", "clusterState"],
+    ["cluster:reportNow", "clusterReportNow"],
+    ["cluster:pushNow", "clusterPushNow"],
+    ["cluster:test", "clusterTest"],
+    ["cluster:restart", "clusterRestart"],
+    ["cluster:clear", "clusterClear"],
+  ];
+
+  checkTrue(
+    "集群六个动作在 主进程 IPC / preload / web-api 三端齐备（同名方法，界面不用改）",
+    CLUSTER_METHODS.every(([ch, fn]) => {
+      // ⚠️ 主进程侧必须**行首锚定**：反例注入过 `if (false) ipcMain.handle(...)`
+      //    子串照样存在，用 includes 会假绿（实测踩到）。
+      const inMain = new RegExp(`^\\s*ipcMain\\.handle\\("${ch}"`, "m").test(mainSrc);
+      const inPreload =
+        new RegExp(`^\\s*${fn}:\\s*\\(\\) => ipcRenderer\\.invoke\\("${ch}"`, "m").test(preloadSrc) ||
+        new RegExp(`^\\s*${fn}:.*"${ch}"`, "m").test(preloadSrc);
+      const inWeb = new RegExp(`^\\s*(async\\s+)?${fn}[:(]`, "m").test(webApiSrc);
+      return inMain && inPreload && inWeb;
     }),
-    "四处少一处 → 界面读不到或旧配置缺字段"
+    "少一端 → 桌面能用而 Web 白屏（或按钮点了没反应）"
+  );
+  checkTrue(
+    "集群六个动作在 web.ts 适配层与 electron.d.ts 类型里也齐备",
+    CLUSTER_METHODS.every(([, fn]) => new RegExp(`^\\s*${fn}[:(]`, "m").test(webTs)) &&
+      CLUSTER_METHODS.every(([, fn]) => new RegExp(`^\\s*${fn}\\(`, "m").test(dTs)),
+    "类型/适配缺方法 → tsc 报错或 Web 端调用 undefined"
+  );
+  checkTrue(
+    "Docker 版挂了 /api/cluster/report 上报入口（且不走登录会话，靠共享密钥）",
+    // 行首锚定 `if (p === ...)`：反例 `if (false && p === ...)` 能骗过 includes
+    /^\s*if \(p === "\/api\/cluster\/report" && method === "POST"\)/m.test(serverSrc) &&
+      serverSrc.includes('clusterService.handleReport') &&
+      serverSrc.includes('x-cluster-token') &&
+      // 放在 needLogin 之前：别的客户端没有浏览器 Cookie
+      serverSrc.indexOf("/api/cluster/report") < serverSrc.indexOf('p === "/api/rpc"'),
+    "Docker 版没入口 → 客户端往汇总机推全是 404，且若包在会话后面会全 401"
+  );
+  checkTrue(
+    "改 cluster 配置后立即重启编排（两端 setGlobalConfig 都调）",
+    /^\s*if \(patch && patch\.cluster\)/m.test(mainSrc) &&
+      /^\s*if \(patch && patch\.cluster\)/m.test(webApiSrc),
+    "不重启 → 改了端口/角色/间隔看着保存了、实际还是旧值（最难查的「没保存」）"
+  );
+  checkTrue(
+    "设置页有「跨客户端汇总」分区，且侧栏选项卡同步（SOFTWARE_SECTIONS 与 SW_TABS 都含 cluster）",
+    /id="swsec-cluster"/.test(
+      fs.readFileSync(path.join(ROOT, "src-renderer", "src", "views", "SoftwareSettingsView.tsx"), "utf8")
+    ) &&
+      /key:\s*"cluster",\s*label:\s*"跨客户端汇总"/.test(
+        fs.readFileSync(path.join(ROOT, "src-renderer", "src", "components", "Sidebar.tsx"), "utf8")
+      ),
+    "分区只在一处 → 要么侧栏点不动，要么页面上根本没有入口"
+  );
+  checkTrue(
+    "仪表盘在启用时显示集群状态（关闭时整块不渲染）",
+    (() => {
+      const dash = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "views", "Dashboard.tsx"), "utf8");
+      return (
+        /const \[cluster, setCluster\]/.test(dash) &&
+        // role=off → 置 null（三元里判 role !== "off"），配合 `{cluster && ...}` 整块不渲染
+        /role !== "off"/.test(dash) &&
+        /setCluster\(null\)/.test(dash) &&
+        /\{cluster && \(/.test(dash)
+      );
+    })(),
+    "关闭时也显示 → 没开这功能的用户天天看到一张无关卡片"
   );
 }
 

@@ -1,26 +1,20 @@
 /**
- * 「主实例」唯一性裁决 + 跨客户端状态汇聚。
+ * 跨客户端状态汇聚：存各机上报名单 + 本机身份。
  *
- * 【为什么必须唯一】群里只有一条消息流。若A、B、C 三台各建一条 Stream 连接：
- *   · 同一条 @消息被投递 3 次 → 群里机器人重复应答
- *   · 每台只收到自己那部分推送 → 谁都拼不出完整清单
- * 所以「谁连 Stream」必须是**全局唯一**的决定，而不是用户各填各的。
+ * 【为什么不需要「选主」了】（2026-10-11 架构调整）
+ *   最初设计里有一段 shouldBeHub() —— 靠 clientId 字典序裁决哪台连 Stream 收群消息。
+ *   但实测证明「汇总机读群消息」这条路走不通（群消息只投递给被人类 @ 的机器人，
+ *   且机器人之间无法互相 @，拉群记录接口也不存在，详见 global-config.cluster 的注释）。
+ *   改成「客户端主动上报到汇总机」后，**角色由用户显式配置**（role: hub/client），
+ *   不再需要任何自动选举 —— 谁监听、谁上报，是配出来的，不是算出来的。
+ *   ⚠️ 别再把选举逻辑加回来：那是对着一条已废弃的链路写的。
  *
- * 【裁决规则（按顺序，第一条命中即生效）】
- *   1. 显式指定：全局配置 cluster.hubClientId 指名了某台（最可控，推荐）
- *   2. 该实例的 clientId 与 hubClientId 一致 → 是主
- *   3. 全局没有任何 hubClientId → **按 storage 里 clientId 的字典序最小者当主**
- *      （确定性裁决：所有机器算出同一个答案，不需要互相通信）
- *   4. 都不匹配 → 不是主
+ * 【本机身份】clientId 存 storage/cluster-identity.json，首次生成后不再变。
+ *   同一台机器重装/改名后要保持同一个身份，否则汇总表里会出现两条同名记录。
  *
- * ⚠️ 规则 3 的前提是**所有机器用同一份 clientId 列表**。若某台机器
- *    看不到其他机器的数据（没配同一个存储），它会算出不同的"最小者"，
- *    于是**可能两台都自认主**。为此加一条自检：把自己算出来的主与
- *    实际存着的其它 clientId 一一对撞，发现分歧就在界面上明确报出来
- *    （而不是默默双开）。
- *
- * 【本机身份】clientId 由 accountId 派生（同一台机器重装后不变），
- *   存storage/cluster-identity.json，首次生成后不再变。
+ * 【存储形态】JSONL（一行一条），按 clientId 就地覆盖，只保留每台最新状态。
+ *   选 JSONL 而不是整份 JSON 覆写，是为了单条坏数据不会毁掉整个文件
+ *   （解析失败跳过那一行即可，其他机器的数据照样能用）。
  */
 
 const fs = require("fs");
@@ -32,12 +26,15 @@ const logger = require("./logger");
 const IDENTITY_FILE = () => path.join(sp.resolve(), "cluster-identity.json");
 const STATES_FILE = () => path.join(sp.resolve(), "cluster-states.jsonl");
 
+/** 在线判定窗口：15 分钟没上报算离线（与 dingtalk-report 的 ONLINE_WINDOW_MS 对齐） */
+const ONLINE_WINDOW_MS = 15 * 60 * 1000;
+
 let identityCache = null;
 
 /**
  * 取本机在集群里的身份。
- * 优先用 hostname + 一个持久随机后缀 —— 机器名会变（改网名、重装），
- * 纯随机数不会冲突但不可读，所以「机器名 + 后缀」两头兼顾。
+ * 用「机器名 + 随机后缀」：机器名会变（改网名、重装），纯随机数不会冲突但不可读，
+ * 两者兼顾 —— 人能从名字认出是哪台，随机后缀保证不撞。
  *
  * @returns {{clientId:string, host:string, createdAt:string}}
  */
@@ -75,40 +72,7 @@ function getIdentity() {
 }
 
 /**
- * 裁决本机是不是主实例。
- *
- * @param {object} clusterCfg 全局配置的 cluster 段（可能为空）
- * @returns {{isHub: boolean, reason: string, hubClientId: string}}
- */
-function shouldBeHub(clusterCfg) {
-  const me = getIdentity().clientId;
-  const named = String((clusterCfg && clusterCfg.hubClientId) || "").trim();
-
-  // 规则 1+2：显式指名
-  if (named) {
-    return {
-      isHub: me === named,
-      reason: me === named ? `已显式指定本机（${me}）为主实例` : `已指定别的主实例（${named}），本机只上报`,
-      hubClientId: named,
-    };
-  }
-
-  // 规则 3：没有指定 → 按已知 clientId 字典序最小者当主（确定性）
-  const known = listKnownClients();
-  const all = Array.from(new Set([me, ...known.values()])).sort();
-  const elected = all[0] || me;
-  return {
-    isHub: me === elected,
-    reason:
-      me === elected
-        ? `未显式指定，按 clientId 字典序自动选主（本机 ${me}）`
-        : `未显式指定，主实例是 ${elected}，本机只上报`,
-    hubClientId: elected,
-  };
-}
-
-/**
- * 列出已知各机的上报状态（读 JSONL）。
+ * 列出已知各机的上报状态。
  * @returns {Map<string, {clientId:string, host:string, at:string, payload:object}>}
  */
 function listKnownClients() {
@@ -120,7 +84,6 @@ function listKnownClients() {
   } catch {
     return out;
   }
-  // JSONL：同一clientId 多行 → 后写的覆盖先写的（只看最新状态）
   for (const line of text.split(/\r?\n/)) {
     const s = line.trim();
     if (!s) continue;
@@ -133,47 +96,77 @@ function listKnownClients() {
 }
 
 /**
- * 记录本机的完成情况（写一行 JSONL，按 clientId 就地更新）。
- * 只保留每台最新一条，避免文件无限增长。
+ * 写一份上报记录（本机自报，或汇总机收到别的机器上报后落盘）。
+ *
+ * @param {object} record {clientId, host, at, payload}
+ * @returns {{ok:boolean, clientId?:string, error?:string}}
  */
-function reportSelf(payload) {
-  const me = getIdentity();
-  const file = STATES_FILE();
-  const record = {
-    clientId: me.clientId,
-    host: me.host,
-    at: new Date().toISOString(),
-    payload: payload || {},
+function upsertClient(record) {
+  const rec = record && typeof record === "object" ? record : {};
+  // ⚠️ 没有 clientId 的记录一律拒绝：汇总表按 clientId 去重，空 id 会互相覆盖，
+  //    表现成「只有最后一台机器」这种极难查的错。
+  const clientId = String(rec.clientId || "").trim();
+  if (!clientId) return { ok: false, error: "缺少 clientId" };
+
+  const entry = {
+    clientId,
+    host: String(rec.host || ""),
+    at: String(rec.at || new Date().toISOString()),
+    payload: rec.payload && typeof rec.payload === "object" ? rec.payload : {},
   };
   try {
     const existing = listKnownClients();
-    existing.set(record.clientId, record);
+    existing.set(clientId, entry);
     const lines = Array.from(existing.values())
       .map((r) => JSON.stringify(r))
       .join("\n");
-    fs.writeFileSync(file, `${lines}\n`, "utf8");
-    return { ok: true, clientId: me.clientId };
+    fs.writeFileSync(STATES_FILE(), `${lines}\n`, "utf8");
+    return { ok: true, clientId };
   } catch (e) {
-    logger.warn(`上报本机状态失败：${e.message}`);
+    logger.warn(`写入上报状态失败：${e.message}`);
     return { ok: false, error: e.message };
   }
 }
 
-/** 供界面显示：本机身份 + 已知各机状态 */
-function getClusterView() {
+/**
+ * 记录本机的完成情况（客户端定时调用 / 汇总机把自己的状态也并进去）。
+ *
+ * @param {object} payload 形如 {accounts:[{account, points, pc:{progress,max}, m:{...}, done, date}]}
+ */
+function reportSelf(payload) {
+  const me = getIdentity();
+  return upsertClient({
+    clientId: me.clientId,
+    host: me.host,
+    at: new Date().toISOString(),
+    payload: payload || {},
+  });
+}
+
+/**
+ * 供界面显示：本机身份 + 已知各机状态。
+ *
+ * ⚠️ 在线判定传**固定 now**（参数化），别在函数里取真实时间 —— 否则守卫断言
+ *    会随运行时段假红/假绿（守卫铁律）。
+ *
+ * @param {number} [now] 固定当前时刻（毫秒）
+ */
+function getClusterView(now) {
   const me = getIdentity();
   const known = listKnownClients();
-  const rows = Array.from(known.values()).sort((a, b) => String(a.clientId).localeCompare(String(b.clientId)));
-  const now = Date.now();
+  const t = Number.isFinite(now) ? now : Date.now();
+  const rows = Array.from(known.values()).sort((a, b) =>
+    String(a.clientId).localeCompare(String(b.clientId))
+  );
   return {
     me: { clientId: me.clientId, host: me.host, createdAt: me.createdAt },
     clients: rows.map((r) => ({
       clientId: r.clientId,
       host: r.host || "",
       at: r.at || "",
-      // ⚠️ 固定 now 判在线，别用真实当前时间做断言（守卫铁律）
-      online: now - Date.parse(r.at || 0) < 15 * 60 * 1000,
+      online: t - Date.parse(r.at || 0) < ONLINE_WINDOW_MS,
       payload: r.payload || {},
+      isMe: r.clientId === me.clientId,
     })),
   };
 }
@@ -190,10 +183,13 @@ function clearAll() {
 }
 
 module.exports = {
+  ONLINE_WINDOW_MS,
   getIdentity,
-  shouldBeHub,
   listKnownClients,
+  upsertClient,
   reportSelf,
   getClusterView,
   clearAll,
+  STATES_FILE,
+  IDENTITY_FILE,
 };

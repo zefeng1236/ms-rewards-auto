@@ -107,6 +107,17 @@ const ICONS: Record<string, React.ReactNode> = {
       <path d="M3 20v-6h6" />
     </svg>
   ),
+  /* 跨客户端汇总：一台中心 + 多台客户端的连接示意 */
+  cluster: (
+    <svg {...ICON_PROPS}>
+      <circle cx="12" cy="5" r="2.5" />
+      <circle cx="5" cy="18" r="2.5" />
+      <circle cx="19" cy="18" r="2.5" />
+      <path d="M10.3 7.1 6.4 15.7" />
+      <path d="M13.7 7.1l3.9 8.6" />
+      <path d="M7.5 18h9" />
+    </svg>
+  ),
 };
 
 type NavEntry = { key: ViewKey; label: string; icon: React.ReactNode };
@@ -147,6 +158,7 @@ const SW_TABS: { key: string; label: string; icon: React.ReactNode }[] = IS_WEB
       { key: "personalize", label: "个性化", icon: ICONS.personalize },
       { key: "browser", label: "浏览器", icon: ICONS.browser },
       { key: "security", label: "安全", icon: ICONS.security },
+      { key: "cluster", label: "跨客户端汇总", icon: ICONS.cluster },
       { key: "update", label: "更新", icon: ICONS.update },
     ]
   : [
@@ -154,6 +166,7 @@ const SW_TABS: { key: string; label: string; icon: React.ReactNode }[] = IS_WEB
       { key: "launch", label: "启动与托盘", icon: ICONS.launch },
       { key: "browser", label: "浏览器", icon: ICONS.browser },
       { key: "security", label: "安全", icon: ICONS.security },
+      { key: "cluster", label: "跨客户端汇总", icon: ICONS.cluster },
       { key: "update", label: "更新", icon: ICONS.update },
     ];
 

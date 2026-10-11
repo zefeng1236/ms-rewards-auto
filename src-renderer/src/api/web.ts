@@ -12,6 +12,9 @@ import type {
   CheckFingerprintUpdateResult,
   ChromiumStatus,
   CloseAction,
+  ClusterIdentity,
+  ClusterReportStats,
+  ClusterRuntimeState,
   DeepPartial,
   DownloadResult,
   FingerprintStatus,
@@ -428,6 +431,21 @@ export function createWebApi(): ElectronApi {
     securityPolicy: () => rpc<{ ok: boolean; policy?: SecurityPolicy; error?: string }>("securityPolicy"),
     securitySetPolicy: (next?: string | { mode?: string }) =>
       rpc<{ ok: boolean; policy?: SecurityPolicy; error?: string }>("securitySetPolicy", next),
+    // —— 跨客户端汇总（2026-10-11）——
+    clusterState: () =>
+      rpc<{
+        ok: boolean;
+        state?: ClusterRuntimeState;
+        http?: { running: boolean; port: number };
+        identity?: ClusterIdentity;
+        config?: AppConfig["cluster"];
+        error?: string;
+      }>("clusterState"),
+    clusterReportNow: () => rpc<{ ok: boolean; text?: string; stats?: ClusterReportStats; error?: string }>("clusterReportNow"),
+    clusterPushNow: () => rpc<{ ok: boolean; status?: number; error?: string }>("clusterPushNow"),
+    clusterTest: () => rpc<{ ok: boolean; note?: string; error?: string }>("clusterTest"),
+    clusterRestart: () => rpc<{ ok: boolean; role?: string; listenPort?: number; error?: string }>("clusterRestart"),
+    clusterClear: () => rpc<{ ok: boolean; error?: string }>("clusterClear"),
     checkUpdateNow: () => rpc<CheckAppUpdateResult>("checkAppUpdate"),
     getRuntimeVersion: () => rpc<{ version: string; base: string; buildNumber: string; electron: string; platform?: string }>("getRuntimeVersion"),
     onUpdatePrompt: () => () => {},

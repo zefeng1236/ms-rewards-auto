@@ -49,6 +49,7 @@ const logger = require("./logger");
 const core = require("./app-core");
 const runner = require("./runner");
 const webApi = require("./web-api");
+const clusterService = require("./cluster-service");
 const { ipFromRequest } = require("./wallpaper-limit");
 
 const PORT = Number(process.env.MS_REWARDS_PORT) || 25560;
@@ -482,6 +483,39 @@ async function handle(req, res) {
       return json(res, 200, passkey.removeCredential(id));
     }
 
+    /* ---------- 跨客户端汇总：客户端上报入口（2026-10-11） ----------
+     * 机器对机器的通道，**不做登录会话校验** —— 别的客户端没有浏览器 Cookie。
+     * 安全靠共享密钥（cluster-service.handleReport 里比对，未配置直接 403）。
+     * 放在 needLogin 之前是有意的：它压根不该走会话那套。
+     * 请求体上限 1MB，与桌面版内置监听保持一致。
+     */
+    if (p === "/api/cluster/report" && method === "POST") {
+      let raw = "";
+      let tooBig = false;
+      await new Promise((resolve) => {
+        req.on("data", (c) => {
+          raw += c;
+          if (raw.length > 1024 * 1024) {
+            tooBig = true;
+            req.destroy();
+            resolve(null);
+          }
+        });
+        req.on("end", resolve);
+        req.on("error", resolve);
+      });
+      if (tooBig) return json(res, 413, { ok: false, error: "请求体过大（上限 1MB）" });
+      let body = {};
+      try {
+        body = raw ? JSON.parse(raw) : {};
+      } catch {
+        return json(res, 400, { ok: false, error: "请求体不是合法 JSON" });
+      }
+      const token = String((req.headers["x-cluster-token"] || "")).trim();
+      const r = clusterService.handleReport(body, token);
+      return json(res, r.ok ? 200 : r.status || 400, r.ok ? { ok: true } : { ok: false, error: r.error });
+    }
+
     /* ---------- 统一 RPC ---------- */
     if (p === "/api/rpc" && method === "POST") {
       const body = await readBody(req);
@@ -568,6 +602,14 @@ function main() {
   startBackgroundWork();
   api.startAutoPush();
   cancel.reset();
+
+  // 跨客户端汇总：Docker 版收上报走本服务的 /api/cluster/report（同端口），
+  // 所以不需要像桌面版那样另开端口 —— 这里只按配置启动编排（hub 发报告 / client 上报）。
+  try {
+    api.startCluster();
+  } catch (e) {
+    logger.warn(`集群汇总启动失败（不影响主服务）：${e.message}`);
+  }
 
   // TLS：MS_REWARDS_TLS_CERT/KEY 指向证书与私钥时走 https（Docker 自签场景，
   // Passkey/WebAuthn 要求安全上下文）。两者缺一或未设置 → 明文 http（本地开发）。

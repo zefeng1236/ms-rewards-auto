@@ -402,8 +402,13 @@ jsHasHaloSelector:
   })(),
   asarHkTypesDefaultsBlank: (() => {
     try {
-      const t = fs.readFileSync(path.join(outDir, "src", "global-config.js"), "utf8");
-      return /hitokotoTypes:\s*\[\]/.test(t);
+      // ⚠️ 断言位置随重构迁移过一次：e0c1ca9 把「界面侧一言」从 global-config
+      //    拆进 appearance.js，这条还指着旧文件 → 恒 false（0.15.0 起修）。
+      //    判两处：appearance 里必须有默认空数组，global-config 里**不该再有**
+      //    （再有说明拆分被回退，两处同名字段会各存一份、改一边不生效）。
+      const a = fs.readFileSync(path.join(outDir, "src", "appearance.js"), "utf8");
+      const g = fs.readFileSync(path.join(outDir, "src", "global-config.js"), "utf8");
+      return /hitokotoTypes:\s*\[\]/.test(a) && !/hitokotoTypes/.test(g);
     } catch {
       return false;
     }

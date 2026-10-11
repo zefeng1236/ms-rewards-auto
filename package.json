@@ -28,6 +28,7 @@
   },
   "dependencies": {
     "@ttqtt/liquid-glass-react": "0.0.2",
+    "dingtalk-stream": "^2.1.5",
     "playwright-core": "^1.45.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1"
