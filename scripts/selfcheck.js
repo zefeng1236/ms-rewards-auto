@@ -4001,11 +4001,15 @@ const DOC_SECRET_PATTERNS = [
     "公钥没在源码里 → 私钥放 CI 也没意义（客户端无从信任）"
   );
   checkTrue(
-    "update-signature 是 fail-closed（没签名/坏签名一律拒绝，不存在跳过分支）",
-    /function verifyReleaseSignature\([\s\S]{0,1400}?return \{ ok: false/.test(signCode) &&
-      /if \(!block\)/.test(signCode) &&
-      !/verifyReleaseSignature\([\s\S]{0,1400}?catch[^{]*\{[^}]*return \{ ok: true/.test(signCode),
-    "验签失败却可能返回 ok:true → 攻击者删掉签名块就能降级"
+    "update-signature 的三个拒绝分支都真的返回 ok:false（fail-closed）",
+    // ⚠️ 判据必须**逐分支锚定**，不能只查「函数体里出现过 ok:false」——
+    //    反例实测：把「没签名块」那个分支改成 ok:true 后，函数里仍有另外两处
+    //    ok:false，守卫照样全绿。而那恰恰是最关键的一分支（攻击者删掉签名块即可）。
+    /if \(!block\)\s*\{\s*return \{ ok: false/.test(signCode) &&
+      /if \(!key\)\s*\{\s*return \{ ok: false/.test(signCode) &&
+      /if \(!valid\)\s*\{\s*return \{ ok: false/.test(signCode) &&
+      /function verifyReleaseSignature\(/.test(signCode),
+    "某个拒绝分支被改成 ok:true → 攻击者删掉签名块就能降级到未签名路径"
   );
   checkTrue(
     "私钥只从环境变量读（不来自源码/仓库）",
