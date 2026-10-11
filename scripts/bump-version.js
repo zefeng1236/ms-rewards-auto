@@ -12,8 +12,8 @@
  *   1. package.json            version / buildNumber（buildNumber 是唯一真源）
  *   2. package-lock.json       根 version + packages[""].version（两处）
  *   3. src-renderer/src/version.ts                 APP_VERSION / BUILD_NUMBER
- *   4. src-renderer/src/views/About.tsx            APP_VERSION
- *   5. src-renderer/src/api/mock.ts                currentVersion
+ *   4. src-renderer/src/views/About.tsx            APP_VERSION（单源导入时自动跟随）
+ *   5. src-renderer/src/api/mock.ts                currentVersion（同上）
  *   6. README.md                                   顶部「当前版本：Vx.y.z」
  *   （另：CHANGELOG.md 若缺 ## 新版本 章节则自动补一个待填骨架，否则门禁会红）
  *
@@ -126,8 +126,21 @@ if (checkOnly) {
     path.join(ROOT, "src-renderer", "src", "views", "About.tsx"),
     "utf8"
   );
-  const aboutV = (aboutSrc.match(/APP_VERSION\s*=\s*"([^"]+)"/) || [])[1];
-  add("About.tsx APP_VERSION", aboutV === expected, `${aboutV} vs ${expected}`);
+  // ⚠️ 与 selfcheck【12】同一套判法（同源踩坑，0.14.14 / 0.15.0 两次假红）：
+  //    ① 必须先剥注释 —— 文件里有一段历史说明写着「之前是自声明的
+  //       const APP_VERSION = "0.14.13"」，直接匹配会把历史文字当真值；
+  //    ② 认「import ... DISPLAY_VERSION as APP_VERSION」单源形态 ——
+  //       真值在 version.ts（上面那两行单独校验），此处不该再判字面量。
+  const aboutBody = aboutSrc
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^[ \t]*\/\/.*$/gm, "");
+  const aboutImports = /import\s*\{[^}]*DISPLAY_VERSION\s+as\s+APP_VERSION[^}]*\}/.test(aboutBody);
+  const aboutV = (aboutBody.match(/(?:export\s+)?const\s+APP_VERSION\s*=\s*"([^"]+)"/) || [])[1];
+  add(
+    "About.tsx APP_VERSION",
+    aboutImports ? true : aboutV === expected,
+    aboutImports ? `DISPLAY_VERSION 导入（单源，随 version.ts 同步） vs ${expected}` : `${aboutV} vs ${expected}`
+  );
 
   const mockSrc = fs.readFileSync(
     path.join(ROOT, "src-renderer", "src", "api", "mock.ts"),
@@ -235,9 +248,14 @@ rep("src-renderer/src/version.ts", "APP_VERSION / BUILD_NUMBER", oldVersion, tar
   return out === s ? null : out;
 });
 
-/* 4. About.tsx —— APP_VERSION */
+/* 4. About.tsx —— APP_VERSION
+ * 单源形态（import DISPLAY_VERSION as APP_VERSION）自动跟随 version.ts，无需改；
+ * 旧字面量形态才替换 —— 且只碰代码里的 const，绝不碰历史说明注释
+ * （0.14.14 / 0.15.0 两次把注释里的旧版本号当真值，教训见 selfcheck【12】）。 */
 rep("src-renderer/src/views/About.tsx", "APP_VERSION", oldVersion, targetVersion, (s) => {
-  const out = s.replace(/(APP_VERSION\s*=\s*)"[^"]+"/, `$1"${targetVersion}"`);
+  const body = s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
+  if (/import\s*\{[^}]*DISPLAY_VERSION\s+as\s+APP_VERSION[^}]*\}/.test(body)) return s;
+  const out = s.replace(/((?:export\s+)?const\s+APP_VERSION\s*=\s*)"[^"]+"/, `$1"${targetVersion}"`);
   return out === s ? null : out;
 });
 
