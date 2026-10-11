@@ -32,7 +32,12 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 function assertAccountId(id) {
   const s = String(id == null ? "" : id);
   if (!UUID_RE.test(s)) {
-    throw new Error(`账户 id 非法：${JSON.stringify(s)}（应为 36 位 UUID）`);
+    const reason = `账户 id 非法：${JSON.stringify(s)}（应为 36 位 UUID）`;
+    // 审计（2026-10-11）：非法 id 意味着「有人传了试图越界的东西」
+    try {
+      require("./security-audit").denied("account.id", s, reason, "account");
+    } catch {}
+    throw new Error(reason);
   }
   return s;
 }

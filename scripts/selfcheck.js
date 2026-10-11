@@ -3972,6 +3972,89 @@ const DOC_SECRET_PATTERNS = [
   }
 }
 
+// —— 安全中心：审计与策略不许失效（2026-10-11 第二、三层）——
+// 这层的价值全在「出事之后还能查」。一旦某处为了顺手把审计调用删掉，
+// 现场没有任何报错，功能测试也照样过 —— 只有真出事才发现查不到东西。
+{
+  const auditSrc = fs.readFileSync(path.join(ROOT, "src", "security-audit.js"), "utf8");
+  const auditCode = stripJsComments(auditSrc);
+  const policySrc = fs.readFileSync(path.join(ROOT, "src", "security-policy.js"), "utf8");
+  const wipeSrc = stripJsComments(fs.readFileSync(path.join(ROOT, "src", "wipe.js"), "utf8"));
+  const depsSrc = stripJsComments(fs.readFileSync(path.join(ROOT, "src", "ensure-deps.js"), "utf8"));
+  const fpSrc = stripJsComments(fs.readFileSync(path.join(ROOT, "src", "fingerprint-browser.js"), "utf8"));
+  const mainCode3 = stripJsComments(fs.readFileSync(path.join(ROOT, "src", "electron-main.js"), "utf8"));
+  const preloadSrc = fs.readFileSync(path.join(ROOT, "src", "electron-preload.js"), "utf8");
+  const webApiSrc = stripJsComments(fs.readFileSync(path.join(ROOT, "src", "web-api.js"), "utf8"));
+
+  checkTrue(
+    "security-audit 的写入失败绝不抛（审计是旁路，不能把主流程带崩）",
+    // 用剥掉注释后的源码判断（catch 里那行「约束①」注释会让原文正则失配 ——
+    // 今天第 5 次踩同一个坑，已抽成 stripJsComments）
+    /function log\([\s\S]{0,900}?catch\s*\{\s*\}\s*\n\}/.test(auditCode),
+    "log() 的 catch 不是空处理 → 磁盘满/权限异常时审计会把主流程带崩"
+  );
+  checkTrue(
+    "越界被拒会写审计（storage-path + account 两处都要）",
+    /auditRef\(\)[\s\S]{0,600}?audit\.denied\(/.test(
+      stripJsComments(fs.readFileSync(path.join(ROOT, "src", "storage-path.js"), "utf8"))
+    ) &&
+      /assertAccountId[\s\S]{0,700}?security-audit"\)\.denied\(/.test(
+        stripJsComments(fs.readFileSync(path.join(ROOT, "src", "account.js"), "utf8"))
+      ),
+    "越界拦截还在但不再记审计 → 出事之后查不到谁在试探"
+  );
+  checkTrue(
+    "破坏性操作与子进程启动都留痕（wipe + 两处 spawn）",
+    /audit\.fileDelete\(target/.test(wipeSrc) &&
+      /audit\.procSpawn\(/.test(depsSrc) &&
+      /audit\.procSpawn\(/.test(fpSrc),
+    "wipe 或某个 spawn 漏了审计 → 最该被记录的操作反而查不到"
+  );
+  checkTrue(
+    "审计过滤程序自管理目录（否则内核切换几百条会淹掉真记录）",
+    /QUIET_PREFIXES/.test(auditCode) && /isQuiet\(target\)/.test(auditCode),
+    "缺 QUIET_PREFIXES 过滤 → 日志被临时文件删除刷屏"
+  );
+
+  checkTrue(
+    "安全策略三档齐全且非法值回落默认",
+    /\["ask",\s*"auto",\s*"full"\]/.test(policySrc) &&
+      /MODES\.includes\(v\)\s*\?\s*v\s*:\s*DEFAULT_MODE/.test(policySrc),
+    "策略档位或回落逻辑变了 → 界面上的选择可能写不进合法值"
+  );
+  checkTrue(
+    "策略不覆盖路径边界（full 档也不能越界 —— 注释里写明这条约束）",
+    /不覆盖路径边界/.test(policySrc),
+    "少了这条说明，容易被误当成「full 档能越界」"
+  );
+  checkTrue(
+    "四个安全中心通道在 Electron / preload / Web 三处同名齐全",
+    /security:auditRecent/.test(mainCode3) &&
+      /security:auditClear/.test(mainCode3) &&
+      /security:policy/.test(mainCode3) &&
+      /security:setPolicy/.test(mainCode3) &&
+      /securityAuditRecent/.test(preloadSrc) &&
+      /securityAuditClear/.test(preloadSrc) &&
+      /securityPolicy/.test(preloadSrc) &&
+      /securitySetPolicy/.test(preloadSrc) &&
+      /securityAuditRecent\(/.test(webApiSrc) &&
+      /securitySetPolicy\(/.test(webApiSrc),
+    "三处缺一 → 界面在某个运行形态下会调到不存在的接口"
+  );
+
+  // 设置项铁律：四处对齐，缺一白屏
+  const gcSrc = fs.readFileSync(path.join(ROOT, "src", "global-config.js"), "utf8");
+  const tsSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "types", "index.ts"), "utf8");
+  const mockSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "api", "mock.ts"), "utf8");
+  checkTrue(
+    "设置项 security.approvalMode 四处对齐（缺一 → 白屏）",
+    /security:\s*\{\s*\n?\s*approvalMode:\s*"auto"/.test(gcSrc) &&
+      /security:\s*\{[\s\S]{0,200}?approvalMode:\s*"ask"\s*\|\s*"auto"\s*\|\s*"full"/.test(tsSrc) &&
+      /security:\s*\{\s*approvalMode:\s*"auto"\s*\}/.test(mockSrc),
+    "security.approvalMode 在 global-config / types / mock 里没对齐 → 白屏"
+  );
+}
+
 // —— 渲染进程沙箱与导航边界（2026-10-11）——
 // 用户担心「软件被入侵后为所欲为」。这三条是这个方向的**兜底**：
 // Electron 25+ 默认就开沙箱，靠默认值能工作，但默认值是隐式的 ——

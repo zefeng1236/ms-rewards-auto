@@ -1,4 +1,4 @@
-import type { ElectronApi } from "../types/electron";
+import type { ElectronApi, SecurityAuditEntry, SecurityPolicy } from "../types/electron";
 import { DISPLAY_VERSION } from "../version";
 import type {
   Account,
@@ -421,6 +421,13 @@ export function createWebApi(): ElectronApi {
     releaseNotes: () => rpc<ReleaseNotesResult>("releaseNotes"),
     installUpdate: async () => ({ ok: false, error: "Web 版请通过 docker compose pull 更新镜像" }),
     dismissUpdatePrompt: async () => ({ ok: true }),
+    // —— 安全中心（2026-10-11）：与 electron-main.js 的 channel 名一一对应 ——
+    securityAuditRecent: (limit?: number) =>
+      rpc<{ ok: boolean; entries?: SecurityAuditEntry[]; error?: string }>("securityAuditRecent", limit),
+    securityAuditClear: () => rpc<{ ok: boolean; error?: string }>("securityAuditClear"),
+    securityPolicy: () => rpc<{ ok: boolean; policy?: SecurityPolicy; error?: string }>("securityPolicy"),
+    securitySetPolicy: (next?: string | { mode?: string }) =>
+      rpc<{ ok: boolean; policy?: SecurityPolicy; error?: string }>("securitySetPolicy", next),
     checkUpdateNow: () => rpc<CheckAppUpdateResult>("checkAppUpdate"),
     getRuntimeVersion: () => rpc<{ version: string; base: string; buildNumber: string; electron: string; platform?: string }>("getRuntimeVersion"),
     onUpdatePrompt: () => () => {},

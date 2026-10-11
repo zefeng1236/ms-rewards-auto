@@ -2,6 +2,24 @@ const path = require("path");
 const fs = require("fs");
 
 /**
+ * 安全审计（可选注入）。
+ *
+ * ⚠️ 用延迟 require 而不是顶层 require：storage-path 是**最底层的模块**，
+ *    被 account/config/state 等一堆模块依赖，而 security-audit 自己又依赖
+ *    storage-path（要算相对路径）。顶层直接 require 会形成循环依赖，
+ *    早期实测过会导致部分导出为 undefined。
+ *    这里改成「用到时才 require」，既断掉循环，又不影响越界拦截本身
+ *    —— 审计写失败也不该让路径校验抛异常（见 security-audit 的约束①）。
+ */
+function auditRef() {
+  try {
+    return require("./security-audit");
+  } catch {
+    return null;
+  }
+}
+
+/**
  * 统一的存储目录解析。
  *
  * 开发环境：项目根目录下的 storage/
@@ -52,9 +70,12 @@ function resolveIn(...sub) {
   const rel = path.relative(r, target);
   if (rel === "" ) return target; // 就是根目录本身
   if (rel.startsWith("..") || path.isAbsolute(rel)) {
-    throw new Error(
-      `路径越界：${sub.join("/")} → ${target}（storage 根为 ${r}）`
-    );
+    const reason = `路径越界：${sub.join("/")} → ${target}（storage 根为 ${r}）`;
+    // 审计（2026-10-11）：**越界被拒**是审计里最重要的一类 ——
+    // 它说明「有东西试图做越界的事」，而不只是记录「做了什么」。
+    const audit = auditRef();
+    if (audit) audit.denied("storage.resolve", target, reason, "storage-path");
+    throw new Error(reason);
   }
   return target;
 }

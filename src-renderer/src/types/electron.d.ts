@@ -35,6 +35,27 @@ import type {
   WipeResult,
 } from "./index";
 
+/** 安全审计条目（2026-10-11 安全中心第二层） */
+export interface SecurityAuditEntry {
+  /** ISO 时间戳 */
+  time: string;
+  /**
+   * 事件类型：
+   * `path.denied` 越界被拒 · `file.delete` 删除文件 · `proc.spawn` 启动子进程
+   * `nav.blocked` 拦截导航 · `install.denied` 安装包路径被拒
+   */
+  type: string;
+  /** 结构化详情，随 type 而变（路径相对 storage 根、命令与参数、拒绝原因等） */
+  detail: Record<string, unknown>;
+}
+
+/** 安全策略档位（2026-10-11 安全中心第三层） */
+export type SecurityApprovalMode = "ask" | "auto" | "full";
+
+export interface SecurityPolicy {
+  mode: SecurityApprovalMode;
+}
+
 /**
  * src/electron-preload.js 通过 contextBridge 暴露的接口。
  * 这里的签名必须与 preload 严格一一对应，改动 preload 时同步更新本文件。
@@ -205,6 +226,15 @@ export interface ElectronApi {
   revealUpdateFile(filePath: string): Promise<{ ok: boolean; error?: string }>;
   /** 取指定版本的更新日志（不传 = 当前版本） */
   releaseNotes(version?: string): Promise<ReleaseNotesResult>;
+  // —— 安全中心（2026-10-11）——
+  /** 读最近的安全审计记录（删了什么、起了什么进程、哪些越界被拦） */
+  securityAuditRecent(limit?: number): Promise<{ ok: boolean; entries?: SecurityAuditEntry[]; error?: string }>;
+  /** 清空审计记录 */
+  securityAuditClear(): Promise<{ ok: boolean; error?: string }>;
+  /** 读当前策略档位 */
+  securityPolicy(): Promise<{ ok: boolean; policy?: SecurityPolicy; error?: string }>;
+  /** 设置策略档位 */
+  securitySetPolicy(next?: string | { mode?: string }): Promise<{ ok: boolean; policy?: SecurityPolicy; error?: string }>;
   /**
    * 安装已下载的更新包：先校验文件确实存在，再校验完整性（大小 + PE 头 + sha256），
    * 通过后才启动安装包。静默下载场景尤其必要 —— 下完到点安装可能隔好几天。

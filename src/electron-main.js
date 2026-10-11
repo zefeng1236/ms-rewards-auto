@@ -658,10 +658,16 @@ function createWindow(show = true) {
     if (/^https?:/i.test(url)) {
       logger.info(`拦截主窗口原地导航，改用系统浏览器打开: ${url}`);
       try {
+        require("./security-audit").log("nav.blocked", { url: String(url).slice(0, 300) });
+      } catch {}
+      try {
         shell.openExternal(url);
       } catch { /* 系统没关联浏览器时静默失败即可，不打扰用户 */ }
     } else {
       logger.warn(`拦截主窗口导航到非 http(s) 地址: ${url}`);
+      try {
+        require("./security-audit").log("nav.blocked", { url: String(url).slice(0, 300), scheme: "non-http" });
+      } catch {}
     }
   });
 
@@ -1730,6 +1736,40 @@ function registerIpc() {
     return appUpdate.checkAppUpdate(displayVersion());
   });
 
+  // —— 安全审计（2026-10-11 安全中心第二层）——
+  // 界面「安全中心」面板用这四个通道。纯 Node 实现，两端共用同一个模块。
+  ipcMain.handle("security:auditRecent", (_e, limit) => {
+    try {
+      const audit = require("./security-audit");
+      const list = audit.readRecent(Number(limit) || 200);
+      return { ok: true, entries: list };
+    } catch (err) {
+      return { ok: false, error: String((err && err.message) || err) };
+    }
+  });
+  ipcMain.handle("security:auditClear", () => {
+    try {
+      require("./security-audit").clear();
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: String((err && err.message) || err) };
+    }
+  });
+  ipcMain.handle("security:policy", () => {
+    try {
+      return { ok: true, policy: require("./security-policy").get() };
+    } catch (err) {
+      return { ok: false, error: String((err && err.message) || err) };
+    }
+  });
+  ipcMain.handle("security:setPolicy", (_e, next) => {
+    try {
+      return { ok: true, policy: require("./security-policy").set(next) };
+    } catch (err) {
+      return { ok: false, error: String((err && err.message) || err) };
+    }
+  });
+
   // ---- 应用更新：内置下载（不跳浏览器）----
   // 下载安装包到系统「下载」目录，进度经 update-download-progress 推给渲染端。
   ipcMain.handle("app:downloadUpdate", async (_e, payload) => {
@@ -1892,6 +1932,9 @@ function registerIpc() {
     const own = assertInsideUpdateDir(p, "安装包");
     if (own.error) {
       logger.warn(`拒绝打开越界的安装包路径: ${p}（${own.error}）`);
+      try {
+        require("./security-audit").denied("runUpdateInstaller", p, own.error, "ipc:app:runUpdateInstaller");
+      } catch {}
       return { ok: false, error: own.error };
     }
     let openErr = "";

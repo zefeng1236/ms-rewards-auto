@@ -537,6 +537,39 @@ function createApi({ emit }) {
     releaseNotes(version) {
       return appUpdate.fetchReleaseNotes(String(version || displayVersion()));
     },
+
+    // —— 安全审计 / 策略（2026-10-11 安全中心）——
+    // 与 electron-main.js 的 registerIpc() 一一对应，同名方法，
+    // 这样界面那份 React 不用改一行就能同时跑在两端。
+    securityAuditRecent(limit) {
+      try {
+        return { ok: true, entries: require("./security-audit").readRecent(Number(limit) || 200) };
+      } catch (err) {
+        return { ok: false, error: String((err && err.message) || err) };
+      }
+    },
+    securityAuditClear() {
+      try {
+        require("./security-audit").clear();
+        return { ok: true };
+      } catch (err) {
+        return { ok: false, error: String((err && err.message) || err) };
+      }
+    },
+    securityPolicy() {
+      try {
+        return { ok: true, policy: require("./security-policy").get() };
+      } catch (err) {
+        return { ok: false, error: String((err && err.message) || err) };
+      }
+    },
+    securitySetPolicy(next) {
+      try {
+        return { ok: true, policy: require("./security-policy").set(next) };
+      } catch (err) {
+        return { ok: false, error: String((err && err.message) || err) };
+      }
+    },
     // 运行时版本号（与窗口标题同源；渲染层那份是编译期常量，会分叉）
     getRuntimeVersion() {
       return {

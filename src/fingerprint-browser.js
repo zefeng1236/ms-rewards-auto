@@ -38,6 +38,7 @@ const { spawn } = require("child_process");
 const { once } = require("events");
 const logger = require("./logger");
 const sp = require("./storage-path");
+const audit = require("./security-audit");
 const httpGet = require("./http-get");
 const fastHosts = require("./fast-hosts");
 
@@ -1639,6 +1640,8 @@ function runCmd(cmd, args, cwd) {
     let err = "";
     // cwd 单独传而不是拼进参数：bsdtar 遇到 `-f C:\...` 的冒号会当远程主机，
     // 只有把工作目录切到包所在处、-f 给纯文件名才绕得开（见 tarArgs）
+    // 审计（2026-10-11）：全项目仅有的两处 spawn 之一，会真正起外部命令
+    audit.procSpawn(cmd, args, "解压环境拟真内核");
     const child = spawn(cmd, args, { windowsHide: true, cwd });
     child.stdout.on("data", () => {});
     child.stderr.on("data", (d) => (err += d.toString()));

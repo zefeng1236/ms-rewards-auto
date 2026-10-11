@@ -133,6 +133,12 @@ contextBridge.exposeInMainWorld("api", {
   revealUpdateFile: (filePath) => ipcRenderer.invoke("app:revealUpdateFile", filePath),
   // 取指定版本的更新日志（不传 = 当前版本）
   releaseNotes: (version) => ipcRenderer.invoke("app:releaseNotes", version),
+
+  // —— 安全审计 / 策略（2026-10-11 安全中心）——
+  securityAuditRecent: (limit) => ipcRenderer.invoke("security:auditRecent", limit),
+  securityAuditClear: () => ipcRenderer.invoke("security:auditClear"),
+  securityPolicy: () => ipcRenderer.invoke("security:policy"),
+  securitySetPolicy: (next) => ipcRenderer.invoke("security:setPolicy", next),
   // 安装已下载的更新包：先校验文件存在，再校验完整性（大小 + PE 头 + sha256）
   installUpdate: (payload) => ipcRenderer.invoke("app:installUpdate", payload),
   // 关掉更新提示：当天不再弹

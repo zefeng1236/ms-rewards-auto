@@ -139,6 +139,17 @@ const GLOBAL_DEFAULTS = {
     // 已忽略的版本号（用户点叉的那个版本，避免同版本反复弹）
     dismissedVersion: "",
   },
+  /**
+   * 安全中心（2026-10-11）。
+   * approvalMode: ask（询问审批）| auto（自动通过，必记审计）| full（完全访问，不记敏感操作审计）。
+   * ⚠️ 策略**不覆盖路径边界**：sp.resolve("../..") 在任何档位下都会被拒。
+   *    策略管「合不合法的事要不要问」，越界是「不合法」，两件事。
+   * ⚠️ 必须与 types/index.ts 的 AppGlobalConfig.security、api/mock.ts 的
+   *    security 段对齐（铁律：四处缺一 → 白屏）。
+   */
+  security: {
+    approvalMode: "auto",
+  },
   // 积分目标。可配多个，按账户总积分余额判断，可选设置奖品与详情页显示。
   // 达成判定：当前余额 >= target；奖品数量按 floor(余额 / target) 计算。
   // ⚠️ 必须与 src/config.js 的 DEFAULTS.goals 对齐（含 items: []）。

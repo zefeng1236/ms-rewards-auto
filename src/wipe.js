@@ -6,6 +6,7 @@ const appearance = require("./appearance");
 const vault = require("./vault");
 const setup = require("./setup");
 const logger = require("./logger");
+const audit = require("./security-audit");
 
 /**
  * 「清空账号数据」：忘记密码又没有恢复密钥时的最后退路。
@@ -50,6 +51,10 @@ function wipeAccountData() {
   const remove = (target) => {
     try {
       fs.rmSync(target, { recursive: true, force: true });
+      // 审计（2026-10-11）：这是**破坏性最大的操作** —— 一次调用会递归删掉
+      // 全部账户数据、日志与保险库，事后无法恢复，必须留下记录。
+      // silent=true 强制记：wipe 不该被「程序自管理目录」那套过滤跳过。
+      audit.fileDelete(target, { reason: "清空全部数据（用户主动触发）", silent: true });
       return true;
     } catch (e) {
       logger.warn(`清除 ${target} 失败: ${e.message}`);

@@ -28,6 +28,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const logger = require("./logger");
+const audit = require("./security-audit");
 
 const IS_WIN = process.platform === "win32";
 const UTF8_CP = IS_WIN ? "chcp 65001 >nul && " : "";
@@ -252,6 +253,9 @@ async function installChromiumViaChoco() {
 
   // choco install 需要管理员权限，普通用户会弹 UAC
   return new Promise((resolve) => {
+    // 审计（2026-10-11）：全项目**唯一会触发 UAC 提权**的子进程，
+    // 且用了 shell:true —— 必须留痕，「我装了什么、什么时候装的」要能查。
+    audit.procSpawn(choco, ["install", "chromium", "-y", "--no-progress"], "安装 Chromium 依赖（会弹 UAC）");
     const child = spawn(choco, ["install", "chromium", "-y", "--no-progress"], {
       shell: true,
       stdio: ["ignore", "pipe", "pipe"],

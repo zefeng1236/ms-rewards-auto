@@ -69,6 +69,9 @@ const DEFAULT_CONFIG: AppConfig = {
   },
   // 软件本体更新（0.14.5 起）—— 必须与 config.js / global-config.js / types 逐字段对齐
   update: { silentDownload: false, lastPromptDate: "", readyVersion: "", readyFile: "", readyBytes: 0, readySha256: "", dismissedVersion: "" },
+  // ⚠️ 必须与 src/global-config.js 的 GLOBAL_DEFAULTS.security、types/index.ts 的
+  //    AppGlobalConfig.security 对齐（铁律：四处缺一 → 白屏）
+  security: { approvalMode: "auto" },
 };
 
 /**
@@ -780,6 +783,23 @@ export function createMockApi(): ElectronApi {
     }),
     installUpdate: async () => ({ ok: false, error: "浏览器预览模式不支持安装" }),
     dismissUpdatePrompt: async () => ({ ok: true }),
+    // —— 安全中心（2026-10-11）：预览模式给假数据，形态与真实返回一致 ——
+    securityAuditRecent: async () => ({
+      ok: true,
+      entries: [
+        { time: new Date().toISOString(), type: "proc.spawn", detail: { cmd: "choco", args: ["install", "chromium"], why: "安装 Chromium 依赖（会弹 UAC）" } },
+        { time: new Date().toISOString(), type: "path.denied", detail: { what: "storage.resolve", path: "..\\..\\Windows", reason: "路径越界", source: "storage-path" } },
+        { time: new Date().toISOString(), type: "file.delete", detail: { path: "accounts", reason: "清空全部数据（用户主动触发）" } },
+      ],
+    }),
+    securityAuditClear: async () => ({ ok: true }),
+    securityPolicy: async () => ({ ok: true, policy: { mode: "auto" as const } }),
+    // 与 security-policy.js 的 normalizeMode 同规则：非法值回落 auto
+    securitySetPolicy: async (next) => {
+      const raw = typeof next === "string" ? next : next?.mode;
+      const mode = raw === "ask" || raw === "full" ? raw : "auto";
+      return { ok: true, policy: { mode } };
+    },
     // 预览模式点「立即检查」：直接复用上面 fake 数据，省一层自引用
     checkUpdateNow: async () => ({
       ok: true,

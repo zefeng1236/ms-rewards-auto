@@ -228,6 +228,14 @@ export interface AppConfig {
     /** 用户点叉忽略的版本号，避免同一版本反复弹 */
     dismissedVersion: string;
   };
+  /** 安全中心：敏感操作的审批档位（2026-10-11） */
+  security: {
+    /**
+     * ask 询问审批 · auto 自动通过（必记审计）· full 完全访问（不记敏感操作审计）。
+     * ⚠️ 不覆盖路径边界：越界路径在任何档位下都会被拒。
+     */
+    approvalMode: "ask" | "auto" | "full";
+  };
 }
 
 /** 补丁写入用的深层可选类型 */
