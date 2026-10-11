@@ -74,6 +74,15 @@ const DEFAULT_CONFIG: AppConfig = {
   // ⚠️ 必须与 src/global-config.js 的 GLOBAL_DEFAULTS.security、types/index.ts 的
   //    AppGlobalConfig.security 对齐（铁律：四处缺一 → 白屏）
   security: { approvalMode: "auto" },
+  cluster: {
+    hubClientId: "",
+    appKey: "",
+    appSecret: "",
+    openConversationId: "",
+    expectedAccounts: "",
+    reportIntervalMin: 60,
+    reportChannel: "dingding",
+  },
 };
 
 /**

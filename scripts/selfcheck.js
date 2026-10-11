@@ -4068,6 +4068,81 @@ const DOC_SECRET_PATTERNS = [
   );
 }
 
+// —— 跨客户端汇总：主实例唯一性 + 报告口径（2026-10-11）——
+// 【为什么这些必须锁死】群里只有一条消息流，若多台同时连Stream，
+// 同一条消息被投递 N 次且谁都拼不出完整清单 —— 这是**静默错**：
+// 界面一切正常，只是统计结果不对，不加守卫没人发现得了。
+{
+  const hubSrc = stripJsComments(fs.readFileSync(path.join(ROOT, "src", "cluster-hub.js"), "utf8"));
+  const streamSrc = stripJsComments(fs.readFileSync(path.join(ROOT, "src", "dingtalk-stream.js"), "utf8"));
+  const repSrc = stripJsComments(fs.readFileSync(path.join(ROOT, "src", "dingtalk-report.js"), "utf8"));
+
+  checkTrue(
+    "主实例裁决：显式指名优先，其次按 clientId 字典序选主（确定性、跨机一致）",
+    /function shouldBeHub\(/i.test(hubSrc) &&
+      /named === me|me === named/.test(hubSrc) &&
+      /\.sort\(\)/.test(hubSrc) &&
+      /\ball\[0\] \|\| me\b/.test(hubSrc),
+    "选主规则变了 → 多台可能同时自认主，群消息被重复处理"
+  );
+  checkTrue(
+    "非主实例不连 Stream（否则群消息重复投递 + 统计被重复累加）",
+    /function shouldBeHub\(/.test(hubSrc) && /isHub: me === named/.test(hubSrc) && /isHub: me === elected/.test(hubSrc),
+    "裁决不再返回 isHub → 无法区分主从"
+  );
+  checkTrue(
+    "Stream 收到消息后必须 ack（不 ack 会被钉钉判连接异常并重投）",
+    /socketCallBackResponse/.test(streamSrc),
+    "缺 ack → 钉钉持续重投同一条消息，群里刷屏"
+  );
+  checkTrue(
+    "Stream 依赖锁 >= 2.1.5（2.1.0~2.1.2 硬编码 pre-api 域名会 ETIMEDOUT）",
+    /dingtalk-stream/.test(fs.readFileSync(path.join(ROOT, "src", "dingtalk-stream.js"), "utf8")) &&
+      /\^?2\.1\.[5-9]|>= ?2\.1\.5|2\.1\.5/.test(
+        fs.readFileSync(path.join(ROOT, "package.json"), "utf8") +
+          fs.readFileSync(path.join(ROOT, "src", "dingtalk-stream.js"), "utf8")
+      ),
+    "装到旧版 → connect ETIMEDOUT 且日志无线索，极难排查"
+  );
+  checkTrue(
+    "报告的「未完成」包含在线但没做满的账号（不只是从未上报的人）",
+    /if \(!rec \|\| !rec\.done\) missing\.push\(name\)/.test(repSrc),
+    "只算「从未上报」→ 在线摸鱼的账号漏出未完成段，违背用户核心诉求"
+  );
+  checkTrue(
+    "报告的完成判定用搜索进度满额，不拿「心跳上报的日期」当完成",
+    /const isDone = pcFull \|\| mFull;/.test(repSrc) && !/const isDone = .*reportedToday/.test(repSrc),
+    "拿日期当完成 → 客户端只心跳就判✅，满屏绿字反漏掉真没做的人"
+  );
+  checkTrue(
+    "在线判定用**固定 now** 参数，不在函数里取真实时间（守卫铁律）",
+    /function isOnline\(rec, now\)/.test(repSrc) &&
+      /return now - t < ONLINE_WINDOW_MS/.test(repSrc) &&
+      // buildReport 里允许兜底取 Date.now()，但传了 now 时必须真的用
+      /Number\.isFinite\(cfg\.now\) \? cfg\.now : Date\.now\(\)/.test(repSrc),
+    "在线判定依赖真实时刻 → 断言随时段假红/假绿"
+  );
+  checkTrue(
+    "群消息解析失败返回 null 而不抛（群里有人工发言/别的机器人）",
+    /function parseClientReport\(text\)/.test(repSrc) && /return null/.test(repSrc) && !/throw /.test(repSrc),
+    "解析抛错 → 一条无关消息把整份报告搞崩"
+  );
+  checkTrue(
+    "cluster 设置项在 config.js / global-config.js / types / mock 四处对齐",
+    ["hubClientId", "appKey", "appSecret", "openConversationId", "expectedAccounts"].every((f) => {
+      const g = fs.readFileSync(path.join(ROOT, "src", "global-config.js"), "utf8");
+      const t = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "types", "index.ts"), "utf8");
+      const m = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "api", "mock.ts"), "utf8");
+      return (
+        new RegExp(`${f}:\\s*""`).test(g) &&
+        new RegExp(`${f}:\\s*string`).test(t) &&
+        new RegExp(`${f}:\\s*""`).test(m)
+      );
+    }),
+    "四处少一处 → 界面读不到或旧配置缺字段"
+  );
+}
+
 // —— 钉钉加签认证不许失效（2026-10-11）——
 // 三种安全模式（关键词 / 加签 / IP 段）相互独立、可叠加，两个都填是最稳的。
 // 这里守两件最容易做错、且错了会**静默丢消息**的事：

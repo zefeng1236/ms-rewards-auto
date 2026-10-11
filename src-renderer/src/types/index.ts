@@ -240,6 +240,24 @@ export interface AppConfig {
      */
     approvalMode: "ask" | "auto" | "full";
   };
+
+  /** 跨客户端汇总：多台客户端推同一个钉钉群时，一眼看出谁没完成 */
+  cluster: {
+    /** 主实例的 clientId。留空 = 按 clientId 字典序自动选主（确定性，跨机一致） */
+    hubClientId: string;
+    /** 钉钉 Client ID（后台「凭证与基础信息」），与 appSecret 一起才起 Stream */
+    appKey: string;
+    /** 钉钉 Client Secret */
+    appSecret: string;
+    /** 群 ID（openConversationId）。自定义 webhook 读不到消息，只有 Stream 能收 */
+    openConversationId: string;
+    /** 应做账号清单（逗号/换行分隔）。留空则「未完成」段为空 */
+    expectedAccounts: string;
+    /** 汇总报告间隔（分钟）。0 = 不定时推送，只手动触发 */
+    reportIntervalMin: number;
+    /** 汇总报告推到哪个通道 */
+    reportChannel: string;
+  };
 }
 
 /** 补丁写入用的深层可选类型 */

@@ -154,6 +154,34 @@ const GLOBAL_DEFAULTS = {
   security: {
     approvalMode: "auto",
   },
+  // 跨客户端汇总（多台/多地客户端推送到同一个钉钉群时，一眼看出谁没完成）
+  //
+  // 【为什么必须有「唯一主实例」】群里只有一条消息流。若每台都连 Stream，
+  // 同一条 @消息被投递 N 次，且每台只知道自己那部分数据，谁都拼不出完整清单。
+  // 所以只有 hubClientId 指定的那台才连 Stream，其余只上报本地状态。
+  //
+  // 【Stream 模式不需要公网地址】走 WebSocket 长连接（官方 SDK 负责重连），
+  // 不用域名/ TLS / 内网穿透，内网机器直接能跑。
+  //
+  // 【与自定义 webhook 的分工】自定义 webhook 只能发不能收（官方明确不支持
+  // 应答机制），所以「读群消息」只能靠企业内部应用机器人的 Stream。
+  // 原有notice.dingding 那套 webhook 推送**继续保留**，两者不冲突：
+  // webhook 负责把消息发进群，Stream 负责读回来做统计。
+  cluster: {
+    // 主实例的 clientId（留空 = 按 clientId 字典序自动选主，见 cluster-hub.shouldBeHub）
+    hubClientId: "",
+    // 钉钉 Client ID / Client Secret（后台「凭证与基础信息」）
+    appKey: "",
+    appSecret: "",
+    // 群ID（openConversationId）。用钉钉客户端「群设置 → 机器人」或 JSAPI 扫码获取
+    openConversationId: "",
+    // 应做账号清单（逗号/换行分隔）。留空则「未完成」段为空，只看完成清单。
+    expectedAccounts: "",
+    // 汇总报告间隔（分钟）。0 = 不定时推送，只在手动触发时生成
+    reportIntervalMin: 60,
+    // 汇总报告推送到哪个通道：dingding（钉钉）· wework · feishu
+    reportChannel: "dingding",
+  },
   // 积分目标。可配多个，按账户总积分余额判断，可选设置奖品与详情页显示。
   // 达成判定：当前余额 >= target；奖品数量按 floor(余额 / target) 计算。
   // ⚠️ 必须与 src/config.js 的 DEFAULTS.goals 对齐（含 items: []）。
