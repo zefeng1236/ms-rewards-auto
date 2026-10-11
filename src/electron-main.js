@@ -80,6 +80,41 @@ if (!IS_SMOKE) {
 }
 
 /**
+ * 判断一个 URL 是否属于「本应用自己的页面」。
+ *
+ * 供 will-navigate 拦截用：同源放行、外部拦下。
+ * 生产态是 file:// 加载 gui-react/index.html，开发态是 vite dev server（localhost:5173）。
+ * 两者之外的任何地址都算「外部」。
+ *
+ * ⚠️ 为什么必须用 `pathToFileURL` 而不是字符串拼前缀判断 file:// URL：
+ *   `file:///C:/app/x.html` 里路径分隔符是 `/`，而 Windows 实际路径是 `\`；
+ *   直接 prefixOf 会把 `file:///C:/app/other/` 这种**同目录下的别的文件**
+ *   判成同源而放行。
+ *
+ * @param {string} url
+ * @returns {boolean}
+ */
+function isAppOrigin(url) {
+  const raw = String(url || "");
+  if (!raw) return false;
+  // 开发态：vite dev server（含 HMR 重载）
+  if (raw.startsWith(DEV_SERVER)) return true;
+  try {
+    if (raw.startsWith("file://")) {
+      const u = new URL(raw);
+      const p = fs.realpathSync(fileURLToPath(u));
+      const idx = fs.realpathSync(path.join(__dirname, "..", "gui-react", "index.html"));
+      // 同目录下的 index.html 及其数据文件才算自家
+      return p === idx || p.startsWith(path.dirname(idx) + path.sep);
+    }
+  } catch {
+    // 文件不存在等解析失败 → 按「不是自家」处理，走拦截分支（保守）
+    return false;
+  }
+  return false;
+}
+
+/**
  * 校验渲染层传来的文件路径确实落在**更新目录**内。
  *
  * ⚠️ 背景（2026-10-11 安全中心）：
@@ -545,6 +580,12 @@ function createWindow(show = true) {
       preload: path.join(__dirname, "electron-preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
+      // 渲染进程沙箱。与上面的 app.enableSandbox() 是一回事的两个开关
+      // （进程级 + 窗口级），都写上：不依赖任何一方的默认值。
+      sandbox: true,
+      // 界面渲染的是本地资源与远程只读内容，不需要加载自己子资源的能力
+      // （禁掉能挡掉一部分 `<iframe>`/`<script>` 被注入后的本地探测）
+      webSecurity: true,
     },
   };
   // 显式给窗口/任务栏图标（signAndEditExecutable:false 时不能指望 exe 内嵌图标）
@@ -589,6 +630,47 @@ function createWindow(show = true) {
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:/.test(url)) shell.openExternal(url);
     return { action: "deny" };
+  });
+
+  /**
+   * 拦截主窗口的**原地导航**（2026-10-11 补）。
+   *
+   * ⚠️ 为什么必须拦：上面那个 setWindowOpenHandler 只管「开新窗口」，
+   *   也就是 `target="_blank"` / `window.open()`。而**不带 target 的普通跳转**
+   *   （`<a href="https://...">`、`<a href="evil.com">`、location.href=…）
+   *   走的是 will-navigate，事件不 preventDefault 就会**把主窗口本身换成那个页面**。
+   *
+   *   换掉了会怎样？preload 注入的 contextBridge 不会因为换页面而失效 ——
+   *   那个页面里的脚本照样能调 `window.api` 的 197 个方法（读账户配置、
+   *   改设置、触发任务、让本体执行更新安装包）。等于把整套能力交给外部站点。
+   *
+   *   当前实际触发面很窄（链接都有 target="_blank"，release-notes 的 href
+   *   只放行 http/https 且标记了 noreferrer），所以这不是「正在被利用的洞」，
+   *   而是**纵深防御**：以后任何一处新增的不带 target 的链接都会变成真实漏洞，
+   *   而且现场几乎不可能有人联想到这条链路。
+   *
+   * 同源导航放行 —— dev 模式的 HMR 重载、窗口自身的 file:// 页面都在同源内。
+   */
+  mainWindow.webContents.on("will-navigate", (event, url) => {
+    if (isAppOrigin(url)) return; // 自己家，放行
+    event.preventDefault();
+    // 外部地址交给系统浏览器；非 http(s)（file: / data: / 自定义协议）直接丢弃
+    if (/^https?:/i.test(url)) {
+      logger.info(`拦截主窗口原地导航，改用系统浏览器打开: ${url}`);
+      try {
+        shell.openExternal(url);
+      } catch { /* 系统没关联浏览器时静默失败即可，不打扰用户 */ }
+    } else {
+      logger.warn(`拦截主窗口导航到非 http(s) 地址: ${url}`);
+    }
+  });
+
+  // 同样处理 iframe 里的导航：子框架往外部走时不必拦，
+  // 但**顶层框架被换掉**是最要命的 —— will-navigate 已覆盖，这里只记一笔便于排查。
+  mainWindow.webContents.on("will-frame-navigate", (details) => {
+    if (details.isMainFrame && !isAppOrigin(details.url)) {
+      logger.warn(`主框架被导航到外部地址（应已被 will-navigate 拦下）: ${details.url}`);
+    }
   });
 
   // 打开 GUI 后按规则决定是否弹更新提示（见 maybePromptUpdate 注释）
@@ -2132,6 +2214,21 @@ function registerIpc() {
 
 /* ---------------- 生命周期 ---------------- */
 app.whenReady().then(() => {
+  // 渲染进程沙箱（2026-10-11 显式声明）。
+  //
+  // Electron 25 起渲染进程默认就是沙箱态，靠默认值能工作，但**默认值是隐式的**：
+  // 后人改 webPreferences 时顺手写个 `sandbox: false` 就会整个关掉，且没有任何迹象。
+  // 显式声明 + 守卫锁死（selfcheck 里有对应断言），让「关掉沙箱」变成一次显式动作。
+  //
+  // ⚠️ 必须在第一个 BrowserWindow 创建之前调用，否则对已创建的窗口无效。
+  //    这里是 whenReady 的第一行，比 registerIpc()（会创建窗口）更早。
+  try {
+    app.enableSandbox();
+  } catch (e) {
+    // 理论上不会失败；真失败也要继续启动，不能因为沙箱开不起来就不让用户用软件
+    console.error("enableSandbox 失败：", e && e.message ? e.message : e);
+  }
+
   // 彻底移除 File/Edit/View/Window/Help 菜单栏。
   // setMenuBarVisibility(false) 只是隐藏，Alt 键仍能唤出；
   // 把应用菜单整个置空才是真的没有。

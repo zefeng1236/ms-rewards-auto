@@ -3972,6 +3972,51 @@ const DOC_SECRET_PATTERNS = [
   }
 }
 
+// —— 渲染进程沙箱与导航边界（2026-10-11）——
+// 用户担心「软件被入侵后为所欲为」。这三条是这个方向的**兜底**：
+// Electron 25+ 默认就开沙箱，靠默认值能工作，但默认值是隐式的 ——
+// 后人改 webPreferences 时顺手写个 `sandbox: false` 就会整个关掉且毫无迹象。
+// 这里显式声明 + 静态锁死，让「关掉沙箱」变成一次必须绕过自检的显式动作。
+//
+// ⚠️ will-navigate 单独说：setWindowOpenHandler 只管「开新窗口」
+//    （target="_blank" / window.open），**不带 target 的普通跳转走的是 will-navigate**。
+//    不拦的话主窗口会被换成外部页面，而 preload 注入的 contextBridge
+//    不会因此失效 —— 那个页面的脚本照样能调 window.api 的全部方法。
+{
+  const mainCode2 = stripJsComments(
+    fs.readFileSync(path.join(ROOT, "src", "electron-main.js"), "utf8")
+  );
+  checkTrue(
+    "Electron 渲染进程沙箱显式开启（app.enableSandbox 在 whenReady 首行）",
+    /app\.whenReady\(\)\.then\(\(\)\s*=>\s*\{[\s\S]{0,600}?app\.enableSandbox\(\)/.test(mainCode2),
+    "enableSandbox 缺失或不在 whenReady 开头 → 退化成依赖默认值（后人可无声关掉）"
+  );
+  checkTrue(
+    "BrowserWindow 的 webPreferences 显式声明 sandbox:true",
+    /webPreferences\s*:\s*\{[^}]*sandbox\s*:\s*true/.test(mainCode2),
+    "webPreferences 里没有 sandbox:true → 窗口级沙箱开关缺失"
+  );
+  checkTrue(
+    "contextIsolation / nodeIntegration 仍保持安全值（不能被上面的加固顺带改坏）",
+    /contextIsolation\s*:\s*true/.test(mainCode2) && /nodeIntegration\s*:\s*false/.test(mainCode2),
+    "contextIsolation 或 nodeIntegration 被改了 → 界面能直接拿 Node 能力"
+  );
+  checkTrue(
+    "主窗口导航被拦截（will-navigate + 同源判定，非同源 preventDefault）",
+    /will-navigate/.test(mainCode2) &&
+      /function isAppOrigin\(/.test(mainCode2) &&
+      /isAppOrigin\(url\)\)\s*return;/.test(mainCode2) &&
+      /will-navigate[\s\S]{0,600}?event\.preventDefault\(\)/.test(mainCode2),
+    "will-navigate 或 isAppOrigin 缺失 → 主窗口可被换成外部页面并带走 window.api"
+  );
+  checkTrue(
+    "外链仍走系统浏览器（will-navigate 拦截不能把外链直接吞掉）",
+    /will-navigate[\s\S]{0,900}?shell\.openExternal\(/.test(mainCode2) &&
+      /setWindowOpenHandler/.test(mainCode2),
+    "拦了导航却没把外链交出去 → 用户点链接会毫无反应"
+  );
+}
+
 // —— 路径边界：三个真问题不许回退（2026-10-11 安全中心第一层）——
 // 这三个都是「外部可控 id/路径 → 落到磁盘操作」的通路，修掉之后
 // 一旦改回去不会有人立刻发现（功能测试照样过，因为没人传 ..），所以必须静态锁死。
