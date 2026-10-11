@@ -13,6 +13,7 @@
 const fs = require("fs");
 const path = require("path");
 const ts = require("typescript");
+const vm = require("vm");
 const { execFileSync } = require("child_process");
 
 /** 把一个 TS 文件就地转成 CJS 并 require（只做类型擦除，不做类型检查） */
@@ -144,6 +145,64 @@ function stripJsComments(src) {
  */
 function codeHas(src, re) {
   return re.test(stripJsComments(src));
+}
+
+/* ============ 0. 主进程 JS 语法解析（vm.Script）============ */
+console.log("\n【0】主进程 JS 语法解析（vm.Script）");
+//
+// 背景（2026-10-11 门禁失灵事故）：往 electron-main.js 插入代码时吞掉了注释块的
+// 开头 `/*`，留下一个孤立的 `*`，整个主进程无法被 Node 解析（node --check 直接挂）。
+// 而那次三道门禁全绿：tsc 只覆盖渲染层；selfcheck 对主进程 JS 只做正则读取、从不解析；
+// verify-pack 只管产物内容 —— 于是带崩溃缺陷的提交畅通无阻地进了版本库。
+//
+// 这个洞比单个 bug 更危险：任何主进程语法回归都能带着全绿溜进提交。
+// 补法：把每个运行时会被加载的 .js 交给 V8 编译一遍（只编译、不执行）。
+//
+// ⚠️ 为什么放在所有断言之前：语法过不了的话，后面任何一处 require 都可能把整个
+//    自检带崩（症状是「一个守卫都没输出」），失败信息会变得极难定位。
+//    先解析后断言，坏文件在第一屏就被点名。
+//    shebang（src/server.js 有）按 ES2023 hashbang 语法可直接解析，无需预处理。
+const walkJsRef = (dir, out = []) => {
+  let entries = [];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch (e) {
+    return out;
+  }
+  for (const e of entries) {
+    if (e.name === "node_modules" || e.name === "dist" || e.name.startsWith(".")) continue;
+    const abs = path.join(dir, e.name);
+    if (e.isDirectory()) walkJsRef(abs, out);
+    else if (e.name.endsWith(".js")) out.push(abs);
+  }
+  return out;
+};
+{
+  const files = walkJsRef(path.join(ROOT, "src"));
+  const relOf = (abs) => path.relative(ROOT, abs).split(path.sep).join("/");
+  const parseFailures = [];
+  for (const abs of files) {
+    try {
+      new vm.Script(fs.readFileSync(abs, "utf8"), { filename: abs });
+    } catch (e) {
+      parseFailures.push(`${relOf(abs)}: ${e && e.message ? e.message : String(e)}`);
+    }
+  }
+  checkTrue(
+    "主进程所有 .js 都能通过 V8 语法解析（语法错不许带着全绿溜进提交）",
+    parseFailures.length === 0,
+    `${parseFailures.length} 个文件解析失败：${parseFailures.slice(0, 5).join(" | ")}`
+  );
+  const relSet = new Set(files.map(relOf));
+  checkTrue(
+    "语法扫描非空转（数量下限 + 覆盖入口 / vault / cluster / dingtalk 子模块）",
+    files.length >= 55 &&
+      relSet.has("src/electron-main.js") &&
+      relSet.has("src/vault/crypto.js") &&
+      relSet.has("src/cluster-service.js") &&
+      relSet.has("src/dingtalk-stream.js"),
+    `只扫到 ${files.length} 个文件（当前应为 62 个），或关键文件缺失 → 收集逻辑可能失效`
+  );
 }
 
 /* ============ 1. 密码强度 ============ */
@@ -6007,22 +6066,8 @@ if (fs.existsSync(wfDirRef)) {
     }
   }
 }
-// 主进程源码：require 的相对文件（构建产物目录跳过，它们本就不需要入库）
-const walkJsRef = (dir, out = []) => {
-  let entries = [];
-  try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
-  } catch (e) {
-    return out;
-  }
-  for (const e of entries) {
-    if (e.name === "node_modules" || e.name === "dist" || e.name.startsWith(".")) continue;
-    const abs = path.join(dir, e.name);
-    if (e.isDirectory()) walkJsRef(abs, out);
-    else if (e.name.endsWith(".js")) out.push(abs);
-  }
-  return out;
-};
+// 主进程源码：require 的相对文件（walkJsRef 定义在【0】段共享；
+// 构建产物目录 node_modules / dist / 点目录已跳过，它们本就不需要入库）
 const srcDirRef = path.join(ROOT, "src");
 if (fs.existsSync(srcDirRef)) {
   for (const abs of walkJsRef(srcDirRef)) {
