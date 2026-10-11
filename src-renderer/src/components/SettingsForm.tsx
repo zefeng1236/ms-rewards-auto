@@ -449,6 +449,20 @@ export function SettingsForm({
             onChange={(v) => onChange({ notice: { dingdingKeyword: v } })}
           />
           <TextField
+            label="钉钉加签密钥"
+            hint="SEC 开头。关键词与加签可同时开，都填最稳；都留空则只靠 URL"
+            placeholder="SECxxxxxxxx"
+            value={value.notice?.dingdingSecret ?? ""}
+            onChange={(v) => onChange({ notice: { dingdingSecret: v } })}
+          />
+          <TextField
+            label="钉钉 @手机号"
+            hint="逗号/顿号/空格分隔，最多 20 个。留空不@人"
+            placeholder="如 13800138000,13900139000"
+            value={value.notice?.dingdingAtMobiles ?? ""}
+            onChange={(v) => onChange({ notice: { dingdingAtMobiles: v } })}
+          />
+          <TextField
             label="飞书 Webhook"
             placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/..."
             value={value.notice?.feishu ?? ""}

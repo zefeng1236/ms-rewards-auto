@@ -1,3 +1,5 @@
+const crypto = require("crypto");
+
 const logger = require("./logger");
 const hitokoto = require("./hitokoto");
 // 一言的「句子类型」0.14.14 起住在外观配置里（界面侧三件套都在 appearance），
@@ -130,6 +132,72 @@ function ensureKeyword(content, keyword) {
   return `${list[0]}\n\n${src}`;
 }
 
+/**
+ * 归一化「要@ 的手机号列表」。
+ *
+ * 用户在设置里可能写成：13800138000 / "13800138000,13900139000" /
+ * "13800138000、13900139000 13900139000" / 带@ 和空格。
+ * 钉钉的 at.atMobiles 只认**纯手机号**（不带@、不带分隔符），
+ * 所以这里统一洗一遍：去掉非数字和非加号、去掉前导@、按逗号/顿号/空格/换行切分。
+ *
+ * ⚠️ 过滤规则要保守：只保留数字与+号。手机号规则是 1 开头 11 位（国内）
+ *    或 +国家码 开头。这里**不做长度校验** —— 国际号码位数不齐，
+ *    写死了反而会把合法号码误杀；真写错时钉钉会忽略该@，不会报错。
+ *
+ * @param {string|string[]} raw
+ * @returns {string[]}
+ */
+function normalizeAtMobiles(raw) {
+  const src = Array.isArray(raw) ? raw.join(",") : String(raw == null ? "" : raw);
+  if (!src.trim()) return [];
+  return Array.from(
+    new Set(
+      src
+        .split(/[,，、;；\s]+/)
+        .map((s) => s.replace(/^@+/, "").replace(/[^\d+]/g, ""))
+        .filter(Boolean)
+    )
+  ).slice(0, 20); // 钉钉 atMobiles 上限 20，超了接口报错
+}
+
+/**
+ * 钉钉「加签」安全模式：往webhook URL 上拼 timestamp & sign两个参数。
+ *
+ * 官方算法（open.dingtalk.com/document/app/custom-robot-access）：
+ *   1. timestamp = 当前毫秒时间戳（与钉钉服务器时间相差不能超过 1 小时）
+ *   2. 把 `timestamp + "\n" + secret` 当作待签字符串
+ *   3. 用 secret 作密钥做 **HmacSHA256**
+ *   4. 结果 **Base64** 编码
+ *   5. Base64 结果再 **URL-encode**（这一步最常被漏，漏了签名就无效）
+ *   6. 拼成 &timestamp=<值>&sign=<值>
+ *
+ * ⚠️ 三种安全模式（关键词 / 加签 / IP 段）是**独立可选、可任意叠加**的：
+ *   - 关键词 = notice.dingdingKeyword
+ *   - 加签   = notice.dingdingSecret（填了才加签）
+ *   - 双重保险 = 两个都填（最常见也最稳，2026-10-11 用户定：支持同时开）
+ *   什么都没填 = 只要有 webhook 就能发（钉钉允许，但机器人安全性归零）
+ *
+ * @param {string} url 已normalize 过的完整 webhook URL
+ * @param {string} secret 加签密钥（SEC 开头的那个）
+ * @param {number} [now] 固定时间戳 —— 守卫测试要可复现，**别用真实 now**
+ * @returns {string} 拼好签名的 URL（secret 为空时原样返回）
+ */
+function appendDingtalkSign(url, secret, now) {
+  const sec = String(secret == null ? "" : secret).trim();
+  if (!sec || !url) return url;
+  // ⚠️ 拿不到密钥就不加签**并原样返回**：调用方会照发，钉钉按「未开加签」
+  //    或「加签错误」处理，errcode 会明确告诉我们是哪种（310000/310000签名不匹配），
+  //    比在这里静默抛错更有诊断价值。
+  const timestamp = Number.isFinite(now) ? now : Date.now();
+  const stringToSign = `${timestamp}\n${sec}`;
+  const sign = crypto
+    .createHmac("sha256", sec)
+    .update(stringToSign, "utf8")
+    .digest("base64");
+  // 用 & 连接而不是 ? —— URL 里已有 access_token= 参数
+  return `${url}&timestamp=${timestamp}&sign=${encodeURIComponent(sign)}`;
+}
+
 /** 统一构造各通道的请求参数，测试与正式推送共用，避免两套逻辑跑偏 */
 function buildRequests(notice, title, text) {
   // 标题**不再**拼进正文开头：markdown 版式把标题放进各平台的
@@ -169,14 +237,22 @@ function buildRequests(notice, title, text) {
     const mdText = md.buildMarkdown(title, content);
     // 关键词补在 markdown 化**之后**、发送之前，保证补进去的词也在正文里
     const ddText = ensureKeyword(mdText, notice.dingdingKeyword);
+    // 加签：把 timestamp & sign 拼到 URL（关键词/加签可同时生效）
+    const signedUrl = appendDingtalkSign(dingdingUrl, notice.dingdingSecret);
+    // @手机号：钉钉按手机号 @人，必须同时在正文里出现 @手机号 文本才真正高亮+提醒。
+    // 支持多个（逗号/顿号/空格分隔），全角 @ 也认（钉钉两种都生效）。
+    const atMobiles = normalizeAtMobiles(notice.dingdingAtMobiles);
+    const atText = atMobiles.length
+      ? `\n\n${atMobiles.map((m) => `@${m}`).join(" ")}`
+      : "";
     list.push({
       channel: "钉钉",
       platform: "dingding",
-      url: dingdingUrl,
+      url: signedUrl,
       init: {
         method: "POST",
         headers: { "Content-Type": "application/json; charset=UTF-8" },
-        body: JSON.stringify(md.dingdingBody(title, ddText)),
+        body: JSON.stringify(md.dingdingBody(title, ddText + atText, { atMobiles })),
       },
     });
   }
@@ -512,5 +588,7 @@ module.exports = {
   buildRequests,
   ensureKeyword,
   normalizeWebhook,
+  appendDingtalkSign,
+  normalizeAtMobiles,
   judgeBusinessOk,
 };

@@ -267,12 +267,15 @@ function buildMarkdown(title, body, opts = {}) {
  *   - 换行用 \n\n（官方：「换行 前后分别加2个空格」）
  *   - 关键词安全模式按**纯文本**匹配
  */
-function dingdingBody(title, text) {
+function dingdingBody(title, text, opts) {
+  const atMobiles = opts && Array.isArray(opts.atMobiles) ? opts.atMobiles : [];
+  const isAtAll = !!(opts && opts.isAtAll);
   return {
     msgtype: "markdown",
     markdown: { title: String(title || "").slice(0, 100), text },
-    // at 字段留空：本项目没有「@某人」需求，写死会误触发
-    at: { atMobiles: [], isAtAll: false },
+    // at 字段决定「谁收到 @提醒」；**正文里还得有 @手机号 文本**才真正高亮。
+    // 本项目默认不@ 人（写死会误触发），只有用户显式填了手机号才会带上。
+    at: { atMobiles, isAtAll },
   };
 }
 

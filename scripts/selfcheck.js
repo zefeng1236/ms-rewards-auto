@@ -4068,6 +4068,99 @@ const DOC_SECRET_PATTERNS = [
   );
 }
 
+// —— 钉钉加签认证不许失效（2026-10-11）——
+// 三种安全模式（关键词 / 加签 / IP 段）相互独立、可叠加，两个都填是最稳的。
+// 这里守两件最容易做错、且错了会**静默丢消息**的事：
+//   ① Base64 之后忘了 URL-encode → 钉钉判定签名不匹配，errcode 310000；
+//   ② 用 ? 而不是 & 拼参数 → access_token 后面的参数全丢。
+// 两者都是 HTTP 200 + 一个看不懂的 errcode，不加守卫根本发现不了。
+{
+  // ⚠️ 用 stripJsComments 剥掉注释再判：本段的注释里**大量引用了实现代码**
+  //    （`${timestamp}\n${sec}`、`&timestamp=`、`@${m}` 等）做对照说明，
+  //    直接在原文里判会把注释当代码 —— 已踩过多次（见 stripJsComments 的注释）。
+  const noticeSrc = stripJsComments(
+    fs.readFileSync(path.join(ROOT, "src", "notify.js"), "utf8")
+  );
+  // 只取两个函数之间的片段，避免全文件匹配到别处的同名字符串
+  // ⚠️ 必须用 new RegExp 而不是 /function xxx(/ 字面量：
+  //    正则字面量里紧跟 `function` 的标识符会被解析器当成函数声明开头，直接语法错。
+  const signFn = new RegExp("function appendDingtalkSign\\([\\s\\S]*?\\n\\}").exec(noticeSrc);
+  const atFn = new RegExp("function normalizeAtMobiles\\([\\s\\S]*?\\n\\}").exec(noticeSrc);
+  const ddBlock = new RegExp("const dingdingUrl = [\\s\\S]*?\\n  const feishuUrl").exec(noticeSrc);
+
+  checkTrue(
+    "钉钉加签用 HmacSHA256(secret, timestamp + \"\\n\" + secret)",
+    !!signFn &&
+      /createHmac\(\s*"sha256"\s*,\s*sec\s*\)/.test(signFn[0]) &&
+      /\$\{timestamp\}\\n\$\{sec\}/.test(signFn[0]),
+    "加签算法不是官方那套 → 钉钉返回 310000 签名不匹配，消息被静默丢弃"
+  );
+  checkTrue(
+    "加签结果做了 Base64 **且** URL-encode（漏一步签名就无效）",
+    !!signFn &&
+      /digest\(\s*"base64"\s*\)/.test(signFn[0]) &&
+      /encodeURIComponent\(\s*sign\s*\)/.test(signFn[0]),
+    "缺 Base64 或缺 encodeURIComponent → 钉钉永远判签名错误（errcode 310000）"
+  );
+  checkTrue(
+    "加签参数用 & 拼接（URL 里已有 access_token=，用 ? 会把 token 吃掉）",
+    !!signFn && /\$\{url\}&timestamp=/.test(signFn[0]),
+    "用了 ? → 签名参数挂在错误的分隔符上，钉钉收不到 access_token"
+  );
+  checkTrue(
+    "加签密钥为空时原样返回 URL（不静默造一个空签名）",
+    !!signFn && /if \(\s*!sec \|\| !url\s*\) return url;/.test(signFn[0]),
+    "没密钥也去签名 → URL 里多出无效 sign 段，钉钉可能直接拒收"
+  );
+  checkTrue(
+    "钉钉 @人走 at.atMobiles 且正文同步插入 @手机号（两者缺一不生效）",
+    /function dingdingBody\(title, text, opts\)/.test(
+      fs.readFileSync(path.join(ROOT, "src", "notify-markdown.js"), "utf8")
+    ) &&
+      !!ddBlock &&
+      // ⚠️ 锚定**拼接结果那行**，不要锚定 atMobiles.map 这个调用点：
+      //   把 map 的结果丢弃（或改成永远不用）时，map 还在、@文本却没了，
+      //   只查「map 有没有被调用」的守卫会假绿（反例实测踩到）。
+      /const atText = atMobiles\.length[\s\S]{0,120}?atMobiles\.map\(\s*\(m\)\s*=>\s*`@\$\{m\}`\s*\)/.test(
+        ddBlock[0]
+      ) &&
+      /dingdingBody\(title, ddText \+ atText, \{ atMobiles \}\)/.test(ddBlock[0]),
+    "只填 at 字段正文里没 @ 文本 → 钉钉不高亮也不提醒，等于没@"
+  );
+  checkTrue(
+    "关键词与加签可同时开（补关键词那段不被加签逻辑挤掉）",
+    !!ddBlock &&
+      /ensureKeyword\(\s*mdText\s*,\s*notice\.dingdingKeyword\s*\)/.test(ddBlock[0]) &&
+      /appendDingtalkSign\(\s*dingdingUrl\s*,\s*notice\.dingdingSecret\s*\)/.test(ddBlock[0]),
+    "两个安全模式互相覆盖 → 用户只能用一个"
+  );
+  checkTrue(
+    "@手机号做了归一化并限 20 个（钉钉 atMobiles 上限 20，超了接口报错）",
+    !!atFn && /\.slice\(\s*0\s*,\s*20\s*\)/.test(atFn[0]),
+    "没限上限 → 用户贴 25 个手机号时整条消息发送失败"
+  );
+  checkTrue(
+    "设置项 dingdingSecret / dingdingAtMobiles 四处对齐（否则旧配置缺字段）",
+    //四处：config.js DEFAULTS / global-config.js GLOBAL_DEFAULTS / types/index.ts / mock.ts
+    ["dingdingSecret", "dingdingAtMobiles"].every(
+      (f) =>
+        new RegExp(`${f}:\\s*""`).test(
+          fs.readFileSync(path.join(ROOT, "src", "config.js"), "utf8")
+        ) &&
+        new RegExp(`${f}:\\s*""`).test(
+          fs.readFileSync(path.join(ROOT, "src", "global-config.js"), "utf8")
+        ) &&
+        new RegExp(`${f}:\\s*string`).test(
+          fs.readFileSync(path.join(ROOT, "src-renderer", "src", "types", "index.ts"), "utf8")
+        ) &&
+        new RegExp(`${f}:\\s*""`).test(
+          fs.readFileSync(path.join(ROOT, "src-renderer", "src", "api", "mock.ts"), "utf8")
+        )
+    ),
+    "四处少一处 → 账户级/全局级配置不一致，旧配置加载时缺字段"
+  );
+}
+
 // —— 安全中心：审计与策略不许失效（2026-10-11 第二、三层）——
 // 这层的价值全在「出事之后还能查」。一旦某处为了顺手把审计调用删掉，
 // 现场没有任何报错，功能测试也照样过 —— 只有真出事才发现查不到东西。

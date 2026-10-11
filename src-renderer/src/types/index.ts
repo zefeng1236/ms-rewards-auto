@@ -152,6 +152,10 @@ export interface AppConfig {
     wework: string;
     dingding: string;
     dingdingKeyword: string;
+    /** 钉钉加签密钥（SEC 开头）；与关键词可同时开，留空则不加签 */
+    dingdingSecret: string;
+    /** 钉钉要 @ 的手机号（逗号/顿号/空格分隔，最多 20 个）；留空不@ 人 */
+    dingdingAtMobiles: string;
     feishu: string;
     pushme: string;
     bark: string;

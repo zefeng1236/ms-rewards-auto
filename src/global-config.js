@@ -76,6 +76,10 @@ const GLOBAL_DEFAULTS = {
     wework: "",
     dingding: "",
     dingdingKeyword: "",
+    // ⚠️ 必须与 config.js 的 DEFAULTS.notice 逐字段对齐（项目铁律）——
+    // 少一个字段会在「旧配置加载」时缺字段，深层 merge 补默认值。
+    dingdingSecret: "",
+    dingdingAtMobiles: "",
     feishu: "",
     pushme: "",
     bark: "",

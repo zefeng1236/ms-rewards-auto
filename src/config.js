@@ -95,6 +95,17 @@ const DEFAULTS = {
     wework: "",
     dingding: "",
     dingdingKeyword: "",
+    // 钉钉「加签」安全模式的密钥（SEC 开头那串），2026-10-11 用户定。
+    // 钉钉三种安全模式相互独立、可任意叠加：
+    //   关键词 = dingdingKeyword · 加签 = dingdingSecret（填了才签名）
+    // 两个都填 = 双重保险（推荐）。
+    // ⚠️ 留空 = 只靠 access_token，谁拿到 URL 都能发消息。
+    dingdingSecret: "",
+    // 钉钉要 @ 的手机号列表（逗号/顿号/空格分隔，最多 20 个）。
+    // 用途：@统计机器人让它把各客户端的完成情况回吐出来，
+    // 本客户端再定时把汇总发回同一个群（跨地点多账号时一眼看出谁没完成）。
+    // 留空 = 不@ 人（本项目默认，避免误触发）。
+    dingdingAtMobiles: "",
     feishu: "",
     pushme: "",
     bark: "",

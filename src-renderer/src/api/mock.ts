@@ -50,6 +50,8 @@ const DEFAULT_CONFIG: AppConfig = {
     wework: "",
     dingding: "",
     dingdingKeyword: "",
+    dingdingSecret: "",
+    dingdingAtMobiles: "",
     feishu: "",
     pushme: "",
     bark: "",
