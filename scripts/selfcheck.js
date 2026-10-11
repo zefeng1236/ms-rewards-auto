@@ -4010,10 +4010,17 @@ const DOC_SECRET_PATTERNS = [
       /audit\.procSpawn\(/.test(fpSrc),
     "wipe 或某个 spawn 漏了审计 → 最该被记录的操作反而查不到"
   );
+  // 判据要锚定**调用点**，不能只查 `isQuiet(target)` 这个字符串出现过。
+  // ⚠️ 反例实测：`isQuiet` 的**函数定义**本身就是 `function isQuiet(target)`，
+  //    文本与调用处一模一样 —— 只查「出现过」的话，把调用改成 `if(false)` 守卫照样全绿。
+  //    所以要剥出 fileDelete 的函数体，确认过滤真在里面被调用。
+  const fileDeleteBody = /function fileDelete\([\s\S]{0,600}?\n\}/.exec(auditCode);
   checkTrue(
     "审计过滤程序自管理目录（否则内核切换几百条会淹掉真记录）",
-    /QUIET_PREFIXES/.test(auditCode) && /isQuiet\(target\)/.test(auditCode),
-    "缺 QUIET_PREFIXES 过滤 → 日志被临时文件删除刷屏"
+    /QUIET_PREFIXES/.test(auditCode) &&
+      !!fileDeleteBody &&
+      /isQuiet\(target\)/.test(fileDeleteBody[0]),
+    "fileDelete 里没真正调用 isQuiet → 日志被临时文件删除刷屏"
   );
 
   checkTrue(
