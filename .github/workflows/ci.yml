@@ -133,6 +133,12 @@ jobs:
       # 复用 desktop 已打的包，不再重复 pack（省一次 5 分钟构建）。
       - name: 检出代码
         uses: actions/checkout@v4
+        with:
+          # ⚠️ 必须显式拉 tag：checkout 默认 --no-tags，本地看不到 vX.Y.Z，
+          # gh release create 就会按「tag 不存在」处理、把草稿建到
+          # untagged-<sha> 上（2026-10-12 v0.15.3 实测：CI 全绿，
+          # 草稿却挂在无 tag 的名字上，签名正文根本没进线上 Release）。
+          fetch-tags: true
 
       - name: 下载安装包
         uses: actions/download-artifact@v4
@@ -286,6 +292,17 @@ jobs:
           VER: ${{ steps.sha.outputs.ver }}
         shell: pwsh
         run: |
+          # ⚠️ 2026-10-12 事故复盘：维护者手动 `gh release create --latest`
+          # 抢先发布了**未签名**正文；之后本 job 的 create --draft **不报错**
+          # （GitHub 允许同一 tag 再挂一个草稿，实际建成了 untagged-<sha>
+          # 的孤儿草稿），下面的补挂分支根本不触发 → 线上一直挂着没签名的
+          # 版本，所有客户端验签失败拒绝更新，而 CI 全绿无人察觉。
+          # 对策：tag 上已有**已发布**的 Release 就直接失败，逼人工介入 ——
+          # 发布必须是「CI 建草稿 → 人核对 → 点 publish」这一条路。
+          $pubIsDraft = gh release view $env:TAG --json isDraft -q .isDraft 2>$null
+          if ($LASTEXITCODE -eq 0 -and "$pubIsDraft".ToLower() -eq "false") {
+            throw "tag $env:TAG 已有已发布的 Release —— 手动发布会绕过 Ed25519 签名（客户端会拒绝更新）。请先删除该 Release 再重跑本 job。"
+          }
           $assets = @("dist/$env:EXE_NAME")
           if ($env:BM_NAME) { $assets += "dist/$env:BM_NAME" }
           gh release create $env:TAG --draft --title "$env:VER" --notes-file $env:NOTES @assets
