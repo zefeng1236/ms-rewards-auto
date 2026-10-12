@@ -207,8 +207,15 @@ function createState(dir) {
   }
 
   function setTaskDone(task, dateNum) {
-    load();
-    cache.tasksDone[task] = dateNum;
+    // ⚠️ 只能用 get()，绝不能用 load()（2026-10-12 实测抓到的丢数据 bug）：
+    // load() 无条件重读磁盘覆盖内存 cache，会把调用方「先写内存字段、
+    // 再标记任务完成」的写入全部冲掉。tasks.js 里 10 处调用全是这个模式：
+    //   state.get().signPoint = 5;      ← 内存写入
+    //   state.setTaskDone("sign", …);   ← load() 把 signPoint 冲回磁盘旧值 -1
+    // 症状：签入推送显示「+5 分」（推送用局部变量 point），
+    // 而同轮汇总显示「已签入」（汇总读 state.get().signPoint = -1）。
+    // get() 只在 cache 为空时才 load，不会覆盖同进程内已写入的内存值。
+    get().tasksDone[task] = dateNum;
     save();
   }
 

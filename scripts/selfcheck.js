@@ -754,6 +754,45 @@ checkTrue("rewards 第三方不可用时回落 Bing", /async function bingRegion
 checkTrue("state 默认 tasksDone 含 daily", /tasksDone: \{ sign: 0, read: 0, daily: 0, promos: 0, search: 0 \}/.test(stateSrc));
 checkTrue("state 每日累计含 dailyPoint 且跨天清零", /dailyPoint: 0,/.test(stateSrc));
 
+// —— setTaskDone 不得 load() 重读（2026-10-12 用户实测抓到的丢数据 bug）——
+// 根因：load() 无条件重读磁盘覆盖内存 cache，tasks.js 里 10 处调用全是
+// 「先写内存字段（signPoint/readPoint/dailyPoint/promosPoint/searchPoint）
+//   → 再 setTaskDone」的顺序，load() 把这些字段全部冲回磁盘旧值。
+// 症状：签入推送显示「+5 分」（推送用局部变量 point），同轮汇总只写
+// 「已签入」（汇总读 state.get().signPoint = -1）——两套数据。
+// 行为守卫最硬：直接跑真实序列断言字段不丢。
+{
+  const tdDir = fs.mkdtempSync(path.join(os.tmpdir(), "msr-taskdone-"));
+  const stTd = createState(tdDir);
+  stTd.get().signPoint = 5;
+  stTd.setTaskDone("sign", stTd.getDateNum());
+  check("setTaskDone 后 signPoint 保持 5（不被 load 冲掉）", stTd.get().signPoint, 5);
+  stTd.get().readPoint = 30;
+  stTd.setTaskDone("read", stTd.getDateNum());
+  check("setTaskDone 后 readPoint 保持 30", stTd.get().readPoint, 30);
+  stTd.get().dailyPoint = 8;
+  stTd.setTaskDone("daily", stTd.getDateNum());
+  check("setTaskDone 后 dailyPoint 保持 8", stTd.get().dailyPoint, 8);
+  stTd.get().promosPoint = 40;
+  stTd.setTaskDone("promos", stTd.getDateNum());
+  check("setTaskDone 后 promosPoint 保持 40", stTd.get().promosPoint, 40);
+  stTd.get().searchPoint = 12;
+  stTd.setTaskDone("search", stTd.getDateNum());
+  check("setTaskDone 后 searchPoint 保持 12", stTd.get().searchPoint, 12);
+  fs.rmSync(tdDir, { recursive: true, force: true });
+}
+// 静态守卫：setTaskDone 函数体必须以 get() 写入，且不得有独立成行的 load() 调用。
+// ⚠️ 负向断言只匹配「独立成行的 load();」——函数体注释里提到 load() 不算，
+// 否则会被自己的注释打红（stripJsComments 之前的原文匹配同理）。
+const setTaskDoneBody = /function setTaskDone\(task, dateNum\) \{[\s\S]*?\n  \}/.exec(stateSrc);
+checkTrue(
+  "setTaskDone 只用 get() 不用 load()（load 会冲掉调用方刚写的内存字段）",
+  !!setTaskDoneBody &&
+    /get\(\)\.tasksDone\[task\] = dateNum/.test(setTaskDoneBody[0]) &&
+    !/^\s*load\(\);/m.test(setTaskDoneBody[0]),
+  "把 get() 改回 load() → 任务里先写的 signPoint 等字段全被冲掉，推送与汇总两套数据"
+);
+
 // —— 静态守卫：渲染层 ——
 checkTrue("设置页有「每日活动」开关", /key: "daily", label: "每日活动"/.test(formSrc));
 
