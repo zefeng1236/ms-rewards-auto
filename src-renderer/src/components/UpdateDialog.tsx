@@ -153,7 +153,7 @@ export function UpdateDialog({
   return createPortal(
     <dialog
       ref={dialogRef}
-      className="compat-modal upd-dialog"
+      className="compat-modal compat-modal--lg upd-dialog"
       aria-label="自动更新"
       onCancel={(e) => {
         e.preventDefault();

@@ -70,8 +70,8 @@ export function UpdatePromptDialog({
   const ready = payload.mode === "ready";
 
   return createPortal(
-    <dialog ref={ref} className="compat-modal" onCancel={dismiss} onClose={dismiss}>
-      {/* maxWidth 去掉：宽度由 .compat-modal-panel 的 width:100% 统一撑满 */}
+    <dialog ref={ref} className="compat-modal compat-modal--lg" onCancel={dismiss} onClose={dismiss}>
+      {/* 宽度走 .compat-modal--lg 定宽 780（与「自动更新」「更新日志」两个弹窗同宽） */}
       <div className="compat-modal-panel" style={{ padding: 20 }}>
         <div style={{ display: "flex", alignItems: "center", marginBottom: 10 }}>
           <div style={{ flex: 1, fontSize: 16, fontWeight: 600 }}>

@@ -375,15 +375,26 @@ body::before {
   backdrop-filter: blur(2px);
 }
 
+/* —— 弹窗宽度：两条**独立轨道**（2026-10-11 定，当天试错三版）——
+   ① 确认框类（Modal 组件，见 liquidGlassCompat 的 MODAL_WIDTH）：按 sm/md/lg
+      档位定死 —— 几行字的确认框撑到屏幕两端会空旷、找不到重点（用户 2026-10-10）。
+   ② 更新类三个大弹窗（自动更新 / 更新日志 / 启动更新提示）：挂 .compat-modal--lg
+      **定宽 780px**（= MODAL_WIDTH.lg，与「推送设置」弹窗同宽）。
+      三个坏状态挨个试过（用户 2026-10-11 两轮反馈）：
+        fit-content 随内容缩 → 「已是最新」被压成 ~238px 窄条（「为啥又给我改扁了」）；
+        撑满（width 用视口宽度）→ 又被打回「不要撑满屏幕」；所以定宽档位两头都不沾。
+   ⚠️ 必须双类名提特异性：兼容层 liquidGlassCompat.css 的
+      `.compat-modal{width:fit-content}` 加载顺序在后，单类名会被它压掉。
+   ⚠️ 780 必须与 liquidGlassCompat.tsx 的 MODAL_WIDTH.lg 一致 ——
+      selfcheck 守卫会跨文件对数值，只改一边会变红。 */
+.compat-modal.compat-modal--lg {
+  width: 780px;
+}
+
 /* 「自动更新」弹窗：头部标题+频道 pill，主体检查中/结果两态，
    底部「关闭 / 下载更新」。更新日志正文可上下滚动。
-   ⚠️ 2026-10-09 起**不再限制宽度**：改由 .compat-modal-panel 的 width:100%
-   统一撑满（用户要求「弹窗宽度跟随内容但撑满可用宽度」）。
-   原来的 `width: min(620px, …)` 有两个问题：
-     ① 内容少时卡片被压成窄条（用户实测「正在下载」状态只有 ~360px）；
-     ② 这条规则还会被 liquidGlassCompat.css 后加载覆盖掉，形同虚设。 */
+   宽度走 .compat-modal--lg（与「更新日志」弹窗同宽），本类只作组件标记。 */
 .upd-dialog {
-  /* 宽度由兼容层的 .compat-modal 统一给（calc(100vw - 32px)），此处不重复设 */
 }
 .upd-panel {
   display: flex;

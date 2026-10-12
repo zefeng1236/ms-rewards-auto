@@ -38,18 +38,21 @@ export function ReleaseNotesDialog({
   if (!open) return null;
 
   return createPortal(
-    <dialog ref={ref} className="compat-modal" onCancel={onClose} onClose={onClose}>
-      {/* maxWidth 去掉：宽度由 .compat-modal-panel 的 width:100% 统一撑满
-          （用户 2026-10-09 要求弹窗宽度一致，maxWidth 会把卡片卡在 680） */}
+    <dialog
+      ref={ref}
+      className="compat-modal compat-modal--lg"
+      onCancel={onClose}
+      onClose={onClose}
+    >
+      {/* 宽度走 .compat-modal--lg 定宽 780，与「自动更新」弹窗同宽
+          （用户 2026-10-11：既不要撑满屏幕，也不要被内容压成窄条）。
+          内联 maxWidth 依旧不允许出现 —— 会把卡片卡成比别的弹窗窄一截 */}
       <div className="compat-modal-panel" style={{ padding: 20 }}>
         <div style={{ display: "flex", alignItems: "center", marginBottom: 12, gap: 8 }}>
           <div style={{ flex: 1, fontSize: 16, fontWeight: 600 }}>
             更新日志
             {data?.version ? <span className="upd-notes-ver"> {data.version}</span> : null}
           </div>
-          <GlassButton variant="plain" controlSize="small" onClick={onClose}>
-            关闭
-          </GlassButton>
         </div>
 
         {!data ? (
@@ -73,6 +76,14 @@ export function ReleaseNotesDialog({
             </a>
           </div>
         ) : null}
+
+        {/* 按钮按用户 2026-10-11 要求从标题栏挪到窗口右下角：蓝底「知道了」。
+            Esc / onCancel 关闭逻辑保持不变 */}
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}>
+          <GlassButton variant="glassProminent" controlSize="small" onClick={onClose}>
+            知道了
+          </GlassButton>
+        </div>
       </div>
     </dialog>,
     document.body

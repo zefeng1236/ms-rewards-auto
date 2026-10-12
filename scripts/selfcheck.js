@@ -4763,12 +4763,14 @@ const DOC_SECRET_PATTERNS = [
   );
 }
 
-// —— 弹窗宽度按 size 档位**固定**（2026-10-10 用户改回）——
-// 来回改过两次，两边都有代价，判据要能同时挡住两种回退：
-//   ① fit-content（随内容伸缩）→ 内容少时被压成窄条（~360px 的「正在下载」）；
-//   ② 撑满（0.14.14 的做法，dialog 100vw + 面板 100%）
-//      → 不扁了但矫枉过正：几行字的确认框也从屏幕一头拉到另一头。
-// 现在：dialog 宽度由 JS 档位定死（sm/md/lg = 420/560/780），面板跟着填满 dialog。
+// —— 弹窗宽度：**两条独立轨道**（2026-10-11 定，当天试错三版）——
+//   ① 确认框类（Modal 组件，调用方传 size）：宽度按档位定死 sm/md/lg = 420/560/780。
+//      —— 2026-10-10 用户要求：几行字的确认框撑满会「空旷、找不到重点」。
+//   ② 更新类三个大弹窗（裸 <dialog>：自动更新 / 更新日志 / 启动更新提示）：
+//      挂 .compat-modal--lg **定宽 780px**（= MODAL_WIDTH.lg，与「推送设置」同宽）。
+//      —— 三个坏状态挨个试过：fit-content 随内容缩，「已是最新」被压成
+//         ~238px 窄条（用户 2026-10-11「为啥又给我改扁了」）；改成撑满视口
+//         又被「不要撑满屏幕」打回。定宽档位两头都不沾。
 //
 // ⚠️ 关键实现点是 `.compat-modal-panel{width:100%}`：父级 .compat-modal 是
 //    flex 居中容器，不显式写这一条面板仍按内容宽（第一版只改 .compat-modal 无效）。
@@ -4806,7 +4808,7 @@ const DOC_SECRET_PATTERNS = [
     "缺 width:fit-content → 万一内联 width 没生效，dialog 会按块级元素撑开"
   );
   checkTrue(
-    "各弹窗组件不再用 maxWidth 单独设宽度（宽度统一由档位给）",
+    "各弹窗组件不再用 maxWidth 单独设宽度（宽度统一由轨道给）",
     !/compat-modal-panel" style=\{\{ maxWidth/.test(
       fs.readFileSync(path.join(ROOT, "src-renderer", "src", "components", "UpdateDialog.tsx"), "utf8")
     ) &&
@@ -4815,6 +4817,51 @@ const DOC_SECRET_PATTERNS = [
           fs.readFileSync(path.join(ROOT, "src-renderer", "src", "components", "UpdatePromptDialog.tsx"), "utf8")
       ),
     "又出现 maxWidth 内联 → 该弹窗会比别的窄一截"
+  );
+
+  // —— 轨道②：更新类三弹窗定宽 780（2026-10-11 用户：不要撑满屏幕，也不要很扁）——
+  // ⚠️ 判据锚到 className 属性与 CSS 规则**本体**，别写「文件里出现
+  //    compat-modal--lg 字样」—— 注释里提到这个名字就会假绿
+  //    （本仓库踩过 MODAL_WIDTH 注释同名坑，见文件顶部的教训清单）。
+  const wideMembers = [
+    ["UpdateDialog.tsx", "自动更新"],
+    ["ReleaseNotesDialog.tsx", "更新日志"],
+    ["UpdatePromptDialog.tsx", "启动更新提示"],
+  ];
+  checkTrue(
+    "更新类三个弹窗都挂 compat-modal--lg（定宽档位，不撑满也不随内容缩）",
+    wideMembers.every(([f]) =>
+      /className="[^"]*\bcompat-modal--lg\b[^"]*"/.test(
+        fs.readFileSync(path.join(ROOT, "src-renderer", "src", "components", f), "utf8")
+      )
+    ),
+    "漏挂/被摘掉 → 该弹窗宽度掉回 fit-content，内容少时又被压成窄条（0.15.2 回归）"
+  );
+  // 跨文件数值契约：CSS 的 780 必须 = liquidGlassCompat.tsx 的 MODAL_WIDTH.lg
+  // （与上面那条 MODAL_WIDTH 引用守卫互补：那条管「档位还在」，这条管「两边同数」）
+  const lgNum = (/^\s*const\s+MODAL_WIDTH\s*=\s*\{[^}]*\blg:\s*(\d+)/m.exec(lgSrc) || [])[1];
+  const globalSrc = fs.readFileSync(
+    path.join(ROOT, "src-renderer", "src", "styles", "global.css"),
+    "utf8"
+  );
+  checkTrue(
+    "compat-modal--lg 定宽与 MODAL_WIDTH.lg 一致（且不许改成撑满视口）",
+    !!lgNum &&
+      new RegExp(`\\.compat-modal\\.compat-modal--lg\\s*\\{[^}]*?(?<![-a-z])width:\\s*${lgNum}px`).test(globalSrc) &&
+      !/\.compat-modal\.compat-modal--lg\s*\{[^}]*calc\(100vw/.test(globalSrc),
+    "两边档位对不上 / 又被改成撑满或 fit-content → 弹窗宽度回到两头挨骂的坏状态（2026-10-11）"
+  );
+  // ReleaseNotesDialog 底栏蓝按钮「知道了」（2026-10-11 用户指定版式）
+  const rnCode = fs.readFileSync(
+    path.join(ROOT, "src-renderer", "src", "components", "ReleaseNotesDialog.tsx"),
+    "utf8"
+  );
+  checkTrue(
+    "更新日志弹窗底栏右侧是蓝底「知道了」，标题栏不再有「关闭」按钮",
+    /<GlassButton\s+variant="glassProminent"[^>]*>\s*知道了\s*<\/GlassButton>/.test(rnCode) &&
+      /justifyContent:\s*"flex-end"/.test(rnCode) &&
+      !/<GlassButton[^>]*>\s*关闭\s*<\/GlassButton>/.test(rnCode),
+    "按钮被挪回标题栏 / 改回 plain 样式 → 版式回到用户打回前（2026-10-11）"
   );
 }
 
