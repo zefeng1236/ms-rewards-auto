@@ -207,7 +207,7 @@ body::before {
   height: 100%;
   display: block;
   pointer-events: none;
-  background: #120e18;
+  background: #07070c;
 }
 
 /* 流场衬底：比 shell-scrim 轻得多的暗化罩，压在不配合深色底的可读边界上，
@@ -218,6 +218,21 @@ body::before {
   z-index: 0;
   pointer-events: none;
   background: radial-gradient(ellipse 90% 80% at 50% 50%, rgb(18 14 24 / 0.12), rgb(10 8 14 / 0.42));
+}
+
+/* 流场暗角：参考稿 flow-field-art.html 自带的 vignette，压四角、焦点收回中心，
+   与 canvas 同层顺序（在其后绘制），同样不拦截交互 */
+.flow-vignette {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    115% 85% at 50% 46%,
+    rgba(0, 0, 0, 0) 52%,
+    rgba(4, 4, 10, 0.3) 76%,
+    rgba(4, 4, 10, 0.68) 100%
+  );
 }
 
 .bg-layer {

@@ -3096,8 +3096,11 @@ checkTrue(
     /Location: `https:\/\//.test(serverTlsSrc),
   "缺 net 分流 / 首字节判定 / 302 Location 任一环，http 访问会报 ERR_EMPTY_RESPONSE"
 );
-// 流场背景：登录页 / 向导 / 主界面三处 early-return 分支都要渲染背景层，
-// 漏一个就是"切了流场但登录页还是纯色"。
+// 流场背景组件（FlowFieldBg.tsx）：登录页/向导的 authBg=flow 装饰层。
+// 2026-10-13 视觉升级：参考稿 flow-field-art.html 的渲染（3D 时变 Perlin 噪声场 +
+// 日落八色 + 生命透明度三档 + lighter 合批描线 + 暗角层）并入本组件，
+// 指针尾流互动保留；参考稿的「种子重生成/保存 PNG/快捷键/信息面板」明确不要
+// （登录页要输主密码，快捷键会抢输入）。下方守卫钉住这两件事。
 const flowSrc = fs.readFileSync(
   path.join(ROOT, "src-renderer", "src", "components", "FlowFieldBg.tsx"),
   "utf8"
@@ -3158,6 +3161,35 @@ checkTrue(
     /label: "流场动态", value: "flow"/.test(persBgSrc) &&
     !/bgType: "flow"/.test(persBgSrc),
   "缺 AuthBackground 挂载 → 登录页纯色；App 出现 FlowFieldBg → 流场错误回到主界面"
+);
+// 2026-10-13：指针尾流是用户点名要保留的互动，三条守卫钉住它别被改丢、
+// 也别被参考稿的键盘快捷键污染（登录页输主密码时 R/S 会抢输入）。
+const flowCssSrc = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "styles", "global.css"),
+  "utf8"
+);
+checkTrue(
+  "流场保留指针尾流互动（pointermove/leave + 径向旋涡尾流三项力）",
+  /addEventListener\("pointermove"/.test(flowSrc) &&
+    /addEventListener\("pointerleave"/.test(flowSrc) &&
+    /POINTER_RADIUS/.test(flowSrc) &&
+    /WAKE_LENGTH/.test(flowSrc) &&
+    /pointerEnergy/.test(flowSrc),
+  "少了指针互动就退化成纯播片——用户明确要求保留这一项"
+);
+checkTrue(
+  "流场不挂键盘快捷键（登录页输主密码不能被 R/S 抢）",
+  !/addEventListener\("keydown"/.test(flowSrc) && !/onkeydown/i.test(flowSrc),
+  "挂了 keydown → 登录页输密码时按 R/S 触发背景互动；参考稿是独立艺术页没有这个约束，不能照搬"
+);
+checkTrue(
+  "流场新视觉骨架在（调色板 × 透明度档 + lighter 合批描线 + 时变噪声 + 暗角层不拦交互）",
+  /PALETTE/.test(flowSrc) &&
+    /TIERS/.test(flowSrc) &&
+    /globalCompositeOperation = "lighter"/.test(flowSrc) &&
+    /noise\.noise\(/.test(flowSrc) &&
+    /\.flow-vignette[\s\S]{0,260}pointer-events:\s*none/.test(flowCssSrc),
+  "任一缺失 → 退回旧视觉或暗角层开始拦点击，参考稿观感不成立"
 );
 
 // 0.13.3 登录页三件事：①忘记密码翻页（卡片内 3D 翻转，内容不溢出）；
