@@ -48,7 +48,13 @@ function norm(id, ip, countryCode, mainland, detail, extra) {
  *   - ipinfo   org          = "AS4134 CHINANET-BACKBONE"  ← 前面带 AS 号，要剥
  *   - 太平洋   addr         = "广东省深圳市 电信"          ← 混在地址里，要挑出来
  *   - ip-api   isp          = "China Telecom Jiangsu"
- * 统一成「人能认的短名」：剥 AS 号 / 去多余空格 / 截断过长值。
+ * 统一成「人能认的短名」：剥 AS 号 / 去多余空格。
+ *
+ * 「过长就截断」已在 2026-10-17 移除：拦截推送里 IP / 归属地 / 运营商**各占一行**
+ * （见 runner.pushRegionBlocked），运营商独享整行宽度，早先「与 geo 挤在同一行」
+ * 才需要的 28 字符额度已无意义 —— 旧上限会把 "Hytron Network Services Limited"
+ * 砍成 "Hytron Network Services Limi…"，运营商名显示不全。
+ * 这里**不再做长度截断**，完整交回调用方。
  *
  * @param {string} s
  * @returns {string} 取不到时返回空串（推送里会整段省略，不显示"未知"）
@@ -60,8 +66,7 @@ function normIsp(s) {
   v = v.replace(/^AS\d+\s+/i, "").trim();
   // 多值取第一个（有的服务返回 "Org (ASN)" 或 "A, B"）
   v = v.split(/[,(]/)[0].trim();
-  // 推送里这行不能太长（钉钉一行约 15 汉字）
-  return v.length > 28 ? v.slice(0, 28) + "…" : v;
+  return v;
 }
 
 /**

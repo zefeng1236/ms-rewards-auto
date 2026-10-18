@@ -5249,6 +5249,18 @@ checkTrue(
   "ISP 归一化：剥掉 AS 号前缀（ipinfo 的 org 形如 AS4134 xxx）",
   /v\.replace\(\/\^AS\\d\+\\s\+\/i, ""\)/.test(wmIpSrc)
 );
+// —— 运营商名不做长度截断（2026-10-17 用户报「运营商显示不全」）——
+//   旧实现在结尾有 `v.length > 28 ? v.slice(0, 28) + "…" : v`，把
+//   "Hytron Network Services Limited"(31 字符) 砍成 "…Services Limi…"。
+//   该上限源自「IP/归属地/运营商挤在同一行」的旧版式；2026-10-09 改版为
+//   各占一行后运营商独享整行宽度，截断已无必要 ⇒ 移除，并锁死不允许回退。
+checkTrue(
+  "ISP 归一化：不再按长度截断（运营商名要完整显示）",
+  ipLookup.normIsp("Hytron Network Services Limited") === "Hytron Network Services Limited" &&
+    // 反例：任何形式的长度截断都判失败
+    !/\.length\s*>\s*\d+\s*\?\s*v\.slice\(/.test(wmIpSrc) &&
+    !/v\.slice\(0,\s*\d+\)\s*\+\s*"…"/.test(wmIpSrc)
+);
 checkTrue(
   "ip-api 请求显式带 isp 字段（默认不返回，不写就拿不到）",
   /fields=status,message,countryCode,query,isp/.test(wmIpSrc)
