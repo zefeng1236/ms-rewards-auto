@@ -134,10 +134,19 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
         with:
-          # ⚠️ 必须显式拉 tag：checkout 默认 --no-tags，本地看不到 vX.Y.Z，
-          # gh release create 就会按「tag 不存在」处理、把草稿建到
-          # untagged-<sha> 上（2026-10-12 v0.15.3 实测：CI 全绿，
-          # 草稿却挂在无 tag 的名字上，签名正文根本没进线上 Release）。
+          # ⚠️ ref 与 fetch-tags 两个都得显式给，分别是 10-18 和 10-12 两次事故的教训：
+          #
+          # ① ref: ${{ github.ref }}（2026-10-18 v0.15.4 实测复现）——
+          #    tag 触发时 checkout 默认按 github.sha 生成 `+<sha>:refs/tags/vX.Y.Z`
+          #    refspec；fetch-tags 放开 tag 自动跟随后，同一个本地 tag ref 要被写
+          #    两次 → fatal: Cannot fetch both <sha> and refs/tags/vX.Y.Z to
+          #    refs/tags/vX.Y.Z（actions/checkout#1467，已知 bug，多个项目复现，
+          #    显式传 ref 可绕，issue 里 2025 年多个项目验证有效）。
+          # ② fetch-tags: true（2026-10-12 v0.15.3 实测）——
+          #    checkout 默认 --no-tags，本地看不到 vX.Y.Z，gh release create
+          #    就会按「tag 不存在」处理、把草稿建到 untagged-<sha> 上，
+          #    签名正文根本没进线上 Release。
+          ref: ${{ github.ref }}
           fetch-tags: true
 
       - name: 下载安装包
@@ -286,6 +295,9 @@ jobs:
           # tag 取自 GitHub 上下文而非用户输入，脚本里无字符串拼接进命令的注入面。
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ github.ref_name }}
+          # 显式指定 Release 的目标提交：即使本地 tag 状态异常，也保证草稿钉在
+          # 本 tag 实际指向的 commit 上，不会漂到默认分支 HEAD。
+          TARGET_SHA: ${{ github.sha }}
           NOTES: ${{ steps.sign.outputs.path }}
           EXE_NAME: ${{ steps.sha.outputs.exename }}
           BM_NAME: ${{ steps.sha.outputs.bmname }}
@@ -305,13 +317,20 @@ jobs:
           }
           $assets = @("dist/$env:EXE_NAME")
           if ($env:BM_NAME) { $assets += "dist/$env:BM_NAME" }
-          gh release create $env:TAG --draft --title "$env:VER" --notes-file $env:NOTES @assets
+          gh release create $env:TAG --draft --title "$env:VER" --notes-file $env:NOTES --target $env:TARGET_SHA @assets
           if ($LASTEXITCODE -ne 0) {
             Write-Output "自动创建失败（tag 可能已有 Release），改为补挂："
             gh release view $env:TAG *> $null
             if ($LASTEXITCODE -ne 0) { throw "tag $env:TAG 的 Release 不存在，且自动创建失败" }
             gh release edit $env:TAG --draft=true --title "$env:VER" --notes-file $env:NOTES
             gh release upload $env:TAG @assets --clobber
+          }
+          # 防「untagged-<sha>」静默复发（2026-10-12 v0.15.3 事故形态：CI 全绿，
+          # 草稿却没挂在 tag 上，签名正文进不了线上 Release，没人察觉）。
+          # 建完立即核对草稿的 tagName —— 对不上就炸，不让坏草稿活到人工发布那一步。
+          $draftTag = gh release view $env:TAG --json tagName -q .tagName 2>$null
+          if ($LASTEXITCODE -ne 0 -or "$draftTag" -ne "$env:TAG") {
+            throw "草稿 Release 的 tag 对不上（期望 $env:TAG，实际 '$draftTag'）—— 疑似又建成了 untagged 草稿，请人工检查 Releases 页"
           }
           Write-Output "草稿 Release 已就绪：$env:TAG —— 请核对字节数/SHA256 后点 publish"
 
