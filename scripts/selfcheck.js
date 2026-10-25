@@ -1302,6 +1302,45 @@ checkTrue(
   JSON.stringify(pkgRaw.build.files)
 );
 
+// 商标声明守卫（2026-10-25 用户纠正）：品牌脱敏「微软/Microsoft → MS」只准改产品自称，
+// 免责声明 / 用户条款里的真实商标名必须保留（Microsoft、Microsoft Corporation、Microsoft
+// Rewards），否则法律上站不住——「非MS官方授权产品」等于拿一个不存在的品牌做官方性声明。
+// 覆盖面：向导协议三件套（隐私政策/服务条款/免责声明）+ 向导声明页横幅 + About 法律段
+// + README 声明横幅 + EULA。产品自称（MS Rewards Auto 等）不受此守卫约束。
+const legalWizard = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "views", "SetupWizard.tsx"),
+  "utf8"
+);
+const legalAbout = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "views", "About.tsx"),
+  "utf8"
+);
+const legalReadme = fs.readFileSync(path.join(ROOT, "README.md"), "utf8");
+checkTrue(
+  "声明横幅写「非Microsoft官方授权产品」（向导声明页 / About / README）",
+  /本软件非Microsoft官方授权产品/.test(legalWizard) &&
+    /非Microsoft官方授权产品/.test(legalAbout) &&
+    /非 Microsoft 官方授权产品/.test(legalReadme)
+);
+checkTrue(
+  "用户条款三件套保留真实商标名（Microsoft Rewards 页面 / Microsoft 的官方服务 / Microsoft 服务协议）",
+  /访问 Microsoft Rewards 页面/.test(legalWizard) &&
+    /Microsoft Rewards 的页面结构/.test(legalWizard) &&
+    /Microsoft 的官方服务/.test(legalWizard) &&
+    /Microsoft Corporation/.test(legalWizard) &&
+    /遵守 Microsoft 服务协议/.test(legalWizard)
+);
+checkTrue(
+  "声明/条款文本无「非MS官方」类品牌替换残留",
+  !/非 ?MS ?官方/.test(legalWizard + legalAbout + legalReadme) &&
+    !/MS 的官方|MS 自身|MS 服务协议/.test(legalWizard + legalAbout + legalReadme)
+);
+checkTrue(
+  "EULA 保留 Microsoft Corporation / Microsoft Rewards 真实商标名",
+  /Microsoft Corporation/.test(fs.readFileSync(eulaPath, "utf8")) &&
+    /Microsoft Rewards/.test(fs.readFileSync(eulaPath, "utf8"))
+);
+
 /* ============ 16. 账户表控件同档 + 关于页 WorkBuddy 徽章 ============ */
 console.log("\n【16】账户表行内控件同档（32px）与 WorkBuddy 官方徽章");
 // 背景：上游把玻璃档 --lg-control-height 内联成 44px，会盖过库自己的 small=32px；

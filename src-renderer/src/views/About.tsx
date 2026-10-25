@@ -286,7 +286,7 @@ export function About() {
               <div className="about-ver">版本 v{appVersion} · MIT License</div>
               <div className="hint" style={{ marginTop: 6 }}>
                 Electron + Playwright 多账户自动任务工具。本软件为个人学习交流用途的开源项目，
-                <b>非MS官方授权产品</b>，与 Microsoft Corporation 无任何关联。
+                <b>非Microsoft官方授权产品</b>，与 Microsoft Corporation 无任何关联。
               </div>
             </div>
           </div>
