@@ -2,6 +2,39 @@
 
 本文件记录各版本的重要变更。版本格式为主版本.次版本.修订号，带 `-beta` 后缀的为测试版本。带「.N」四位小版本的为内部交付号（安装包文件名与 exe FileVersion 使用），主版本段仍为 0.9.4。
 
+## 0.15.5
+
+发布日期：2026-10-25 · Windows 安装包 `MS-Rewards-Auto-Setup-0.15.5.exe`
+
+一个法律文本修复版本：恢复声明与用户条款中的 Microsoft 真实商标名。
+
+### 一、修复：声明与用户条款误用脱敏商标名
+
+**现象**：初始化向导声明页显示「本软件非**MS**官方授权产品」。
+
+**根因**：此前做品牌脱敏（产品自称「微软/Microsoft」→「MS」）时，误伤了
+**免责声明、隐私政策、服务条款**里的真实商标名。这类法律文本中提及的权利主体
+必须使用真实商标（Microsoft、Microsoft Corporation、Microsoft Rewards），
+改成「MS」在法律上站不住。
+
+**修复**（规则：所有声明和用户条款里面不能改）：
+
+- 声明横幅恢复「本软件非 **Microsoft** 官方授权产品」（向导声明页 / 关于页 / README）；
+- 隐私政策恢复「代替您访问 **Microsoft Rewards** 页面完成签入」「本软件会访问
+  **Microsoft** 的官方服务……受 **Microsoft** 自身隐私政策约束」；
+- 服务条款恢复「**Microsoft Rewards** 的页面结构、接口与风控策略随时可能变化」；
+- 关于页 / README 的归属声明保持「与 **Microsoft Corporation** 无任何关联」；
+- 安装包 EULA（`build/license.txt`）本来就正确，未改动。
+
+**守卫**：selfcheck 新增 4 条断言锁死——声明横幅写法、用户条款三件套保留真实
+商标名、条款文本无「非MS官方」类替换残留、EULA 保留 Microsoft Corporation /
+Microsoft Rewards。已做反例验证（注入旧值 3 条精准变红）。
+
+### 二、口径不变
+
+产品自称仍统一用「MS」（MS Rewards Auto），品牌脱敏规则只作用于产品自称，
+不再触碰任何声明 / 免责 / 用户条款 / 商标归属文本。
+
 ## 0.15.4
 
 发布日期：2026-10-18 · Windows 安装包 `MS-Rewards-Auto-Setup-0.15.4.exe`
