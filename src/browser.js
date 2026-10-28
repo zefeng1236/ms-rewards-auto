@@ -103,7 +103,7 @@ function fingerprintCfg(ctx) {
   //
   // 放在这里而不是「应用启动时 set 一次」：这是**唯一保证 engine 与配置一致**的地方。
   // 少了这一行，用户在设置页选了 fp150，界面也变了，但 openContext 仍会用
-  // 模块里的默认 chromix —— 表现是「界面显示已切到 150，实际跑的还是 154」，
+  // 模块里的默认 chromix —— 表现是「界面显示已切到 150，实际跑的还是 155」，
   // 而这种错位最难自查（没有报错，只是结果不对）。
   // idempotent，重复调用无副作用。
   const engine = fpBrowser.normalizeEngine(fp.engine);
@@ -231,6 +231,11 @@ async function openContext(ctx, headless, opts) {
     // 自签 TLS（10 年期，SAN 只覆盖 localhost），不忽略会报 ERR_CERT_AUTHORITY_INVALID。
     // 桌面版不在本机起 TLS，此开关无副作用。
     ignoreHTTPSErrors: true,
+    // ⚠️ headful 必须是 null。Chromix 的 screen 几何跟随 Playwright 传给 renderer 的
+    // viewport（不是 X/显示器的真实尺寸）——给个固定 viewport 就等于把 screen 锁成那个值。
+    // 2026-10-28 容器实测：viewport:null → screen 1920×1080 / avail 1920×1032 / DPR 1（正确）；
+    // 不传（Playwright 默认 1280×720）→ screen 报 1280×720，且窗口比屏幕还大，自相矛盾。
+    // headless 没有真实显示器，固定 1366×768 反而合理。
     viewport: headless ? { width: 1366, height: 768 } : null,
     locale: "zh-CN",
     args: [
@@ -259,7 +264,12 @@ async function openContext(ctx, headless, opts) {
     if (launchOpts.args.includes("--disable-gpu")) {
       logger.warn("启动参数含 --disable-gpu：WebGL 将被禁用（环境一致性检测会判失败），建议移除");
     }
-    // 环境拟真浏览器：由种子统一生成 UA / userAgentData / Client Hints / 插件 / CPU / 内存
+    // 环境拟真浏览器：由种子统一生成 UA / userAgentData / Client Hints，
+    // 并注入固定的硬件默认值（CPU=8 / 内存=8GB / 屏幕 1920×1080 / 配额 100GB）。
+    //   ⚠️ 2026-10-27 实测（Chromix 155）：这几项是**固定默认值**，换种子不变；
+    //   Canvas 像素噪声、音频隔离、GPU 身份覆盖默认都**关闭**（上游 gpu-backend=native），
+    //   要覆盖必须显式加 --fingerprint-pixel-noise=seeded / --fingerprint-audio-render=isolated。
+    //   详见 .workbuddy/tmp/chromix155/指纹覆盖报告-155.md。
     launchOpts.args.push(
       ...fpBrowser.buildArgs({
         seed: fpSeed,

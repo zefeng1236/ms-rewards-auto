@@ -1,14 +1,14 @@
 /**
- * Chromix 154 vs fingerprint-chromium 150 —— 对项目实际访问的域做崩溃对照。
+ * Chromix 155 vs fingerprint-chromium 150 —— 对项目实际访问的域做崩溃对照。
  *
  * 背景：fp-chromium 150 有 issue #94（canvas 伪装 + getImageData/readPixels → SIGSEGV），
  *   实测 rewards.bing.com 首页在项目真实 flag（开 canvas 伪装）下必崩。
  *   fp-chromium 150 之后无新版本（150 就是 latest），issue 至今未修。
- *   Chromix 154 是另一个 fork（xiaozhou26/Chromix，216 patches），还在活跃更新。
+ *   Chromix 155 是另一个 fork（xiaozhou26/Chromix，231 patches），还在活跃更新。
  *
  * 本脚本对同一批域跑两轮：
  *   A: fingerprint-chromium 150 + fp flags（= 项目当前真实形态）
- *   B: Chromix 154 + 等价 flags（注意 flag 命名不同）
+ *   B: Chromix 155 + 等价 flags（注意 flag 命名不同）
  * 只读 DOM，绝不调 page.screenshot（避免 readPixels 干扰）。
  */
 
@@ -65,7 +65,7 @@ const CANDIDATES = [
     },
   },
   {
-    label: "Chromix 154（新）",
+    label: "Chromix 155（新）",
     exe: CHROMIX_EXE,
     // Chromix flag 命名：--fingerprint-timezone / --fingerprint-locale（不是 --timezone/--accept-lang）
     args: (seed) => [

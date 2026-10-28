@@ -70,6 +70,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     MS_REWARDS_FINGERPRINT_PREINSTALLED=/opt/fingerprint-chromium \
     # --disable-gpu-sandbox 是必需的：容器里 GPU 进程默认起不来，WebGL 会整个不可用
     # （GL_VENDOR = Disabled / BindToCurrentSequence failed）。⚠️ 不要用 --disable-gpu。
+    # 硬件 GL 的 --use-gl=angle,--use-angle=vulkan 不写在这里：entrypoint.sh 探测到
+    # /dev/dri 才追加（无条件加会在无 GPU 宿主上把 WebGL 彻底搞死，2026-10-27 实测）。
     MS_REWARDS_CHROMIUM_ARGS=--no-sandbox,--disable-dev-shm-usage,--disable-gpu-sandbox
 
 # 浏览器选型（2026-09 起 Docker 版改为「环境拟真浏览器独占」）：
@@ -137,6 +139,14 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         libbsd0 \
         libgbm1 \
         libgl1 \
+        # Vulkan 运行时 + Mesa 驱动（RADV / ANV / lavapipe）。
+        #   2026-10-27 实测：容器里有 /dev/dri 但没装 Vulkan ICD 时，ANGLE 只有内置
+        #   SwiftShader 可用 → WebGL 报 "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device
+        #   (Subzero)), SwiftShader driver)"，opengl=disabled_off，这是最顶级的软件渲染
+        #   机器人特征。装上这两个包后 RADV 才能被 ANGLE 发现（libvulkan1 提供 loader，
+        #   mesa-vulkan-drivers 提供 /usr/share/vulkan/icd.d/*.json）。
+        mesa-vulkan-drivers \
+        libvulkan1 \
         libpixman-1-0 \
         libxfont2 \
         libxshmfence1 \
@@ -216,7 +226,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 #   - 写 version.txt：让 src/fingerprint-browser.js 的 installedVersion() 能报出版本号
 #     （与桌面版运行时下载安装的产物同构，状态接口不用为 Docker 单独开分支）。
 #   - ldd 自检：缺运行库直接让构建失败，而不是等用户在容器里看到浏览器起不来。
-ARG FPCB_VERSION=154.0.8037.57
+ARG FPCB_VERSION=155.0.8059.79
 ARG FPCB_URL=https://github.com/xiaozhou26/Chromix/releases/download/v${FPCB_VERSION}/chromix-linux-x64.zip
 ARG FPCB_PROXY=https://gh-proxy.com/
 RUN set -eux; \

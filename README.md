@@ -25,7 +25,7 @@
 
 | | 特性 | 说明 |
 |---|---|---|
-| 🧬 | **环境拟真浏览器** | 双内核可自选（[Chromix 154](https://github.com/xiaozhou26/Chromix) / [fingerprint-chromium 150](https://github.com/adryfish/fingerprint-chromium)），见下方[专节](#-默认浏览器环境拟真浏览器) |
+| 🧬 | **环境拟真浏览器** | 双内核可自选（[Chromix 155](https://github.com/xiaozhou26/Chromix) / [fingerprint-chromium 150](https://github.com/adryfish/fingerprint-chromium)），见下方[专节](#-默认浏览器环境拟真浏览器) |
 | 👥 | **多账户隔离** | 每个账户独立的 `storage/accounts/<id>/` 目录（配置、登录态、Cookie、浏览器 profile），互不干扰 |
 | 🖥 | **液态玻璃 GUI** | React + TypeScript 重写的全新界面：毛玻璃质感、壁纸环境色自适应、主题色可换 |
 | 🧭 | **首次启动向导** | 欢迎（多语言）→ 协议 → 风险告知 → 个性化设置，四步完成初始配置 |
@@ -40,13 +40,13 @@
 
 ## 🧬 默认浏览器：环境拟真浏览器
 
-本软件默认使用 **[Chromix](https://github.com/xiaozhou26/Chromix)** —— 一个 216 个 patch 的指纹一致性 Chromium，当前钉定版本 **154.0.8037.57**。canvas / WebGL / 时区语言伪装完整，实测在登录与 Bing 目标域零崩溃。
+本软件默认使用 **[Chromix](https://github.com/xiaozhou26/Chromix)** —— 一个 231 个 patch 的指纹一致性 Chromium，当前钉定版本 **155.0.8059.79**。canvas / WebGL / 时区语言伪装完整，实测在登录与 Bing 目标域零崩溃。
 
 自 **0.14.6** 起支持**双内核并存**，可在「环境拟真浏览器」面板自选、分别安装与卸载：
 
 | 内核 | 版本 | 状态 | 说明 |
 |---|---|---|---|
-| **[Chromix](https://github.com/xiaozhou26/Chromix)** | 154.0.8037.57 | ✅ 默认可用 | 活跃维护，实测零崩溃 |
+| **[Chromix](https://github.com/xiaozhou26/Chromix)** | 155.0.8059.79 | ✅ 默认可用 | 活跃维护，实测零崩溃 |
 | **[fingerprint-chromium](https://github.com/adryfish/fingerprint-chromium)** | 150.0.7871.186 | ⚠️ 可见但暂不可选 | 由 [@adryfish](https://github.com/adryfish) 维护（基于 [Ungoogled Chromium](https://github.com/ungoogled-software/ungoogled-chromium)）。存在已知崩溃缺陷，见下 |
 
 > 💡 两个内核均由个人开发者无偿维护。如果它们对你有用，欢迎去点个 **Star** 支持上游：
@@ -201,7 +201,7 @@ GUI 运行期间由主进程守护（每 30 秒巡检）；Docker / 服务器场
 | 层 | 技术 |
 | --- | --- |
 | **桌面框架** | Electron 44 · electron-builder 26（NSIS 安装包） |
-| **浏览器引擎** | [Chromix](https://github.com/xiaozhou26/Chromix) 154（默认）· [fingerprint-chromium](https://github.com/adryfish/fingerprint-chromium) 150（备用，暂不可选）· playwright-core 1.45（普通 Chromium 回落） |
+| **浏览器引擎** | [Chromix](https://github.com/xiaozhou26/Chromix) 155（默认）· [fingerprint-chromium](https://github.com/adryfish/fingerprint-chromium) 150（备用，暂不可选）· playwright-core 1.45（普通 Chromium 回落） |
 | **渲染层** | React 19 + TypeScript 5.9 + Vite 8 |
 | **UI 组件** | [@ttqtt/liquid-glass-react](https://www.npmjs.com/package/@ttqtt/liquid-glass-react)（液态玻璃质感） |
 | **样式** | CSS 设计 token + `backdrop-filter` 毛玻璃 + 壁纸环境色自适应，固定深色主题 |

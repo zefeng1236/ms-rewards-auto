@@ -48,7 +48,7 @@ const CANDS = [
     args: [...fp_.buildArgs({ seed }), ...STEALTH],
   },
   {
-    label: "Chromix 154",
+    label: "Chromix 155",
     exe: CHROMIX_EXE,
     // Chromix flag 命名不同：--fingerprint-timezone / --fingerprint-locale
     args: [

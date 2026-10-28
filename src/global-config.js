@@ -111,7 +111,7 @@ const GLOBAL_DEFAULTS = {
     fingerprint: {
       enable: true,    // 启用环境拟真浏览器（未安装则自动回落普通 Chromium；默认开启，首次运行自动下载）
       // 环境拟真内核（2026-10-06 起两个内核并存，用户可自选）：
-      //   chromix = Chromix 154（默认，稳定）
+      //   chromix = Chromix 155（默认，稳定）
       //   fp150  = adryfish/fingerprint-chromium 150（备用，**当前不可选**：
       //             有 canvas 读像素崩溃缺陷，上游 issue #94 暂无补丁）
       // 保留 fp150 是为了等上游修好后能直接放开选择，不用重新写一遍适配。

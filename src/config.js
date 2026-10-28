@@ -141,7 +141,7 @@ const DEFAULTS = {
   browser: {
     fingerprint: {
       enable: true,    // 启用环境拟真浏览器（未安装则自动回落普通 Chromium；默认开启，首次运行自动下载）
-      // 环境拟真内核（2026-10-06）：chromix=Chromix 154（默认）/ fp150=旧内核（备用，当前不可选）
+      // 环境拟真内核（2026-10-06）：chromix=Chromix 155（默认）/ fp150=旧内核（备用，当前不可选）
       // 非法值回落 chromix；两个内核的差异全在 src/fingerprint-browser.js 的 ENGINES 里
       engine: "chromix",
       // 只保留单个内核（默认开）：切换内核时自动卸载上一个，省 ~500MB 磁盘

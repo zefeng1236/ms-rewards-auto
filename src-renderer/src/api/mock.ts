@@ -678,8 +678,8 @@ export function createMockApi(): ElectronApi {
       engines: [
         {
           key: "chromix",
-          label: "Chromix 154",
-          version: "154.0.8037.57",
+          label: "Chromix 155",
+          version: "155.0.8059.79",
           available: true,
           unavailableReason: "",
           notes: "默认内核。canvas / WebGL / 时区语言伪装完整，实测零崩溃。",

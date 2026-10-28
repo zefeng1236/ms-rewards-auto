@@ -84,4 +84,29 @@ if [ "${MS_REWARDS_ENABLE_NOVNC:-0}" = "1" ]; then
   export DISPLAY=:1
 fi
 
+# ---- 容器内硬件 GL：只有真把宿主 GPU 映射进来，才启用 ANGLE-Vulkan ----
+# 为什么是「探测后再加」而不是直接写进 compose 默认值：
+#   2026-10-27 实测（NAS 上同一镜像，两个场景对照）
+#     有 /dev/dri + mesa-vulkan-drivers + --use-gl=angle --use-angle=vulkan
+#        → ANGLE (AMD, Vulkan 1.3.230 (AMD Radeon Graphics (RADV RENOIR)), radv)
+#          opengl=enabled_on / gpu_compositing=enabled  ← 真 GPU
+#     无 /dev/dri  + 同样装好驱动 + 同样两个参数
+#        → getContext('webgl') 返回 null，WebGL **完全不可用**
+#          （ANGLE 的 Vulkan 路径不接 lavapipe 软件 ICD）
+#   而「桌面浏览器没有 WebGL」是比软件渲染更强的机器人特征 —— 所以无 GPU 时必须
+#   保持默认后端（退到 SwiftShader，至少 WebGL 还在）。
+# 关掉探测（想强制用软件后端）：MS_REWARDS_GPU_VULKAN=0
+if [ "${MS_REWARDS_GPU_VULKAN:-auto}" != "0" ] && ls /dev/dri/renderD* >/dev/null 2>&1; then
+  if printf '%s' "${MS_REWARDS_CHROMIUM_ARGS:-}" | grep -q -- "--use-angle=vulkan"; then
+    echo "[entrypoint] /dev/dri 存在，已由环境变量指定 ANGLE-Vulkan"
+  else
+    MS_REWARDS_CHROMIUM_ARGS="${MS_REWARDS_CHROMIUM_ARGS:-}"
+    MS_REWARDS_CHROMIUM_ARGS="${MS_REWARDS_CHROMIUM_ARGS:+$MS_REWARDS_CHROMIUM_ARGS,}--use-gl=angle,--use-angle=vulkan"
+    export MS_REWARDS_CHROMIUM_ARGS
+    echo "[entrypoint] 检测到 /dev/dri → 启用 ANGLE-Vulkan 硬件渲染"
+  fi
+else
+  echo "[entrypoint] 未检测到 /dev/dri → 保持默认 GL 后端（WebGL 仍可用）"
+fi
+
 exec gosu node "$@"

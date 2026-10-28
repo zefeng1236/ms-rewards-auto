@@ -154,7 +154,7 @@ docker exec ms-rewards-watchtower /watchtower --run-once
 ```
 
 **锁定版本（关闭自动更新）**：把 `docker-compose.yml` 里 `ms-rewards` 的
-`image: ...:latest` 改成具体版本号（如 `:0.15.5`），并删掉下方 `watchtower` 服务。
+`image: ...:latest` 改成具体版本号（如 `:0.15.6`），并删掉下方 `watchtower` 服务。
 
 **本地改源码重新构建**：前端产物在镜像内构建，改了 `src-renderer/` 后重新执行一次
 `up -d --build` 即可。想在宿主机单独出产物（例如排查构建问题）：
@@ -195,3 +195,39 @@ npm run build:web:docker     # 产物输出到 src/web/dist
 - 走 gh-proxy 镜像链 + 断点续传 + 失败自动换源，下完做 sha256 完整性校验；
 - 全局配置 `browser.fingerprint.enable` 默认为 `true`，但**没装好时是静默回落**到第 3 档兜底 Chromium，
   只在日志里留一条 warn —— 所以不装也能正常跑任务，装了才生效。
+
+## 十、容器内硬件 GL（让 WebGL 报真显卡，而不是 SwiftShader）
+
+**为什么在意**：WebGL 的 `UNMASKED_RENDERER_WEBGL` 报
+`ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero)), SwiftShader driver)`
+就是明写的「软件渲染」——比字体、canvas 那些细节更早被判定成非真人环境。
+
+**默认行为（没映射 GPU 的宿主）**：容器里 GPU 进程虽然起来了，但没有 Vulkan 驱动可用，
+ANGLE 只能退到内置 SwiftShader。WebGL **可用**（这点很重要，见下面第 3 条），但渲染器是软件的。
+
+**开启硬件渲染**：compose 里取消注释 `devices: - /dev/dri:/dev/dri` 即可，**不需要再加任何启动参数**。
+镜像内已装 `libvulkan1` + `mesa-vulkan-drivers`（RADV / ANV / lavapipe），`entrypoint.sh` 启动时
+探测到 `/dev/dri/renderD*` 会**自动**给 Chromium 追加 `--use-gl=angle,--use-angle=vulkan`，
+日志里会打印 `[entrypoint] 检测到 /dev/dri → 启用 ANGLE-Vulkan 硬件渲染`。
+
+实测对照（AMD 核显，NAS 上同一镜像）：
+
+| 场景 | WebGL 渲染器 | GPU 状态 |
+|---|---|---|
+| 有 `/dev/dri` + 自动追加参数 | `ANGLE (AMD, Vulkan 1.3.230 (AMD Radeon Graphics (RADV RENOIR)), radv)`，maxTex 16384 | `opengl: enabled_on`、`gpu_compositing: enabled` |
+| 有 `/dev/dri` + 没装 Vulkan 驱动 | `ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero)), SwiftShader driver)`，maxTex 8192 | `opengl: disabled_off` |
+| **无 `/dev/dri` + 手工加了 `--use-angle=vulkan`** | **WebGL 直接不可用**（`getContext('webgl') === null`） | GPU 进程空转 |
+
+由此有三条硬规则（`scripts/selfcheck.js` 已加守卫锁死）：
+
+1. **不要把 `--use-angle=vulkan` 写进 `MS_REWARDS_CHROMIUM_ARGS` 的默认值**。compose 里
+   `devices` 默认是注释状态，绝大多数宿主没有 `/dev/dri`，写死等于把 WebGL 干掉。
+   这个参数只能由 entrypoint 按设备探测追加（它还会做去重，你手写了就不会重复加）。
+2. **不要从 Dockerfile 的 apt 清单里删 `libvulkan1` / `mesa-vulkan-drivers`**。
+   删了以后 ANGLE 只剩 SwiftShader，`/dev/dri` 映射了也白搭。
+3. **不要用 `--disable-gpu` 去「解决」GPU 报错**。那会让 WebGL 永久不可用，比软件渲染糟糕得多。
+
+想强制回到软件后端（例如 Vulkan 在某个核显上不稳）：设 `MS_REWARDS_GPU_VULKAN=0`。
+
+**怎么确认生效**：任务跑起来后看「环境一致性自检」页的 WebGL Vendor / Renderer 两项，
+或者 `docker logs ms-rewards | grep entrypoint` 看有没有那行提示。

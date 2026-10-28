@@ -15,7 +15,7 @@ type FpCfg = AppConfig["browser"]["fingerprint"];
 // ⚠️ mirror / engine 默认值必须与 src/config.js / src/global-config.js 一致（selfcheck 有跨文件守卫）
 const FALLBACK: FpCfg = {
   enable: false,
-  // 与 GLOBAL_DEFAULTS 一致：默认内核是 Chromix 154（fp150 备用，当前不可选）
+  // 与 GLOBAL_DEFAULTS 一致：默认内核是 Chromix 155（fp150 备用，当前不可选）
   engine: "chromix",
   // 默认只留一个内核（切换时自动卸载旧的）
   singleEngineOnly: true,
@@ -242,8 +242,8 @@ export function FingerprintBrowserPanel() {
       : [
           {
             key: "chromix",
-            label: "Chromix 154",
-            version: st?.pinned || "154.0.8037.57",
+            label: "Chromix 155",
+            version: st?.pinned || "155.0.8059.79",
             available: true,
             unavailableReason: "",
             notes: "",
@@ -351,7 +351,7 @@ export function FingerprintBrowserPanel() {
                               : "未安装，切换时会自动下载"}
                         </div>
                         <div className="theme-card-desc" style={{ marginTop: 2, opacity: 0.75 }}>
-                          {e.notes || (e.key === "chromix" ? "216 个 patch 的指纹一致性 Chromium" : "")}
+                          {e.notes || (e.key === "chromix" ? "231 个 patch 的指纹一致性 Chromium" : "")}
                         </div>
                       </button>
                     );
@@ -432,7 +432,7 @@ export function FingerprintBrowserPanel() {
             {pickedBlocked && (
               <div className="hint fp-note" style={{ marginTop: 4, color: "var(--warn, #d97706)" }}>
                 你选择的 {pickedEngine?.label} 当前不可用，本轮会回落到默认内核（
-                {engineOpts.find((e) => e.default)?.label || "Chromix 154"}）。请改选其他内核。
+                {engineOpts.find((e) => e.default)?.label || "Chromix 155"}）。请改选其他内核。
               </div>
             )}
 

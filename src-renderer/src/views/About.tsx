@@ -80,7 +80,7 @@ const DIRECT_DEPS: { name: string; version: string; license: string; desc: strin
     // 版本号必须与 src/fingerprint-browser.js 的 ENGINES 一致（selfcheck 有守卫），
     // 别写旧版本 —— 用户按这里的号去核对下载到的是不是同一个。
     name: "Chromix（fingerprint-chromium）",
-    version: "154.0.8037.57",
+    version: "155.0.8059.79",
     license: "BSD-3-Clause",
     desc: "环境拟真增强浏览器内核 · 默认（基于 Ungoogled Chromium），运行时按需下载",
     url: "https://github.com/xiaozhou26/Chromix",

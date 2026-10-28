@@ -1,5 +1,5 @@
 /**
- * dpr 残值的对照实验：Chromix 154（本项目用的）vs 本机正常 Edge。
+ * dpr 残值的对照实验：Chromix 155（本项目用的）vs 本机正常 Edge。
  *
  * 上一轮发现 window.devicePixelRatio === 1.0000000149011612（= 1 + 2^-26），
  * 在「项目真实参数」下依然复现，且与窗口尺寸无关。
@@ -59,7 +59,7 @@ async function probe(label, opts) {
   const tmpB = fs.mkdtempSync(path.join(os.tmpdir(), "msr-dpr-b-"));
 
   // 实验组：本项目的环境拟真浏览器
-  const chromix = await probe("实验组 Chromix 154（项目实际使用）", {
+  const chromix = await probe("实验组 Chromix 155（项目实际使用）", {
     userDataDir: tmpA,
     launch: {
       executablePath: fp.executablePath(),

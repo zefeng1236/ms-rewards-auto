@@ -61,13 +61,19 @@ const fastHosts = require("./fast-hosts");
  */
 const ENGINES = {
   /**
-   * Chromix 154 —— 默认内核。216 patches，活跃维护，实测三个目标域零崩溃。
+   * Chromix 155 —— 默认内核。231 patches，活跃维护，实测三个目标域零崩溃。
+   *
+   * 2026-10-27 从 154.0.8037.57 升级到 155.0.8059.79（上游 tag v155.0.8059.79）：
+   * 上游本版修了「启动时区同步」「不透明 PNG 导出」「WebString::FromUtf8」三处，
+   * 资产名（chromix-{win,linux}-x64.zip）与 tag 的 v 前缀均未变，flag 无破坏性变更。
+   * ⚠️ 上游自评 `full_acceptance=false`（指纹覆盖仍有缺项）——升级后必须按
+   *    MEMORY-验证与纪律.md 的「对照组 / 实验组」实测，不能只凭构建门禁 green 下结论。
    */
   chromix: {
     key: "chromix",
-    label: "Chromix 154",
+    label: "Chromix 155",
     repo: "xiaozhou26/Chromix",
-    version: "154.0.8037.57",
+    version: "155.0.8059.79",
     available: true,
     // Chromix 的 tag 带 v 前缀，且资产名**不含**版本号
     tag: (v) => `v${v}`,
@@ -388,7 +394,7 @@ function platformName() {
  * macOS 包未签名未 notarize，本项目暂不支持（Chromix 上游有提供）。
  *
  * 资产名与上游 release 一一对应（用 gh api 核对，别照抄旧项目的命名）：
- *   v154.0.8037.57 → chromix-win-x64.zip / chromix-linux-x64.zip
+ *   v155.0.8059.79 → chromix-win-x64.zip / chromix-linux-x64.zip
  * 同一 tag 下不同平台可能对应不同源码 SHA 与构建任务，这是上游的既定做法。
  * @returns {string|null} null 表示该平台不提供
  */
@@ -2282,7 +2288,7 @@ async function checkUpdate() {
 /* ---------------- 启动参数 ---------------- */
 
 /**
- * 环境拟真浏览器的启动参数（Chromix 154）。
+ * 环境拟真浏览器的启动参数（Chromix 155）。
  *
  * 注意**不要**在这里设 UA：UA 必须由 --fingerprint 的种子统一生成，
  * 再叠加一层我们自己的 UA 就会退化成「应用层硬改」那条死路（CH 对不上）。

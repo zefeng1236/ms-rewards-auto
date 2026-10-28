@@ -2915,6 +2915,33 @@ checkTrue(
 const novncSrc = fs.readFileSync(path.join(ROOT, "docker", "novnc-stack.sh"), "utf8");
 const entrySrc = fs.readFileSync(path.join(ROOT, "docker", "entrypoint.sh"), "utf8");
 const kasmYamlSrc = fs.readFileSync(path.join(ROOT, "docker", "kasmvnc.yaml"), "utf8");
+/**
+ * 容器内硬件 GL（2026-10-27 实测落地）：三个条件缺一不可
+ *   ① 镜像装 libvulkan1 + mesa-vulkan-drivers  → ANGLE 才看得见 RADV/ANV
+ *   ② entrypoint 探测到 /dev/dri 才追加 --use-gl=angle,--use-angle=vulkan
+ *   ③ 这两个参数**不能**写进默认 ENV —— 无 /dev/dri 时（哪怕驱动装好了、lavapipe
+ *      软件 ICD 也在）实测 WebGL 直接不可用（getContext('webgl') === null），
+ *      而「桌面浏览器没有 WebGL」是比软件渲染更强的机器人特征。
+ */
+checkTrue(
+  "Dockerfile 装 Vulkan 运行时 + Mesa 驱动（否则 ANGLE 只有 SwiftShader 软件渲染）",
+  /^\s*mesa-vulkan-drivers\s*\\/m.test(dockerfileSrc) && /^\s*libvulkan1\s*\\/m.test(dockerfileSrc),
+  "缺这两个包 → 容器里 WebGL 报 'ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero)), SwiftShader driver)' + opengl=disabled_off，典型的软件渲染机器人特征"
+);
+checkTrue(
+  "entrypoint 按 /dev/dri 探测后才追加 ANGLE-Vulkan 参数（无 GPU 宿主不能加）",
+  /\/dev\/dri\/renderD\*/.test(entrySrc) &&
+    /--use-gl=angle/.test(entrySrc) &&
+    /--use-angle=vulkan/.test(entrySrc) &&
+    /MS_REWARDS_GPU_VULKAN/.test(entrySrc),
+  "删掉探测/参数 → 有 GPU 的宿主退回 SwiftShader；无条件加 → 无 GPU 的宿主 WebGL 全死（2026-10-27 两场景实测）"
+);
+checkTrue(
+  "Docker 默认 Chromium 参数不含 --use-angle=vulkan（只能由 entrypoint 按设备探测追加）",
+  !/--use-angle=vulkan/.test(dfArgs) && !/--use-angle=vulkan/.test(cpArgs),
+  `默认值里写死 → 没映射 /dev/dri 的宿主（compose 里 devices 默认是注释状态）WebGL 直接不可用（Dockerfile="${dfArgs}" / compose="${cpArgs}"）`
+);
+
 checkTrue(
   "镜像装 KasmVNC（deb 下载、关键依赖和 Xkasmvnc 可执行）",
   /Xkasmvnc/.test(dockerfileSrc) &&
@@ -6387,14 +6414,15 @@ checkTrue(
  * ============================================================ */
 console.log("\n【R】0.14.0 新功能（内核升级 + 后台 staging + 停止立即生效 + Bing 引导）");
 
-// 内核版本：2026-10-05 从 adryfish/fingerprint-chromium 150 换成 xiaozhou26/Chromix 154。
+// 内核版本：2026-10-05 从 adryfish/fingerprint-chromium 150 换成 xiaozhou26/Chromix 154，
+// 2026-10-27 再升到 Chromix 155.0.8059.79（上游修了启动时区同步 / PNG 导出 / FromUtf8）。
 // 守卫改成「断言具体版本」而不是「断言等于某个可变量」——升级时故意让它变红，
 // 逼着同步 Dockerfile / THIRD_PARTY_NOTICES / UI 文案（这四处漂移会 404 或误导用户）。
 // 2026-10-06 起是两个内核并存（用户要求保留 fp150 备用，等上游修 bug 后开放自选）。
 const fpSrcR = fpbSrc; // 同一份源码，前面 2426 行已读
 checkTrue(
-  "默认内核为 Chromix 154.0.8037.57（2026-10-05 从 fp-chromium 150 换，理由见 fingerprint-browser.js 注释）",
-  /version:\s*"154\.0\.8037\.57"/.test(fpSrcR) &&
+  "默认内核为 Chromix 155.0.8059.79（2026-10-05 从 fp-chromium 150 换、10-27 升 155，理由见 fingerprint-browser.js 注释）",
+  /version:\s*"155\.0\.8059\.79"/.test(fpSrcR) &&
     /repo:\s*"xiaozhou26\/Chromix"/.test(fpSrcR) &&
     /const DEFAULT_ENGINE = "chromix"/.test(fpSrcR),
   fpSrcR.match(/chromix:\s*\{[\s\S]{0,400}?version:\s*"([^"]+)"/)?.[1] || "(未匹配)"

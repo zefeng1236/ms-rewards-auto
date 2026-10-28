@@ -22,7 +22,7 @@
 #
 # 自动更新：compose 已内置 Watchtower，会定期检查并拉取 latest 镜像自动重启升级，
 #   无需手动操作。想锁定某个版本（关闭自动更新）时，把 image: 的 latest 改成具体
-#   版本号（如 0.15.5），并删掉下方 watchtower 服务即可。
+#   版本号（如 0.15.6），并删掉下方 watchtower 服务即可。
 # ===========================================================================
 
 services:
@@ -40,7 +40,7 @@ services:
     # 镜像名与 Dockerfile 里预装的内容一一对应：
     #   - 直接拉取（推荐，无需源码）：docker compose pull && docker compose up -d
     #   - 本地构建：docker compose up -d --build
-    # 用 latest 让 Watchtower 能自动升级；锁定版本改成具体 tag（如 0.15.5）。
+    # 用 latest 让 Watchtower 能自动升级；锁定版本改成具体 tag（如 0.15.6）。
     # ghcr 国内加速：把下面的镜像地址换成 ghcr.1ms.run/zefeng1236/ms-rewards-auto:latest
     image: ghcr.io/zefeng1236/ms-rewards-auto:latest
     container_name: ms-rewards
@@ -76,6 +76,10 @@ services:
       # --disable-gpu-sandbox 是必需的：容器里 GPU 进程默认起不来，WebGL 会整个不可用
       # （GL_VENDOR = Disabled / BindToCurrentSequence failed），而"桌面浏览器没有 WebGL"
       # 是最顶级的机器人特征。⚠️ 千万不要换成 --disable-gpu，那会让 WebGL 永久不可用。
+      # 硬件 GL 不写在这里：入口脚本探测到 /dev/dri 时会**自动追加**
+      #   --use-gl=angle,--use-angle=vulkan
+      # 反过来「无条件加上」是错的 —— 没有 /dev/dri 时这两个参数会让 WebGL 直接不可用
+      # （2026-10-27 实测，见 docker/README.md「容器内硬件 GL」）。
       MS_REWARDS_CHROMIUM_ARGS: "--no-sandbox,--disable-dev-shm-usage,--disable-gpu-sandbox"
 
       MS_REWARDS_PORT: "25560"
@@ -116,9 +120,14 @@ services:
       # 账户配置、登录态、保险库、日志 —— 全部在这里，容器重建不丢
       - ../storage:/data/storage
 
-    # GPU 加速（可选，NAS 上建议开）：宿主有 AMD/Intel 核显或独显时取消注释，
-    # 容器内 KasmVNC 走 VAAPI 硬解（DRI3）。⚠️ 没有 /dev/dri 的宿主不要开，
-    # 否则容器会因设备映射失败而起不来。
+    # GPU 加速（可选，但**强烈建议**开）：宿主有 AMD/Intel 核显或独显时取消注释。
+    # ⚠️ 没有 /dev/dri 的宿主不要开，否则容器会因设备映射失败而起不来。
+    # 用途有两层：
+    #   ① KasmVNC 走 VAAPI 硬解（DRI3），远程画面不卡；
+    #   ② 入口脚本探测到 /dev/dri 后自动给 Chromium 追加 ANGLE-Vulkan 参数，
+    #      WebGL 报的是真机显卡（如 "ANGLE (AMD, Vulkan (AMD Radeon Graphics
+    #      (RADV RENOIR)), radv)"）而不是 SwiftShader 软件渲染 —— 后者是很强的
+    #      机器人特征。不开则保持 SwiftShader（WebGL 可用，但渲染器是软件的）。
     # devices:
     #   - /dev/dri:/dev/dri
 

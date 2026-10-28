@@ -3,7 +3,7 @@
  *
  * 背景：2026-10-05 查明 fingerprint-chromium 150 有 issue #94（canvas 伪装 +
  *   getImageData/readPixels → SIGSEGV），三个项目域随机崩。上游 150 之后无新版本。
- *   Chromix 154（xiaozhou26/Chromix）实测那三个域零崩溃 —— 但「不崩」只说明
+ *   Chromix 155（xiaozhou26/Chromix）实测那三个域零崩溃 —— 但「不崩」只说明
  *   稳定性过关，**还没验过伪装水平**。本脚本补这一块。
  *
  * 检测站（业界标准四项，覆盖不同判定维度）：
@@ -44,7 +44,7 @@ const STEALTH = [
 
 const CANDS = [
   {
-    label: "Chromix 154（当前钉死版本）",
+    label: "Chromix 155（当前钉死版本）",
     exe: CHROMIX_EXE,
     args: [
       `--fingerprint=${seed}`,
