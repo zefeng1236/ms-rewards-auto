@@ -2,6 +2,66 @@
 
 本文件记录各版本的重要变更。版本格式为主版本.次版本.修订号，带 `-beta` 后缀的为测试版本。带「.N」四位小版本的为内部交付号（安装包文件名与 exe FileVersion 使用），主版本段仍为 0.9.4。
 
+## 0.15.6
+
+发布日期：2026-10-28 · Windows 安装包 `MS-Rewards-Auto-Setup-0.15.6.exe`
+
+一个「环境真实性」版本：环境拟真内核升到 **Chromix 155**，容器部署补齐**硬件 GL**（WebGL 不再是
+SwiftShader 软件渲染）。两件事都不改变任务逻辑，只让浏览器更像一台真实的机器。
+
+### 一、内核升级：Chromix 154.0.8037.57 → 155.0.8059.79
+
+上游 2026-10-20 发布，231 个 patch。与本项目相关的修复：**启动时区同步**（本项目靠
+`--fingerprint-timezone` 伪装时区，之前有启动阶段取到宿主时区的窗口）、PNG 导出、
+`WebString::FromUtf8`。
+
+**真机验证**（解压后的 `chrome.exe` FileVersion = 155.0.8059.79，SHA256 与上游 digest 一致）：
+
+- `login.live.com` / `rewards.bing.com` / `www.bing.com` 三域正常加载，渲染进程**零崩溃**；
+- 伪装生效：UA `Chrome/155.0.x`、brands `Google Chrome/155`、tz `Asia/Shanghai`（−480）、
+  lang `zh-CN`、`webdriver=false`、plugins 5、cores 8；
+- **154 vs 155 逐项对照**（WebGL / Canvas / Audio 矩阵，含同种子的 canvas 噪声哈希）**完全相同**
+  → 存量账户的指纹不会因为这次升级发生突变。
+
+`--fingerprint-*` 的 flag 契约无破坏性变更，启动参数不用改。同步的落点：`src/fingerprint-browser.js`
+的 `ENGINES`、`docker/Dockerfile` 的 `FPCB_VERSION`、`THIRD_PARTY_NOTICES.md`、`README.md`、
+关于页 / 内核面板文案，以及 selfcheck 里「故意断言具体版本」的那组守卫。
+
+Docker 镜像重建后会自动预装 155；存量用户在面板里点一下即可换新（旧内核不影响任务运行）。
+
+### 二、容器部署：WebGL 从 SwiftShader 换成真显卡
+
+**现象**：Docker 里 WebGL 报
+`ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero)), SwiftShader driver)`，
+`opengl: disabled_off` —— 明写的「软件渲染」，比字体、canvas 那些细节更早暴露非真人环境。
+即使 `/dev/dri` 已经透传、`gpu-backend=compatibility` + 显式 vendor/renderer 也压不住
+（上游规则：软件上下文保留真实身份）。
+
+**根因**：镜像里没有 Vulkan ICD（`/usr/share/vulkan/icd.d` 不存在），ANGLE 只有内置 SwiftShader 可用。
+
+**修复**：
+
+- `docker/Dockerfile`：apt 清单加 `mesa-vulkan-drivers` + `libvulkan1`（提供 RADV / ANV）；
+- `docker/entrypoint.sh`：探测到 `/dev/dri/renderD*` 才追加 `--use-gl=angle,--use-angle=vulkan`。
+  **刻意不写进默认参数**——实测无 `/dev/dri` 时加这两个参数会让
+  `getContext('webgl')` 直接返回 `null`（WebGL 完全不可用，比软件渲染更糟），
+  而 compose 的 `devices` 默认是注释状态。想强制回软件后端可设 `MS_REWARDS_GPU_VULKAN=0`。
+
+**效果**（NAS，AMD 核显）：
+`ANGLE (AMD, Vulkan 1.3.230 (AMD Radeon Graphics (RADV RENOIR)), radv)`，maxTex 16384，
+`opengl: enabled_on`、`gpu_compositing: enabled`。此后再叠 `compatibility` + 显式 GPU 身份也生效。
+
+`docker/README.md` 新增「十、容器内硬件 GL」（三场景对照表 + 三条硬规则）；
+selfcheck 新增 3 条守卫（apt 含两包 / entrypoint 有探测 / 默认值不含该参数），均做过反例验证。
+
+### 三、注释与文档订正
+
+- `src/browser.js`：订正「种子统一生成插件 / CPU / 内存」的不实注释（实测 plugins 为原生、
+  CPU/内存是固定默认值）；补注 **headful 必须 `viewport: null`** —— Chromix 的 screen 几何跟随
+  传给 renderer 的 viewport，给固定值等于把 screen 锁死（实测默认 1280×720 会让窗口比屏幕还大）。
+- 指纹覆盖复核：容器内真实形态下 screen 为 1920×1080 / avail 1920×1032 / DPR 1，与桌面版一致。
+
+
 ## 0.15.5
 
 发布日期：2026-10-25 · Windows 安装包 `MS-Rewards-Auto-Setup-0.15.5.exe`
