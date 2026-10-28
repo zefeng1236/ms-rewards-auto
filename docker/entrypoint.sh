@@ -75,6 +75,14 @@ if [ "${MS_REWARDS_ENABLE_NOVNC:-0}" = "1" ]; then
   chown node:node "$KASM_PASSWD"
   chmod 600 "$KASM_PASSWD"
 
+  # docker restart / 崩溃自动重启不会清 /tmp，残留的 X1 锁会让新 Xvnc 直接退出：
+  #   "Warning: <host>:1 is taken because of /tmp/.X1-lock" → "A VNC server is already running as :1"
+  # 结果容器起来了但图形会话死掉（「去登录」打不开）。2026-10-28 实测踩到。
+  # 判据：没有活的 Xvnc 进程时才清锁（有进程在跑就别动，避免误杀正常会话）。
+  if ! ps aux 2>/dev/null | grep -q "[X]vnc :1"; then
+    rm -f /tmp/.X1-lock /tmp/.X11-unix/X1
+  fi
+
   gosu node /usr/local/bin/novnc-stack.sh >/tmp/novnc-stack.log 2>&1 &
   i=0
   while [ "$i" -lt 100 ] && [ ! -S /tmp/.X11-unix/X1 ]; do
@@ -84,7 +92,7 @@ if [ "${MS_REWARDS_ENABLE_NOVNC:-0}" = "1" ]; then
   export DISPLAY=:1
 fi
 
-# ---- 容器内硬件 GL：只有真把宿主 GPU 映射进来，才启用 ANGLE-Vulkan ----
+# ---- 容器内硬件 GL：① 让 node 拿到渲染设备权限 ② 验证能读 ③ 才加 ANGLE-Vulkan ----
 # 为什么是「探测后再加」而不是直接写进 compose 默认值：
 #   2026-10-27 实测（NAS 上同一镜像，两个场景对照）
 #     有 /dev/dri + mesa-vulkan-drivers + --use-gl=angle --use-angle=vulkan
@@ -95,18 +103,48 @@ fi
 #          （ANGLE 的 Vulkan 路径不接 lavapipe 软件 ICD）
 #   而「桌面浏览器没有 WebGL」是比软件渲染更强的机器人特征 —— 所以无 GPU 时必须
 #   保持默认后端（退到 SwiftShader，至少 WebGL 还在）。
+#
+# 为什么还要「给 node 加设备组」（2026-10-28 实测，这是 0.15.7 的漏）：
+#   容器里 /dev/dri/renderD128 是 `crw-rw---- root:<宿主GID>`（NAS 上是 105），
+#   容器内既没有这个组名、node 也不在其中 → node 打不开渲染设备，
+#   ANGLE 只能挑到 lavapipe（软件 Vulkan），WebGL 反而**直接不可用**；
+#   同样是这套参数，以 root 跑就正常（RADV RENOIR）。
+#   所以这里按设备真实 GID 建组 + usermod 把 node 加进去，再用 gosu 实测可读，
+#   读不到就**不加参数**（宁可 SwiftShader，也不能把 WebGL 搞没）。
+#   /etc/group 在容器重建时重置，因此每次启动都做一遍（幂等）。
 # 关掉探测（想强制用软件后端）：MS_REWARDS_GPU_VULKAN=0
-if [ "${MS_REWARDS_GPU_VULKAN:-auto}" != "0" ] && ls /dev/dri/renderD* >/dev/null 2>&1; then
-  if printf '%s' "${MS_REWARDS_CHROMIUM_ARGS:-}" | grep -q -- "--use-angle=vulkan"; then
-    echo "[entrypoint] /dev/dri 存在，已由环境变量指定 ANGLE-Vulkan"
+if [ "${MS_REWARDS_GPU_VULKAN:-auto}" = "0" ]; then
+  echo "[entrypoint] MS_REWARDS_GPU_VULKAN=0 → 保持默认 GL 后端（WebGL 可用）"
+elif ! ls /dev/dri/renderD* >/dev/null 2>&1; then
+  echo "[entrypoint] 未检测到 /dev/dri → 保持默认 GL 后端（WebGL 可用）"
+else
+  RENDER_OK=0
+  for dev in /dev/dri/renderD*; do
+    [ -e "$dev" ] || continue
+    gid="$(stat -c '%g' "$dev" 2>/dev/null || echo '')"
+    [ -n "$gid" ] || continue
+    gname="$(getent group "$gid" | cut -d: -f1)"
+    if [ -z "$gname" ]; then
+      gname="dri$gid"
+      groupadd -g "$gid" "$gname" 2>/dev/null || true
+    fi
+    usermod -aG "$gname" node 2>/dev/null || true
+    if gosu node test -r "$dev" 2>/dev/null; then
+      RENDER_OK=1
+      echo "[entrypoint] $dev 可访问（组 $gname / gid $gid）"
+    fi
+  done
+
+  if [ "$RENDER_OK" != "1" ]; then
+    echo "[entrypoint] /dev/dri 存在但 node 无权访问 → 不加 Vulkan 参数（保持 WebGL 可用）"
+  elif printf '%s' "${MS_REWARDS_CHROMIUM_ARGS:-}" | grep -q -- "--use-angle=vulkan"; then
+    echo "[entrypoint] 已由环境变量指定 ANGLE-Vulkan"
   else
     MS_REWARDS_CHROMIUM_ARGS="${MS_REWARDS_CHROMIUM_ARGS:-}"
     MS_REWARDS_CHROMIUM_ARGS="${MS_REWARDS_CHROMIUM_ARGS:+$MS_REWARDS_CHROMIUM_ARGS,}--use-gl=angle,--use-angle=vulkan"
     export MS_REWARDS_CHROMIUM_ARGS
-    echo "[entrypoint] 检测到 /dev/dri → 启用 ANGLE-Vulkan 硬件渲染"
+    echo "[entrypoint] 检测到可访问的 /dev/dri → 启用 ANGLE-Vulkan 硬件渲染"
   fi
-else
-  echo "[entrypoint] 未检测到 /dev/dri → 保持默认 GL 后端（WebGL 仍可用）"
 fi
 
 exec gosu node "$@"

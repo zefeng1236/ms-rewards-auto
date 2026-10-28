@@ -154,7 +154,7 @@ docker exec ms-rewards-watchtower /watchtower --run-once
 ```
 
 **锁定版本（关闭自动更新）**：把 `docker-compose.yml` 里 `ms-rewards` 的
-`image: ...:latest` 改成具体版本号（如 `:0.15.7`），并删掉下方 `watchtower` 服务。
+`image: ...:latest` 改成具体版本号（如 `:0.15.8`），并删掉下方 `watchtower` 服务。
 
 **本地改源码重新构建**：前端产物在镜像内构建，改了 `src-renderer/` 后重新执行一次
 `up -d --build` 即可。想在宿主机单独出产物（例如排查构建问题）：
@@ -228,6 +228,24 @@ ANGLE 只能退到内置 SwiftShader。WebGL **可用**（这点很重要，见�
 3. **不要用 `--disable-gpu` 去「解决」GPU 报错**。那会让 WebGL 永久不可用，比软件渲染糟糕得多。
 
 想强制回到软件后端（例如 Vulkan 在某个核显上不稳）：设 `MS_REWARDS_GPU_VULKAN=0`。
+
+**为什么还要给 `node` 加设备组（0.15.7 踩过的坑）**：容器内 `/dev/dri/renderD128` 的属组是
+**宿主的 GID**（NAS 上是 `root:105`），容器里既没有这个组名，`node` 也不在其中 —— 于是
+`node` 打不开渲染设备，ANGLE 只能挑到 lavapipe（软件 Vulkan），**WebGL 反而直接不可用**
+（比不加参数更糟）。同样参数以 root 跑却是正常的（RADV），所以这个坑只看日志发现不了。
+
+0.15.8 起 `entrypoint.sh` 会按设备真实 GID 建组（如 `dri105`）并把 `node` 加进去，
+再用 `gosu node test -r` **实测能读**才追加 `--use-gl=angle,--use-angle=vulkan`；
+读不到就不加（宁可 SwiftShader，也不能把 WebGL 搞没）。日志里能看到：
+
+```
+[entrypoint] /dev/dri/renderD128 可访问（组 dri105 / gid 105）
+[entrypoint] 检测到可访问的 /dev/dri → 启用 ANGLE-Vulkan 硬件渲染
+```
+
+> 顺带修了一个重启相关的问题：`docker restart` / 崩溃自动重启不会清 `/tmp`，残留的
+> `/tmp/.X1-lock` 会让新的 Xvnc 直接退出（日志 `A VNC server is already running as :1`），
+> 表现为容器起来了但「去登录」打不开图形会话。新版启动前会先判断没有活着的 Xvnc 再清锁。
 
 **怎么确认生效**：任务跑起来后看「环境一致性自检」页的 WebGL Vendor / Renderer 两项，
 或者 `docker logs ms-rewards | grep entrypoint` 看有没有那行提示。

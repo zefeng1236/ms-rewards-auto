@@ -2937,11 +2937,26 @@ checkTrue(
   "删掉探测/参数 → 有 GPU 的宿主退回 SwiftShader；无条件加 → 无 GPU 的宿主 WebGL 全死（2026-10-27 两场景实测）"
 );
 checkTrue(
+  "entrypoint 先把 node 加进渲染设备所属组，并用 gosu 实测可读后才加参数",
+  /stat -c '%g'/.test(entrySrc) &&
+    /groupadd -g/.test(entrySrc) &&
+    /usermod -aG/.test(entrySrc) &&
+    /gosu node test -r/.test(entrySrc) &&
+    /RENDER_OK/.test(entrySrc),
+  "0.15.7 的漏：/dev/dri/renderD128 是 root:<宿主GID>（NAS=105），node 不在组里 → ANGLE 只能挑 lavapipe，WebGL 反而不可用；root 跑同一参数正常（2026-10-28 实测）。缺这段授权就白加参数"
+);
+checkTrue(
   "Docker 默认 Chromium 参数不含 --use-angle=vulkan（只能由 entrypoint 按设备探测追加）",
   !/--use-angle=vulkan/.test(dfArgs) && !/--use-angle=vulkan/.test(cpArgs),
   `默认值里写死 → 没映射 /dev/dri 的宿主（compose 里 devices 默认是注释状态）WebGL 直接不可用（Dockerfile="${dfArgs}" / compose="${cpArgs}"）`
 );
 
+checkTrue(
+  "entrypoint 启动前清理残留 X1 锁（docker restart 后 /tmp 不清，新 Xvnc 会拒绝启动）",
+  entrySrc.indexOf("rm -f /tmp/.X1-lock") > -1 &&
+    entrySrc.indexOf("rm -f /tmp/.X1-lock") < entrySrc.indexOf("novnc-stack.sh >/tmp/novnc-stack.log"),
+  "缺清锁 → 崩溃自动重启后图形会话起不来（日志报 'A VNC server is already running as :1'），「去登录」按钮打不开（2026-10-28 实测）"
+);
 checkTrue(
   "镜像装 KasmVNC（deb 下载、关键依赖和 Xkasmvnc 可执行）",
   /Xkasmvnc/.test(dockerfileSrc) &&
