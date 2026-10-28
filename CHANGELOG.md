@@ -2,6 +2,34 @@
 
 本文件记录各版本的重要变更。版本格式为主版本.次版本.修订号，带 `-beta` 后缀的为测试版本。带「.N」四位小版本的为内部交付号（安装包文件名与 exe FileVersion 使用），主版本段仍为 0.9.4。
 
+## 0.15.7
+
+发布日期：2026-10-28 · Windows 安装包 `MS-Rewards-Auto-Setup-0.15.7.exe`
+
+一个纯安全更新版本：把 Dependabot 挂着的 **21 条告警（10 high / 8 medium / 3 low）清零**，
+**无功能变更**。全部改动都在现有 semver 范围内升 patch 版，`package.json` 的依赖范围没动，
+只有 `package-lock.json` 变化。
+
+### 依赖安全升级
+
+| 包 | 旧 → 新 | 告警 | 内容 |
+|---|---|---|---|
+| `undici` | 6.29.0 → **6.29.1**<br>7.30.0 → **7.30.1** | 9（5 high） | TLS 证书校验被丢弃导致**绕过**、跨源重定向缓存投毒、TLS 1.2 重协商 DoS |
+| `vite` | 8.3.2 → **8.3.5** | 6（1 high） | `launch-editor` 的 `fs.existsSync()` 检查在 Windows 上可绕过 → 任意命令执行；`server.fs.allow` 越界读 |
+| `fast-uri` | 3.1.8 → **3.1.9** | 4（2 medium） | 百分号编码 scheme 解码导致 URI scheme 欺骗、host canonicalization 绕过 |
+| `electron` | 44.5.1 → **44.10.0** | 1（high） | 针对 eMudhra 中间证书被入侵的缓解（Chromium 侧） |
+| `http-cache-semantics` | 4.2.0 → **4.3.0** | 1（high） | `max-stale` 处理不当 → 跨用户缓存响应泄露 |
+
+说明：
+
+- `undici` 6.x / 7.x 两个分支各有一份（6.x 来自 `electron-builder → @electron/rebuild → node-gyp`，
+  7.x 来自 `electron → @electron/get`），都升到了各自的修复版；
+- 升级只影响构建工具链与 Electron 外壳，**运行时任务逻辑、指纹参数、内核版本都没变**；
+- 门禁与上一版一致：typecheck 0 error、selfcheck 992/0、verify:pack 70/70；
+- 顺带记一笔：`npm audit` 在 npmmirror 源上不可用（镜像不支持 audit 端点，返回
+  `[NOT_IMPLEMENTED]`），所以本轮是按 Dependabot 告警里的修复版本定向 `npm update` 的。
+
+
 ## 0.15.6
 
 发布日期：2026-10-28 · Windows 安装包 `MS-Rewards-Auto-Setup-0.15.6.exe`
