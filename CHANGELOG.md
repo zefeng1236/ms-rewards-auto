@@ -2,6 +2,50 @@
 
 本文件记录各版本的重要变更。版本格式为主版本.次版本.修订号，带 `-beta` 后缀的为测试版本。带「.N」四位小版本的为内部交付号（安装包文件名与 exe FileVersion 使用），主版本段仍为 0.9.4。
 
+## 0.15.8
+
+发布日期：2026-10-28 · Windows 安装包 `MS-Rewards-Auto-Setup-0.15.8.exe`
+
+修 0.15.7 引入的一个**容器部署回归**（只影响 Docker，桌面版无变化）：
+映射了 GPU 的宿主升级后 **WebGL 会变成不可用**，比升级前（SwiftShader 软件渲染）更糟。
+
+### 一、修复：容器里「加了 Vulkan 参数但没权限」→ WebGL 不可用
+
+**现象**（NAS 实测，0.15.7 镜像 + `devices: /dev/dri`）：WebGL `getContext('webgl')` 返回 `null`，
+GPU 报 `ANGLE (Mesa, Vulkan 1.3.230 (llvmpipe (LLVM 15.0.6 256 bits)), llvmpipe)`、`opengl: unavailable_off`。
+
+**根因**：容器内 `/dev/dri/renderD128` 的属组是**宿主的 GID**（NAS 上是 `root:105`），
+容器里既没有这个组名、运行时的 `node` 用户也不在其中 → 打不开渲染设备 → ANGLE 只能挑
+lavapipe（软件 Vulkan），而 lavapipe 走不出的路径让 WebGL 直接不可用。
+**同一套参数以 root 跑却完全正常**（`ANGLE (AMD, … (RADV RENOIR), radv)`、`opengl: enabled_on`），
+所以光看「加了参数」的日志发现不了 —— 这也是 0.15.7 没测出来的原因（当时手工验证用的是 root）。
+
+**修复**（`docker/entrypoint.sh`）：启动时按设备真实 GID 建组（如 `dri105`）并把 `node` 加进去，
+再用 `gosu node test -r <设备>` **实测能读**，才追加 `--use-gl=angle,--use-angle=vulkan`；
+读不到就不加参数（保持 SwiftShader，至少 WebGL 还在）。日志会明确打印走的是哪条路。
+
+**验证**（NAS，以运行时的 `node` 身份，非 root）：
+
+| 条件 | WebGL 渲染器 | GPU 状态 |
+|---|---|---|
+| 修好后 + 自动追加参数 | `ANGLE (AMD, Vulkan 1.3.230 (AMD Radeon Graphics (RADV RENOIR)), radv)`，maxTex 16384 | `opengl: enabled_on`、`gpu_compositing: enabled` |
+| 不带参数（对照） | `ANGLE (Google, … SwiftShader Device (Subzero), SwiftShader driver)` | `opengl: disabled_off`，但 **WebGL 可用** |
+
+守卫：selfcheck 新增断言锁死「按 GID 建组 + usermod + gosu 实测可读」（已做反例验证）。
+
+### 二、修复：`docker restart` 后图形会话起不来
+
+`restart: unless-stopped` 的崩溃自动重启、或手动 `docker restart`，都不会清 `/tmp`；
+残留的 `/tmp/.X1-lock` 让新 Xvnc 直接退出（日志 `A VNC server is already running as :1`），
+表现为容器起来了、但「去登录」打不开图形会话。现在启动前会先判断没有活着的 Xvnc，再清锁。
+
+### 三、说明
+
+- 只改了 `docker/entrypoint.sh` 与文档，**桌面版行为与 0.15.7 完全一致**（内核 155、任务逻辑、依赖版本都不变）；
+- 没映射 `/dev/dri` 的部署不受这两处影响，但建议一并升级（重启清锁对它们同样有用）；
+- `docker/README.md`「十、容器内硬件 GL」补了这段权限说明与日志样例。
+
+
 ## 0.15.7
 
 发布日期：2026-10-28 · Windows 安装包 `MS-Rewards-Auto-Setup-0.15.7.exe`
