@@ -108,6 +108,8 @@ export interface InputNumberProps {
   placeholder?: string;
   size?: LegacySize;
   disabled?: boolean;
+  /** 输入框内的单位后缀（如「分」「天」）。只显示裸数字时用户看不出单位。 */
+  suffix?: ReactNode;
   "aria-label"?: string;
 }
 

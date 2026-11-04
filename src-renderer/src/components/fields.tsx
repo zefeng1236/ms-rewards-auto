@@ -57,6 +57,8 @@ export function NumberField({
   max,
   step,
   onChange,
+  suffix,
+  suffixHint,
 }: {
   label: string;
   hint?: string;
@@ -65,6 +67,16 @@ export function NumberField({
   max?: number;
   step?: number;
   onChange: (v: number) => void;
+  /**
+   * 输入框内的单位（如「分」）。只显示一个裸数字时用户看不出单位 ——
+   * 2026-11-04 用户原话「你不能就叫 300 啊，谁能看懂」。
+   */
+  suffix?: string;
+  /**
+   * 值有特殊含义时追加的说明（如阈值为 0 表示「关闭」）。
+   * 与 hint 分开：hint 是固定说明，这句随当前值变化。
+   */
+  suffixHint?: string;
 }) {
   return (
     <div className="field-block">
@@ -76,8 +88,14 @@ export function NumberField({
         step={step}
         onChange={(v) => onChange(v == null ? 0 : Number(v))}
         size="sm"
+        suffix={suffix}
       />
       {hint && <div className="hint">{hint}</div>}
+      {suffixHint && (
+        <div className="hint" style={{ color: "var(--warn, #d97706)" }}>
+          {suffixHint}
+        </div>
+      )}
     </div>
   );
 }

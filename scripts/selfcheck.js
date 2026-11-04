@@ -3596,7 +3596,7 @@ checkTrue(
 
   checkTrue(
     "设置页暴露「阈值补领」入口（默认 300，可改可关）",
-    /满多少分就提前领/.test(settingsSrc2) &&
+    /阈值补领/.test(settingsSrc2) &&
       /claimSchedule:\s*\{\s*\n?\s*threshold/.test(settingsSrc2) &&
       /min=\{0\}/.test(settingsSrc2),
     "界面没有入口 → 用户不知道有这个功能，也关不掉（0.15.9 实测被用户当场问到）"
@@ -3607,11 +3607,11 @@ checkTrue(
     // 判据：阈值块出现的代码位置要在 `value.tasks?.claim &&` 那个块的**闭合之后**。
     (() => {
       const iGate = settingsSrc2.indexOf("{value.tasks?.claim && (");
-      const iTh = settingsSrc2.indexOf("满多少分就提前领");
-      if (iGate < 0 || iTh < 0) return false;
-      // 找「阈值块自己的注释」位置，确认在 gate 块之后
+      // 锚定**阈值块自己的注释**（而不是「阈值补领」这个词 —— 它在 gate 块内的说明里也会出现，
+      // 用词做锚点会指向错误位置，实测踩过：把 iTh 指向 gate 内部后守卫假红）
       const iThComment = settingsSrc2.indexOf("阈值补领的**独立入口**");
-      return iThComment > iGate && iTh > iGate;
+      if (iGate < 0 || iThComment < 0) return false;
+      return iThComment > iGate;
     })(),
     "藏在 tasks.claim 里 → 开关没开时连「有这功能」都看不到（用户就是这么被坑的）"
   );
@@ -3628,6 +3628,33 @@ checkTrue(
     "阈值默认值与配置层一致（config.js / global-config.js 都是 300）",
     /threshold:\s*300/.test(cfgSrcTh) && /threshold:\s*300/.test(gcfgSrcTh),
     "两处默认值不一致 → 桌面版与容器版行为不同，且都是静默的"
+  );
+
+  // —— 数字框必须带单位（2026-11-04 用户原话「你不能就叫 300 啊，谁能看懂」）——
+  const fieldsSrcTh = fs.readFileSync(
+    path.join(ROOT, "src-renderer", "src", "components", "fields.tsx"),
+    "utf8"
+  );
+  const compatCss = fs.readFileSync(
+    path.join(ROOT, "src-renderer", "src", "components", "liquidGlassCompat.css"),
+    "utf8"
+  );
+  checkTrue(
+    "阈值输入框带单位「分」+ 随值变化的含义说明",
+    /label="攒够多少积分就立刻领/.test(settingsSrc2) &&
+      /suffix="分"/.test(settingsSrc2) &&
+      // 0 是特殊值（=关闭），必须用文字说明，否则用户以为「攒够 0 分」是另一条规则
+      /已关闭这道补领/.test(settingsSrc2),
+    "只显示裸数字 → 用户不知道是积分、天数还是次数（用户当场反馈过）"
+  );
+  checkTrue(
+    "NumberField 支持单位后缀，且单位在深色主题下可读",
+    /suffix\?: string/.test(fieldsSrcTh) &&
+      /suffixHint\?: string/.test(fieldsSrcTh) &&
+      /suffix=\{suffix\}/.test(fieldsSrcTh) &&
+      // 原来单位用 var(--muted)，深色玻璃底上几乎看不见（实测截图验证过）
+      /\.compat-input-affix\{[^}]*color:color-mix\(in srgb,var\(--text\) 72%/.test(compatCss),
+    "单位用 var(--muted) → 深色主题下淡到看不见，等于没加"
   );
 }
 
