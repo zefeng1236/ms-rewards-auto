@@ -3581,6 +3581,56 @@ checkTrue(
     "置顶/过度让位都实测过：前者让应用压住 PIN 窗，后者让 PIN 窗根本不出现"
   );
 }
+// —— 阈值补领必须真的能用（2026-11-04 用户报「检测到 300 积分领取怎么没有」）——
+// 事故：后端从 0.15.9 起就有「满 N 分提前领」的补领逻辑（runner 两个触发点 + tasks 实现），
+// 配置默认 threshold=300，但**界面完全没有入口** —— 用户只看到「每隔 N 天」，
+// 既看不见 300 这个数、也改不了、更关不掉。属于「功能做了但用户用不到」。
+{
+  const settingsSrc2 = fs.readFileSync(
+    path.join(ROOT, "src-renderer", "src", "components", "SettingsForm.tsx"),
+    "utf8"
+  );
+  const tasksSrcTh = fs.readFileSync(path.join(ROOT, "src", "tasks.js"), "utf8");
+  const cfgSrcTh = fs.readFileSync(path.join(ROOT, "src", "config.js"), "utf8");
+  const gcfgSrcTh = fs.readFileSync(path.join(ROOT, "src", "global-config.js"), "utf8");
+
+  checkTrue(
+    "设置页暴露「阈值补领」入口（默认 300，可改可关）",
+    /满多少分就提前领/.test(settingsSrc2) &&
+      /claimSchedule:\s*\{\s*\n?\s*threshold/.test(settingsSrc2) &&
+      /min=\{0\}/.test(settingsSrc2),
+    "界面没有入口 → 用户不知道有这个功能，也关不掉（0.15.9 实测被用户当场问到）"
+  );
+  checkTrue(
+    "阈值入口不受「定期收取积分」开关遮蔽（开关关着也要能看见）",
+    // 上面节奏区块仍受 tasks.claim 控制是对的；但阈值块必须独立在外面。
+    // 判据：阈值块出现的代码位置要在 `value.tasks?.claim &&` 那个块的**闭合之后**。
+    (() => {
+      const iGate = settingsSrc2.indexOf("{value.tasks?.claim && (");
+      const iTh = settingsSrc2.indexOf("满多少分就提前领");
+      if (iGate < 0 || iTh < 0) return false;
+      // 找「阈值块自己的注释」位置，确认在 gate 块之后
+      const iThComment = settingsSrc2.indexOf("阈值补领的**独立入口**");
+      return iThComment > iGate && iTh > iGate;
+    })(),
+    "藏在 tasks.claim 里 → 开关没开时连「有这功能」都看不到（用户就是这么被坑的）"
+  );
+  checkTrue(
+    "阈值收口不能用 `|| 0`（字段缺失会被静默当成「关闭」）",
+    // Number(undefined)=NaN，`NaN || 0` = 0 → 判定「阈值补领已关闭」，
+    // 存量配置用户功能凭空消失，而界面上又看不到，根本无从发现。
+    !/Math\.floor\(Number\(sched\.threshold\)\)\s*\|\|\s*0/.test(tasksSrcTh) &&
+      /rawThreshold === undefined/.test(tasksSrcTh) &&
+      /return 300/.test(tasksSrcTh),
+    "旧配置缺字段 → 静默关闭阈值补领；只有显式 0 才该是「用户主动关闭」"
+  );
+  checkTrue(
+    "阈值默认值与配置层一致（config.js / global-config.js 都是 300）",
+    /threshold:\s*300/.test(cfgSrcTh) && /threshold:\s*300/.test(gcfgSrcTh),
+    "两处默认值不一致 → 桌面版与容器版行为不同，且都是静默的"
+  );
+}
+
 // —— 功能发布闸门：桌面 Rewards 专属任务暂缓上线（2026-11-04 用户要求）——
 // 要求：界面置灰 + 标「测试中」、主进程探测与执行全部拦住、推送汇总不出现该行。
 // 三层缺一层就会出现「界面灰了但后台照跑」这种最难自查的不一致。

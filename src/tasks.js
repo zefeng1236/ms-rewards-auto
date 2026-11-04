@@ -855,7 +855,21 @@ async function taskClaimByThreshold(ctx, opts = {}) {
     return { status: "skip", reason: "未开启定期收取积分" };
   }
   const sched = (ctx.config.get() || {}).claimSchedule || {};
-  const threshold = Math.max(0, Math.floor(Number(sched.threshold)) || 0);
+  /**
+   * 阈值收口。
+   *
+   * ⚠️ **不能写成 `Number(x) || 0`**：存量配置没有这个字段时 Number(undefined)=NaN，
+   * `NaN || 0` 得 0 → 判定为「阈值补领已关闭」，等于给老用户**静默关掉**这个功能，
+   * 而界面上又看不到这一项，用户根本无从发现。
+   * 只有「显式写 0」才是用户主动关闭。
+   */
+  const rawThreshold = sched.threshold;
+  const threshold = (() => {
+    if (rawThreshold === undefined || rawThreshold === null || rawThreshold === "") return 300;
+    const n = Number(rawThreshold);
+    if (!Number.isFinite(n)) return 300;
+    return Math.min(5000, Math.max(0, Math.floor(n)));
+  })();
   if (threshold <= 0) {
     return { status: "skip", reason: "阈值补领已关闭（threshold=0）" };
   }

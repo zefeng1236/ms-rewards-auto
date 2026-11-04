@@ -286,6 +286,28 @@ export function SettingsForm({
   const claimMode: "interval" | "daily" = sched.mode === "daily" ? "daily" : "interval";
   const claimEveryDays = Math.min(30, Math.max(1, Math.floor(Number(sched.everyDays)) || 7));
   const claimDailyAt = normalizeHHMM(sched.dailyAt);
+  /**
+   * 阈值补领（2026-11-04）。
+   *
+   * ⚠️ 后端从 0.15.9 起就有这个能力（每天「首次运行」「收工」各读一次可领取金额，
+   *    ≥ 阈值就立刻领掉），但**界面一直没给入口** —— 用户只看到「每隔 N 天」，
+   *    自然会问「检测到 300 积分领取怎么没有」。配置读不到就是默认 300，
+   *    用户既看不见、也改不了、更没法关掉。
+   *
+   * ⚠️ 收口**不能用 `|| 0`**：旧配置没有这个字段时 Number(undefined)=NaN，
+   *    `NaN || 0` 会变成 0 —— 界面上显示「已关闭」，而主进程读到的也是 0，
+   *    等于给存量用户**静默关掉了这个功能**。必须回落默认 300。
+   * 显式的 0 才是「用户主动关闭」。
+   */
+  const claimThreshold = (() => {
+    // 类型上 threshold 是 number，但运行时可能是 undefined / 空串（旧配置、手改文件），
+    // 所以这里按 unknown 处理，别让 TS 把判空优化掉。
+    const raw: unknown = sched.threshold;
+    if (raw === undefined || raw === null || raw === "") return 300;
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return 300;
+    return Math.min(5000, Math.max(0, Math.floor(n)));
+  })();
 
   return (
     <div className="settings-form">
@@ -320,7 +342,12 @@ export function SettingsForm({
             只在开关打开时显示：关着的时候改频率没有意义（任务压根不会跑），
             摆在那里只会让人以为改了有用。
             ⚠️ 这里的值一律经 Math.min/max + 正则收口 —— 主进程也会再收一次，
-               但渲染层先收口能避免用户输「0 天」时界面就显示异常值。 */}
+               但渲染层先收口能避免用户输「0 天」时界面就显示异常值。
+
+            2026-11-04：用户报「检测到 300 积分领取怎么没有」—— 根因不只是阈值没入口，
+            还叠了一层：整个区块被 `tasks.claim` 藏着，开关没开时连"这里有个阈值"都看不到。
+            所以阈值那一项改成**始终显示**（它本身就是「够多了就领」的开关式参数，
+            关掉 tasks.claim 时给一句说明即可），节奏/间隔/时间仍跟随开关。 */}
         {value.tasks?.claim && (
           <div className="form-grid" style={{ marginTop: 8 }}>
             <SelectField
@@ -359,6 +386,36 @@ export function SettingsForm({
             )}
           </div>
         )}
+
+        {/* 阈值补领的**独立入口**（2026-11-04）。
+            为什么从上面那块拆出来：上面整块受 `tasks.claim` 控制，开关没开时用户
+            连「有阈值补领这回事」都看不到 —— 这正是用户报「检测到 300 积分领取怎么没有」的
+            第二个原因。阈值本身是「够多了就领」的判据，与「隔几天领一次」是两套并行触发，
+            所以它应该独立可见：关掉定期收取时明确告知「本项不生效」，而不是整个消失。 */}
+        <div className="form-grid" style={{ marginTop: 8 }}>
+          <NumberField
+            label="满多少分就提前领（阈值补领）"
+            hint={
+              value.tasks?.claim
+                ? "与上面的节奏并行：每天「首次运行」和「收工」各查一次可领取金额，达到这个数就立刻领掉，不必等间隔天数。默认 300，填 0 关闭"
+                : "当前「定期收取积分」是关闭的，本项不会生效；打开上面那个开关后，每天「首次运行」和「收工」各查一次可领取金额，达到这个数就立刻领掉"
+            }
+            value={claimThreshold}
+            min={0}
+            max={5000}
+            onChange={(v) =>
+              onChange({
+                claimSchedule: {
+                  threshold: (() => {
+                    const n = Number(v);
+                    if (!Number.isFinite(n)) return 300;
+                    return Math.min(5000, Math.max(0, Math.floor(n)));
+                  })(),
+                },
+              } as DeepPartial<AppConfig>)
+            }
+          />
+        </div>
       </Section>
 
       <Section title="单次执行数量" desc="把当天的阅读与活动摊到多轮里做，避免一轮全部清空">
