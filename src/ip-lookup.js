@@ -87,12 +87,59 @@ function ispFromCnAddr(addr) {
 /** 各家服务的「请求 + 解析」实现。失败时抛出，由上层捕获降级。 */
 /* ---- 各家响应的纯解析函数（无网络，便于自检离线断言） ---- */
 
+/**
+ * 把 httpRequest 的结果转成「可解析的正文」，失败时抛出**真实原因**。
+ *
+ * ⚠️ 为什么必须走这一层（2026-11-04 用户报「IP 查询服务 ipsb 失败：ip.sb 空响应」）：
+ *   `src/http.js` 的 httpRequest **不抛异常** —— 出错时返回 `{status:0, text:"", error:msg}`。
+ *   而各家的 parse 函数只判 `if (!text) throw "xxx 空响应"`，
+ *   于是超时 / DNS 失败 / TLS 失败 / 被墙 / 5xx 全被统一说成「空响应」。
+ *   这句话把人往「接口返回了空数据」的方向带，而真实原因（比如请求根本没发出去）
+ *   恰恰是最需要看见的那条信息 —— 排查时会白绕一圈。
+ *
+ * @param {{status:number, text:string, error?:string, headers?:any}} r
+ * @param {string} label 服务名（用于报错文案）
+ * @returns {string} 非空正文
+ */
+function bodyOf(r, label) {
+  // ① 传输层失败优先：这才是根因，不能被后面的「空正文」掩盖
+  if (r && r.error) throw new Error(`${label} 请求失败：${r.error}`);
+  // ② HTTP 错误码：401/403/429/5xx 的正文常常是错误页 HTML，直接解析会得到莫名其妙的 JSON 报错
+  const status = r && r.status;
+  if (typeof status === "number" && status >= 400) {
+    const snippet = String((r && r.text) || "").replace(/\s+/g, " ").slice(0, 60);
+    throw new Error(`${label} 返回 HTTP ${status}${snippet ? `：${snippet}` : ""}`);
+  }
+  // ③ 到这一步才是真的「请求成功但正文为空」
+  const text = r && r.text;
+  if (!text) throw new Error(`${label} 空响应（HTTP ${status || "?"}，无正文）`);
+  return text;
+}
+
+/**
+ * 安全解析 JSON：失败时给出**能看出发生了什么**的报错。
+ *
+ * 默认的 `JSON.parse` 抛的是 `Unexpected token '<'...` ——
+ * 那个 `<` 其实是 HTML 错误页/被劫持页的首字符，但报错本身完全不提这层意思，
+ * 排查时容易误以为是代码 bug。
+ */
+function parseJson(text, label) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    const head = String(text || "").replace(/\s+/g, " ").slice(0, 70);
+    // 首字符是 < → 几乎可以断定拿到的是 HTML 页（运营商劫持 / 网关拦截 / 错误页）
+    const hint = /^\s*</.test(String(text || "")) ? "（返回的是 HTML 页面，可能被劫持或网关拦截）" : "";
+    throw new Error(`${label} 返回的不是 JSON${hint}：${head}`);
+  }
+}
+
 // 太平洋网络（国内老牌，whois.pconline.com.cn），境内直连稳定、不被墙。
 // 境内：proCode 为 6 位行政区划码（如 320000）、err 为空；
 // 境外：proCode 固定 "999999"、err="noprovince"。
 function parsePconline(text) {
   if (!text) throw new Error("pconline 空响应");
-  const j = JSON.parse(text.trim());
+  const j = parseJson(text.trim(), "pconline");
   const code = String(j.proCode || "");
   const isMainland = /^\d{6}$/.test(code) && code !== "999999";
   return norm("pconline", j.ip, isMainland ? "CN" : "", isMainland, j.addr || "", {
@@ -104,7 +151,7 @@ function parsePconline(text) {
 // ip.sb：全球 CDN，返回标准 ISO 国家码（country_code），city/country 为英文名
 function parseIpsb(text) {
   if (!text) throw new Error("ip.sb 空响应");
-  const j = JSON.parse(text);
+  const j = parseJson(text, "ip.sb");
   const cc = String(j.country_code || "").toUpperCase();
   return norm("ipsb", j.ip, cc, cc ? cc === "CN" : null, j.organization || j.isp || "",
     {
@@ -117,7 +164,7 @@ function parseIpsb(text) {
 // ipinfo.io：返回 country 为 ISO 码，city 为英文名
 function parseIpinfo(text) {
   if (!text) throw new Error("ipinfo 空响应");
-  const j = JSON.parse(text);
+  const j = parseJson(text, "ipinfo");
   const cc = String(j.country || "").toUpperCase();
   return norm("ipinfo", j.ip, cc, cc ? cc === "CN" : null, j.org || j.region || "",
     {
@@ -131,7 +178,7 @@ function parseIpinfo(text) {
 // 请求带 lang=zh-CN，country/city 直接是中文名（如 日本/东京）。
 function parseIpapi(text) {
   if (!text) throw new Error("ip-api 空响应");
-  const j = JSON.parse(text);
+  const j = parseJson(text, "ip-api");
   if (j.status !== "success") throw new Error(`ip-api ${j.message || "失败"}`);
   const cc = String(j.countryCode || "").toUpperCase();
   return norm("ipapi", j.query, cc, cc ? cc === "CN" : null, "",
@@ -151,7 +198,7 @@ const QUERY = {
       ctx,
       dontLog: true,
     });
-    return parsePconline(r.text);
+    return parsePconline(bodyOf(r, "pconline"));
   },
   async ipsb(ctx) {
     const r = await httpRequest({
@@ -161,7 +208,7 @@ const QUERY = {
       ctx,
       dontLog: true,
     });
-    return parseIpsb(r.text);
+    return parseIpsb(bodyOf(r, "ip.sb"));
   },
   async ipinfo(ctx) {
     const r = await httpRequest({
@@ -171,7 +218,7 @@ const QUERY = {
       ctx,
       dontLog: true,
     });
-    return parseIpinfo(r.text);
+    return parseIpinfo(bodyOf(r, "ipinfo"));
   },
   async ipapi(ctx) {
     const r = await httpRequest({
@@ -182,7 +229,7 @@ const QUERY = {
       ctx,
       dontLog: true,
     });
-    return parseIpapi(r.text);
+    return parseIpapi(bodyOf(r, "ip-api"));
   },
 };
 
@@ -304,6 +351,9 @@ module.exports = {
   parseIpsb,
   parseIpinfo,
   parseIpapi,
+  // 供自检离线断言：错误文案必须区分「请求失败 / HTTP 错误 / 真的空正文」
+  bodyOf,
+  parseJson,
   normIsp,
   ispFromCnAddr,
   geoLabel,

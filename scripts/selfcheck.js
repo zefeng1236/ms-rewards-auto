@@ -5793,6 +5793,61 @@ checkTrue(
   "ISP 归一化：剥掉 AS 号前缀（ipinfo 的 org 形如 AS4134 xxx）",
   /v\.replace\(\/\^AS\\d\+\\s\+\/i, ""\)/.test(wmIpSrc)
 );
+
+// —— IP 查询失败必须报真实原因（2026-11-04 用户看到「ip.sb 空响应」）——
+// 根因：src/http.js 的 httpRequest **不抛异常**，失败时返回 {status:0, text:"", error}；
+// 而各家 parse 只判 `if (!text)`，于是超时 / DNS / TLS / 被墙 / 5xx 全被说成「空响应」。
+// 那句话把人往「接口返回空数据」方向带，真正的根因反而看不到。
+{
+  checkTrue(
+    "四家 IP 查询都先过 bodyOf（错误原因不被「空响应」吞掉）",
+    // 判据逐家锚定：只查「函数存在」的话，漏接一家照样全绿
+    /parsePconline\(bodyOf\(r, "pconline"\)\)/.test(wmIpSrc) &&
+      /parseIpsb\(bodyOf\(r, "ip\.sb"\)\)/.test(wmIpSrc) &&
+      /parseIpinfo\(bodyOf\(r, "ipinfo"\)\)/.test(wmIpSrc) &&
+      /parseIpapi\(bodyOf\(r, "ip-api"\)\)/.test(wmIpSrc),
+    "直接传 r.text → 请求根本没发出去时也报「空响应」，排查会白绕一圈"
+  );
+  checkTrue(
+    "bodyOf 按「传输失败 → HTTP 错误码 → 真空白」的顺序判定（行为实测）",
+    (() => {
+      const ip = require(path.join(ROOT, "src", "ip-lookup.js"));
+      if (typeof ip.bodyOf !== "function") return false;
+      const msg = (r) => {
+        try {
+          ip.bodyOf(r, "t");
+          return "";
+        } catch (e) {
+          return e.message;
+        }
+      };
+      // ① 传输失败要露出真实原因（而不是「空响应」）
+      if (!/请求失败：请求超时/.test(msg({ status: 0, text: "", error: "请求超时(8000ms)" }))) return false;
+      // ② HTTP 错误码要带上状态码
+      if (!/HTTP 429/.test(msg({ status: 429, text: "{}" }))) return false;
+      // ③ 只有真·空正文才说「空响应」，且要带状态码
+      if (!/空响应（HTTP 200/.test(msg({ status: 200, text: "" }))) return false;
+      // ④ 正常正文必须放行
+      if (msg({ status: 200, text: '{"a":1}' }) !== "") return false;
+      return true;
+    })(),
+    "顺序错了就会把「超时」说成「空响应」（正是这次用户看到的误导信息）"
+  );
+  checkTrue(
+    "非 JSON 响应要说明「拿到的是 HTML 页」",
+    (() => {
+      const ip = require(path.join(ROOT, "src", "ip-lookup.js"));
+      if (typeof ip.parseJson !== "function") return false;
+      try {
+        ip.parseJson("<html>拦截页</html>", "t");
+        return false;
+      } catch (e) {
+        return /不是 JSON/.test(e.message) && /HTML 页面/.test(e.message);
+      }
+    })(),
+    "默认 JSON.parse 只报 Unexpected token '<'，看不出是被劫持/网关拦截"
+  );
+}
 // —— 运营商名不做长度截断（2026-10-17 用户报「运营商显示不全」）——
 //   旧实现在结尾有 `v.length > 28 ? v.slice(0, 28) + "…" : v`，把
 //   "Hytron Network Services Limited"(31 字符) 砍成 "…Services Limi…"。
