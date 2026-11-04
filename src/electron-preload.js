@@ -24,6 +24,13 @@ contextBridge.exposeInMainWorld("api", {
   // 日历与签到勋章：某账户某月的每日状态 + 连续签到 + 勋章计数
   getHistory: (id, year, month) => ipcRenderer.invoke("history:get", id, year, month),
 
+  // 微软 Rewards 桌面应用：是否安装 / 是否在运行（勾选「桌面应用专属任务」前先探一次）
+  detectDesktopApp: () => ipcRenderer.invoke("desktop:detect"),
+  /** 功能发布闸门：哪些功能还在「测试中 · 延迟上线」（界面据此置灰） */
+  featureGates: () => ipcRenderer.invoke("app:featureGates"),
+  // 打开 Microsoft Store 安装页。URL 固定写在主进程，渲染层不传地址（防被当成任意跳板）
+  openDesktopStore: () => ipcRenderer.invoke("desktop:openStore"),
+
   // 外观个性化（应用级偏好，独立于账户）
   getAppearance: () => ipcRenderer.invoke("appearance:get"),
   setAppearance: (patch) => ipcRenderer.invoke("appearance:set", patch),
@@ -61,6 +68,13 @@ contextBridge.exposeInMainWorld("api", {
   vaultUnlock: (password) => ipcRenderer.invoke("vault:unlock", password),
   vaultUnlockRecovery: (key) => ipcRenderer.invoke("vault:unlockRecovery", key),
   vaultLock: () => ipcRenderer.invoke("vault:lock"),
+  // Windows Hello（PIN / 指纹）：状态查询与「验证后解锁」
+  vaultHelloStatus: () => ipcRenderer.invoke("vault:helloStatus"),
+  vaultHelloUnlock: () => ipcRenderer.invoke("vault:helloUnlock"),
+  /** 用当前会话的主密钥重建系统免密凭据（开启 Windows Hello 时先跑一次） */
+  vaultRefreshKeychain: () => ipcRenderer.invoke("vault:refreshKeychain"),
+  /** 主动清除系统免密凭据（关闭 Windows Hello 解锁时调用） */
+  vaultDiscardKeychain: () => ipcRenderer.invoke("vault:discardKeychain"),
   vaultChangePassword: (cur, next, hint) =>
     ipcRenderer.invoke("vault:changePassword", cur, next, hint),
   vaultRecoveryKey: () => ipcRenderer.invoke("vault:recoveryKey"),
@@ -183,8 +197,7 @@ contextBridge.exposeInMainWorld("api", {
   // Chromium 就绪状态变化时推送（后台自动安装 / 手动安装完成后刷新徽标）
   onChromiumStatus: (cb) => ipcRenderer.on("chromium-status", (_e, v) => cb(v)),
   // 环境拟真浏览器状态变化推送（安装 / 卸载后刷新面板）
-  onFingerprintStatus: (cb) => ipcRenderer.on("fingerprint-status", (_e, v) => cb(v)),
-  // Chromium 安装进度推送：{ stage, message?, pct?, speed?, eta?, loaded?, total? }
+  onFingerprintStatus: (cb) => ipcRenderer.on("fingerprint-status", (_e, v) => cb(v)),  // Chromium 安装进度推送：{ stage, message?, pct?, speed?, eta?, loaded?, total? }
   // 返回退订函数，组件卸载时调用避免重复订阅
   onInstallProgress: (cb) => {
     const handler = (_e, v) => cb(v);

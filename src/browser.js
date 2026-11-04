@@ -110,6 +110,9 @@ function fingerprintCfg(ctx) {
   fpBrowser.setEngine(engine);
   return {
     enable: fp.enable === true,
+    // 取消普通浏览器兜底（2026-11-04）：勾了它就不再回落普通 Chromium，
+    // 指纹浏览器不可用时本轮直接失败（见 resolveBrowserSource）。
+    noFallback: fp.noFallback === true,
     engine,
     // 只保留单个内核（默认开）。单内核模式下切换会自动卸载旧内核，
     // 避免两个内核各占 ~500MB 常驻磁盘。写 `!== false` 而不是 `=== true`：
@@ -152,9 +155,27 @@ function resolveBrowserSource(ctx) {
   // Playwright 自带 Chromium 也没下），所以预装存在时强制启用 —— 否则配置里
   // enable=false（默认值）会一路走到「未检测到可用的浏览器」直接把任务打断。
   const forced = !!fpBrowser.preinstalledDir();
+  // 取消普通浏览器兜底（2026-11-04 用户定义）：勾选后**不允许**任何普通 Chromium 顶上。
+  // 走不到指纹浏览器时返回 kind="no-fallback"，由 openContext 抛错让本轮任务停下。
+  //
+  // 为什么是「报错」而不是「静默用普通 Chromium」：用户勾这个就是为了保证每次请求
+  // 都来自那套伪装好的环境。悄悄回落到普通 Chromium 等于既没做到、又不告诉他。
+  const noFallback = cfg.noFallback && !forced;
+  if (noFallback && !cfg.enable) {
+    // 配置自相矛盾（没启用指纹却要求取消兜底）：不猜用户想怎样，直接报清楚。
+    return { kind: "no-fallback", executable: null, cfg, reason: "勾选了「取消普通浏览器兜底」，但环境拟真浏览器未启用" };
+  }
   if (forced || cfg.enable) {
     const exe = fpBrowser.executablePath();
     if (exe) return { kind: "fingerprint", executable: exe, cfg: { ...cfg, enable: true } };
+    if (noFallback) {
+      return {
+        kind: "no-fallback",
+        executable: null,
+        cfg,
+        reason: "勾选了「取消普通浏览器兜底」，但环境拟真浏览器不可用（未安装或主程序损坏）",
+      };
+    }
     logger.warn(
       forced
         ? "镜像内置环境拟真浏览器不可用（预装目录损坏？），且容器内没有其他浏览器"
@@ -202,6 +223,13 @@ async function openContext(ctx, headless, opts) {
   const source = resolveBrowserSource(ctx);
   const executable = source.executable;
   if (!executable) {
+    // 取消兜底：不能笼统说「未检测到可用浏览器」，要让用户知道是自己勾的开关导致的
+    if (source.kind === "no-fallback") {
+      throw new Error(
+        `${source.reason}。请到 软件设置 → 浏览器 → 环境拟真浏览器 启用并下载内核，` +
+          `或关掉「取消普通浏览器兜底」开关。`
+      );
+    }
     throw new Error(
       "未检测到可用的浏览器。请先运行: npx playwright install chromium（或在 GUI 中点击「安装 Chromium」）。"
     );

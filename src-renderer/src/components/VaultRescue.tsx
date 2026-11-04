@@ -33,10 +33,14 @@ export function extractRecoveryKey(text: string): string {
 export function VaultRescue({
   onWiped,
   onReset,
+  allowWeak = false,
   variant = "accordion",
 }: {
   onWiped?: () => void;
   onReset?: () => void;
+  /** 是否允许弱密码（来自 security.allowWeakPassword）。
+   *  重置密码必须与设置页使用同一套规则，否则会出现「设置页能设、这里设不了」。 */
+  allowWeak?: boolean;
   /** accordion：默认，设置页用，点「忘记密码?」展开；
    *  panel：无开关、内容常驻 —— 登录页翻页模式用（点击入口后整面翻过来） */
   variant?: "accordion" | "panel";
@@ -56,7 +60,7 @@ export function VaultRescue({
   const [confirmWipe, setConfirmWipe] = useState(false);
   const [wiping, setWiping] = useState(false);
 
-  const st = evaluatePassword(next);
+  const st = evaluatePassword(next, { allowWeak });
 
   const pickFile = async (file: File | null | undefined) => {
     if (!file) return;
@@ -81,12 +85,12 @@ export function VaultRescue({
       setErr("请输入恢复密钥，或上传建库时保存的密钥文件");
       return;
     }
-    if (!st.complex) {
-      setErr(`新密码不符合要求：${st.missing.join("、")}`);
-      return;
-    }
-    if (st.level < 3) {
-      setErr("新密码强度不足，请达到强度条的第 3 段");
+    if (!st.pass) {
+      setErr(
+        st.missing.length
+          ? `新密码不符合要求：${st.missing.join("、")}`
+          : "新密码强度不足，请达到强度条的第 3 段"
+      );
       return;
     }
     if (next !== next2) {
@@ -207,7 +211,9 @@ export function VaultRescue({
               <PasswordInput
                 value={next}
                 onChange={setNext}
-                placeholder="至少 8 位，含大小写字母、数字和特殊字符"
+                placeholder={
+                  allowWeak ? "至少 6 位，须包含字母与数字" : "至少 8 位，含大小写字母、数字和特殊字符"
+                }
                 autoComplete="new-password"
               />
             </label>

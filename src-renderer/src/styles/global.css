@@ -2859,6 +2859,33 @@ html[data-preset="opaque"] .compat-toast {
   margin: 14px 0;
 }
 
+/* 允许弱密码开关（2026-11-04）：紧贴密码框上方，视觉上从属于密码规则 */
+.wz-weak {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.wz-weak-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.wz-weak-row input {
+  width: 15px;
+  height: 15px;
+  accent-color: #ffa940;
+  cursor: pointer;
+}
+
 .wz-field {
   display: flex;
   flex-direction: column;

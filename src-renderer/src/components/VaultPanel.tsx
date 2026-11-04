@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { GlassButton } from "@ttqtt/liquid-glass-react";
-import { AppCard, Tag, toast } from "./liquidGlassCompat";
+import { AppCard, Modal, Tag, toast } from "./liquidGlassCompat";
 import { api, IS_WEB } from "../api/ipc";
 import { passkeyStatus, passkeySupported, passkeyBlockedByIp, registerPasskey } from "../api/passkeyClient";
 import { VaultRescue } from "./VaultRescue";
+import { SwitchField } from "./fields";
 import { evaluatePassword, STRENGTH_COLORS } from "../utils/passwordStrength";
 import type { VaultStatus } from "../types";
 
@@ -33,6 +34,22 @@ export function VaultPanel() {
   const [status, setStatus] = useState<VaultStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+
+  // 允许弱密码（2026-11-04）：影响本面板「首次启用」与「修改密码」两处校验。
+  // 存在全局设置里（与引导页共用同一个字段），本页只读改一处。
+  const [allowWeak, setAllowWeak] = useState(false);
+  // 开启前的降级风险确认
+  const [confirmWeak, setConfirmWeak] = useState(false);
+  // 下次启动需要输入密码（2026-11-04）：开启后启动跳过钥匙串免密，直接落锁屏
+  const [requirePw, setRequirePw] = useState(false);
+  // Windows Hello（PIN / 指纹）解锁（2026-11-04，仅 Windows 桌面版）
+  const [hello, setHello] = useState<{
+    supported: boolean;
+    available: boolean;
+    reason: string;
+    enabled: boolean;
+  } | null>(null);
+  const [useHello, setUseHello] = useState(false);
 
   // 启用加密表单
   const [pw, setPw] = useState("");
@@ -103,22 +120,98 @@ export function VaultPanel() {
   useEffect(() => {
     void load();
     void loadPk();
+    // 读「允许弱密码」：与引导页共用 security.allowWeakPassword
+    api
+      .getGlobalConfig()
+      .then((c) => {
+        setAllowWeak(c?.security?.allowWeakPassword === true);
+        setRequirePw(c?.security?.requirePasswordOnStart === true);
+      })
+      .catch(() => {});
+    // Windows Hello 状态（Web/预览模式恒不支持，按钮会自动不显示）
+    api
+      .vaultHelloStatus()
+      .then((h) => {
+        setHello(h);
+        setUseHello(h.enabled);
+      })
+      .catch(() => setHello(null));
   }, []);
+
+  /**
+   * 「下次启动需要输入密码」落盘。
+   *
+   * 只影响下一次启动 —— 不立刻锁定当前会话（那会让用户正在做的事被打断，
+   * 而且他可能只是想把开关打开，并不是现在就要锁）。
+   */
+  const setRequirePwPersist = async (v: boolean) => {
+    setRequirePw(v);
+    try {
+      await api.setGlobalConfig({ security: { requirePasswordOnStart: v } });
+      toast.success(v ? "已开启：下次启动需要输入密码" : "已关闭：下次启动自动解锁");
+    } catch {
+      toast.error("保存失败，请重试");
+    }
+  };
+
+  /**
+   * 切换「用 Windows Hello 解锁」并落盘。
+   *
+   * 开启时**顺手重建系统免密凭据**：锁屏点 Hello 要靠 .vaultkey 取真密钥，
+   * 而那份文件可能是别的 Windows 用户 / 别的机器写下的 DPAPI 密文（根本解不开）。
+   * 不重建就会出现「PIN 验证通过了却解不开」—— 2026-11-04 用户实测就是这个现象。
+   */
+  const setHelloPersist = async (v: boolean) => {
+    setUseHello(v);
+    try {
+      await api.setGlobalConfig({ security: { unlockWithWindowsHello: v } });
+      if (!v) {
+        // 关闭时**主动清掉**免密凭据：留着它等于「关了开关但凭据还在」，
+        // 安全语义上说不通（用户关掉就是不想让 PIN 能解锁）。
+        const d = await api.vaultDiscardKeychain();
+        toast.success(d.ok ? "已关闭 Windows Hello 解锁，并清除了免密凭据" : "已关闭 Windows Hello 解锁");
+        return;
+      }
+      const r = await api.vaultRefreshKeychain();
+      if (r.ok) {
+        toast.success("已开启，并已重建系统免密凭据");
+      } else {
+        // 不回滚开关：用户可能本来就打算「下次用密码解锁一次」让它自动重建
+        toast.info(
+          `已开启，但免密凭据没建成（${r.error || "未知原因"}）。下次用密码解锁一次即可自动重建`
+        );
+      }
+    } catch {
+      toast.error("保存失败，请重试");
+    }
+  };
+
+  /** 切换「允许弱密码」并落盘（与引导页同一字段，两处必须表现一致） */
+  const setWeakPassword = async (v: boolean) => {
+    setAllowWeak(v);
+    try {
+      await api.setGlobalConfig({ security: { allowWeakPassword: v } });
+    } catch {
+      /* 写盘失败以配置为准，下次进入会显示真实值 */
+    }
+  };
 
   if (!status) return null;
 
-  // 与首次向导保持一致的强度校验：达到第 3 段且四类字符齐全才允许提交
-  const stPw = evaluatePassword(pw);
-  const stNxt = evaluatePassword(nxt);
+  // 与首次向导保持一致的强度校验：默认「第 3 段 + 四类字符齐全」；
+  // 开启弱密码后只要求「≥6 位 + 字母 + 数字」。
+  const stPw = evaluatePassword(pw, { allowWeak });
+  const stNxt = evaluatePassword(nxt, { allowWeak });
 
   const enable = async () => {
     setErr("");
-    if (!stPw.complex) {
-      setErr(`密码不符合要求：${stPw.missing.join("、")}`);
-      return;
-    }
-    if (stPw.level < 3) {
-      setErr("密码强度不足，请达到强度条的第 3 段");
+    // stPw.pass 已按当前规则集算好（弱模式不卡强度档位），这里不再重复判 level
+    if (!stPw.pass) {
+      setErr(
+        stPw.missing.length
+          ? `密码不符合要求：${stPw.missing.join("、")}`
+          : "密码强度不足，请达到强度条的第 3 段"
+      );
       return;
     }
     if (pw !== pw2) {
@@ -141,12 +234,12 @@ export function VaultPanel() {
 
   const changePw = async () => {
     setErr("");
-    if (!stNxt.complex) {
-      setErr(`新密码不符合要求：${stNxt.missing.join("、")}`);
-      return;
-    }
-    if (stNxt.level < 3) {
-      setErr("新密码强度不足，请达到强度条的第 3 段");
+    if (!stNxt.pass) {
+      setErr(
+        stNxt.missing.length
+          ? `新密码不符合要求：${stNxt.missing.join("、")}`
+          : "新密码强度不足，请达到强度条的第 3 段"
+      );
       return;
     }
     if (nxt !== nxt2) {
@@ -206,6 +299,61 @@ export function VaultPanel() {
       </div>
 
       <AppCard padding={16}>
+        {/* 密码规则（2026-11-04）：首次启用与修改密码共用这一套校验。
+            统一用开关（用户要求），与设置页其它选项保持同一种控件语言。 */}
+        <SwitchField
+          label="允许弱密码（不推荐）"
+          hint={
+            allowWeak
+              ? "当前规则：总长度 ≥6 位，且必须同时包含字母与数字（不要求大小写与特殊字符）。"
+              : "默认规则：≥8 位，含小写、大写、数字、特殊字符，且强度达到第 3 段。"
+          }
+          checked={allowWeak}
+          onChange={(v) => {
+            // 开启前必须先过风险确认；关闭直接生效（降级才需要确认）
+            if (v) setConfirmWeak(true);
+            else void setWeakPassword(false);
+          }}
+        />
+
+        {/* 下次启动需要输入密码（2026-11-04）。只在已建库时出现 ——
+            没设密码就没有可输的东西，显示出来只会让人困惑。
+            这是一次性要求：本次解锁成功后主进程会自动把它关掉。 */}
+        {status.configured && (
+          <div style={{ marginTop: 10 }}>
+            <SwitchField
+              label="下次启动时需要输入密码"
+              hint={
+                requirePw
+                  ? "已开启：下次启动不会自动解锁，需要手动输入密码；本次解锁后会自动关闭这一项。"
+                  : "关闭时：日常启动由系统钥匙串自动解锁，不需要每次输密码。"
+              }
+              checked={requirePw}
+              onChange={(v) => void setRequirePwPersist(v)}
+            />
+          </div>
+        )}
+
+        {/* Windows Hello（PIN / 指纹）解锁：仅 Windows 桌面版出现。
+            不可用时也显示，但置灰并给出具体原因 —— 直接隐藏会让人以为软件没这功能。 */}
+        {status.configured && hello?.supported && (
+          <div style={{ marginTop: 10 }}>
+            <SwitchField
+              label="用 Windows Hello 解锁（PIN / 指纹）"
+              hint={
+                !hello.available
+                  ? hello.reason || "当前设备不支持 Windows Hello"
+                  : useHello
+                    ? "已开启：锁屏时会出现「用 Windows Hello 解锁」，弹系统窗口输本机 PIN 或指纹；也可以随时改用密码解锁。"
+                    : "开启后可用本机 PIN / 指纹代替输入软件密码。注意：系统只回「验证是否通过」，不会把 PIN 交给本软件，所以它挡的是「别人坐到你电脑前打开软件」，挡不住已在你账户下运行的恶意程序。"
+              }
+              checked={useHello}
+              disabled={!hello.available}
+              onChange={(v) => void setHelloPersist(v)}
+            />
+          </div>
+        )}
+
         {recovery && (
           <div className="vault-recovery">
             <div className="vault-recovery-title">恢复密钥（忘记密码时唯一的解锁方式）</div>
@@ -308,7 +456,9 @@ export function VaultPanel() {
                   type="password"
                   value={pw}
                   onChange={(e) => setPw(e.target.value)}
-                  placeholder="至少 8 位，含大小写字母、数字和特殊字符"
+                  placeholder={
+                    allowWeak ? "至少 6 位，须包含字母与数字" : "至少 8 位，含大小写字母、数字和特殊字符"
+                  }
                   autoComplete="new-password"
                 />
               </label>
@@ -405,7 +555,9 @@ export function VaultPanel() {
                   type="password"
                   value={nxt}
                   onChange={(e) => setNxt(e.target.value)}
-                  placeholder="至少 8 位，含大小写字母、数字和特殊字符"
+                  placeholder={
+                    allowWeak ? "至少 6 位，须包含字母与数字" : "至少 8 位，含大小写字母、数字和特殊字符"
+                  }
                   autoComplete="new-password"
                 />
               </label>
@@ -478,10 +630,58 @@ export function VaultPanel() {
 
         {/* 忘记密码自救：有恢复密钥就重置密码，两样都没有就清空账号数据。
             已配置保险库才有意义（没有密码可忘） */}
-        {status.configured && <VaultRescue onWiped={() => window.location.reload()} />}
+        {status.configured && (
+          <VaultRescue allowWeak={allowWeak} onWiped={() => window.location.reload()} />
+        )}
 
         {err && <div className="wz-err">{err}</div>}
       </AppCard>
+
+      {/* 允许弱密码的降级风险确认（与引导页同一套措辞）。
+          ⚠️ 必须用 Modal（portal + 原生 dialog），不能手写 fixed 遮罩：
+          设置页的内容容器带 transform，fixed 会相对它定位，弹窗被推到视口外。
+          2026-11-04 实测：遮罩铺成 3634px 高、top = -2341，界面上只看得到一片变暗。 */}
+      <Modal
+        open={confirmWeak}
+        onOpenChange={(o) => {
+          if (!o) setConfirmWeak(false);
+        }}
+        title="确定允许弱密码吗？"
+        size="sm"
+        footer={
+          <div style={{ display: "flex", alignItems: "center", gap: 8, width: "100%" }}>
+            <div style={{ flex: 1 }} />
+            <GlassButton variant="glassProminent" controlSize="small" onClick={() => setConfirmWeak(false)}>
+              继续用强密码
+            </GlassButton>
+            <GlassButton
+              variant="plain"
+              controlSize="small"
+              onClick={() => {
+                void setWeakPassword(true);
+                setConfirmWeak(false);
+              }}
+            >
+              我了解风险，启用弱密码
+            </GlassButton>
+          </div>
+        }
+      >
+        <div className="cp-body">
+          <p>
+            开启后密码只要求<b>总长度 ≥6 位且同时包含字母与数字</b>，
+            不再要求大小写混排、特殊字符，也不再要求强度条达到第 3 段。
+          </p>
+          <p>
+            代价是<b>被猜中的门槛明显降低</b>。这类密码可能几十秒就被穷举出来，
+            而保险库保护的正是你的 MS 登录态 —— 一旦被解开，别人能直接拿去登录你的账户。
+          </p>
+          <p className="cp-hint">
+            如果这台电脑只有你自己用、且磁盘没做全盘加密，弱密码勉强可以接受；
+            否则建议继续用强密码（≥8 位、四类字符齐全）。
+          </p>
+        </div>
+      </Modal>
     </div>
   );
 }

@@ -1,0 +1,18 @@
+{
+  "id": "desktop-app-tasks",
+  "name": "桌面应用专属任务",
+  "version": "1.0.0",
+  "description": "驱动微软 Rewards 桌面应用，完成「必须在本应用内完成」的活动（每周专属 / 月度 / 联名 punchcard）",
+  "entry": "index.js",
+  "task": "desktopApp",
+  "enabledByDefault": false,
+  "rules": {
+    "file": "rules.json",
+    "ttlHours": 24,
+    "remote": "https://raw.githubusercontent.com/zefeng1236/ms-rewards-auto/main/rules/desktop-app-tasks.json",
+    "mirrors": [
+      "https://cdn.jsdelivr.net/gh/zefeng1236/ms-rewards-auto@main/rules/desktop-app-tasks.json",
+      "https://ghproxy.net/https://raw.githubusercontent.com/zefeng1236/ms-rewards-auto/main/rules/desktop-app-tasks.json"
+    ]
+  }
+}

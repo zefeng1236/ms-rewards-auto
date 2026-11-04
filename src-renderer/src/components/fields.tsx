@@ -8,17 +8,39 @@ export function SwitchField({
   checked,
   onChange,
   disabled,
+  badge,
 }: {
   label: string;
   hint?: string;
   checked: boolean;
   onChange: (v: boolean) => void;
   disabled?: boolean;
+  /** 标签右侧的小徽标（如「测试中 · 延迟上线」）。用于标记尚未开放的功能。 */
+  badge?: string;
 }) {
   return (
     <div className="field-row">
       <div style={{ minWidth: 0 }}>
-        <div>{label}</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span>{label}</span>
+          {badge && (
+            <span
+              className="hint"
+              style={{
+                fontSize: 11,
+                lineHeight: "16px",
+                padding: "0 7px",
+                borderRadius: 8,
+                color: "var(--warn, #d97706)",
+                background: "rgba(217, 119, 6, 0.12)",
+                border: "1px solid rgba(217, 119, 6, 0.35)",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {badge}
+            </span>
+          )}
+        </div>
         {hint && <div className="hint">{hint}</div>}
       </div>
       <GlassSwitch aria-label="开关" checked={checked} onCheckedChange={onChange} disabled={disabled} />

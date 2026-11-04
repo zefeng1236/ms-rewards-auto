@@ -27,6 +27,8 @@ const bgLimit = require("./wallpaper-limit");
 const cancel = require("./cancel");
 const ensureDeps = require("./ensure-deps");
 const fpBrowser = require("./fingerprint-browser");
+const windowsHello = require("./windows-hello");
+const desktopApp = require("./desktop-app");
 const appUpdate = require("./app-update");
 const appearance = require("./appearance");
 const uapi = require("./uapi");
@@ -1393,6 +1395,62 @@ function registerIpc() {
     }
   });
 
+  /**
+   * 微软 Rewards 桌面应用探测（勾选「桌面应用专属任务」前先问一次）。
+   *
+   * 只读探测：不启动、不重启应用，UI 可以随手调用。
+   * 探测本身要跑 PowerShell 查 Appx 包，约 1~2 秒，所以只在用户操作时触发，不做轮询。
+   */
+  /**
+   * 功能发布闸门状态（2026-11-04）。
+   *
+   * 界面据此把入口置灰并标「测试中 · 延迟上线」。
+   * ⚠️ 渲染层不许自己写死这个常量 —— 主进程才是真源，
+   *    否则「界面灰了但主进程照跑」这种不一致永远查不出来。
+   */
+  ipcMain.handle("app:featureGates", () => {
+    const g = require("./feature-gates");
+    const d = g.desktopAppGate();
+    return {
+      desktopApp: { allowed: d.allowed, note: d.note },
+    };
+  });
+
+  ipcMain.handle("desktop:detect", async () => {
+    // 发布闸门（2026-11-04）：功能暂缓上线，探测也一并不做 ——
+    // 否则界面明明灰着，却在背后跑一次 PowerShell，纯属浪费且容易误导排查。
+    const gate = require("./feature-gates").desktopAppGate();
+    if (!gate.allowed) {
+      return { installed: false, running: false, portReady: false, delayed: true, note: gate.note };
+    }
+    try {
+      const info = await desktopApp.detect();
+      return {
+        installed: !!info.installed,
+        running: !!info.running,
+        portReady: !!info.portReady,
+      };
+    } catch (e) {
+      // 探测失败按「未安装」处理：让用户看到引导弹窗，比静默开一个跑不起来的开关好
+      return { installed: false, running: false, portReady: false, error: String((e && e.message) || e) };
+    }
+  });
+
+  /**
+   * 打开 Microsoft Store 的安装页。
+   *
+   * ⚠️ URL 写死在主进程、渲染层不传参 —— 否则这个 IPC 就成了「用系统浏览器打开任意网址」的跳板。
+   */
+  const DESKTOP_APP_STORE_URL = "https://apps.microsoft.com/detail/9mw3cmw8jksd?hl=zh-CN&gl=CN";
+  ipcMain.handle("desktop:openStore", async () => {
+    try {
+      await shell.openExternal(DESKTOP_APP_STORE_URL);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: String((e && e.message) || e) };
+    }
+  });
+
   // 日历与签到勋章：某账户某月的每日状态、连续签到天数、勋章获得次数
   ipcMain.handle("history:get", (_e, id, year, month) => {
     try {
@@ -2321,6 +2379,22 @@ function registerIpc() {
   // 一旦配置，登录态只以密文落盘，且未解锁前一律禁止读写会话。
   ipcMain.handle("vault:status", () => vault.status());
 
+  /**
+   * 「下次启动需要输入密码」是一次性的：本轮已经要求过输入，解锁成功即刻复位。
+   *
+   * 用户 2026-11-04 明确要求这个行为。语义上也说得通 —— 它表示「这一轮启动要验身份」，
+   * 验完就该恢复日常免密，否则每次开机都要输，等于把免密能力永久关掉了。
+   */
+  function consumeRequirePasswordOnStart() {
+    if (globalConfig.get()?.security?.requirePasswordOnStart !== true) return;
+    try {
+      globalConfig.set({ security: { requirePasswordOnStart: false } });
+      logger.info("「下次启动需要输入密码」已生效并自动关闭，下次启动恢复系统钥匙串免密");
+    } catch (e) {
+      logger.warn(`关闭「下次启动需要输入密码」失败: ${e.message}`);
+    }
+  }
+
   ipcMain.handle("vault:setup", (_e, password, hint) => {
     const r = vault.setup(password, hint);
     if (r.ok) {
@@ -2335,6 +2409,8 @@ function registerIpc() {
   ipcMain.handle("vault:unlock", (_e, password) => {
     const r = vault.unlock(password);
     if (r.ok) {
+      // 「下次启动需密码」是一次性要求：这次已经验过了，立刻复位
+      consumeRequirePasswordOnStart();
       // 上次锁着没能迁移的数据，这次补上
       vaultMigrate.migrateAll();
       startBackgroundWork();
@@ -2346,6 +2422,7 @@ function registerIpc() {
   ipcMain.handle("vault:unlockRecovery", (_e, key) => {
     const r = vault.unlockWithRecovery(key);
     if (r.ok) {
+      consumeRequirePasswordOnStart();
       vaultMigrate.migrateAll();
       startBackgroundWork();
       pushAccounts();
@@ -2357,6 +2434,89 @@ function registerIpc() {
     vault.lock();
     pushAccounts();
     return vault.status();
+  });
+
+  /**
+   * Windows Hello（PIN / 指纹 / 面容）是否可用。
+   * 结果在 windows-hello 模块内缓存，界面可以放心反复调用。
+   */
+  ipcMain.handle("vault:helloStatus", async () => {
+    const st = await windowsHello.isAvailable();
+    return {
+      supported: windowsHello.IS_WIN,
+      available: st.available,
+      reason: st.reason || "",
+      // 用户是否真的选了用它解锁（配置项），界面据此决定要不要显示按钮
+      enabled: globalConfig.get()?.security?.unlockWithWindowsHello === true,
+    };
+  });
+
+  /**
+   * 用 Windows Hello 验证后解锁保险库。
+   *
+   * 安全模型：Hello 只给「验证通过 / 取消」，拿不到 PIN 本身，所以它是**授权门** ——
+   * 通过后再从系统钥匙串（DPAPI）取真正的 VK。详见 src/windows-hello.js 顶部说明。
+   */
+  ipcMain.handle("vault:helloUnlock", async () => {
+    const st = await windowsHello.isAvailable();
+    if (!st.available) return { ok: false, error: st.reason || "Windows Hello 不可用" };
+    // 系统验证窗由 CredentialUIBroker 托管，是**另一个进程的顶层窗口**，默认排在应用窗之后。
+    // 实测（2026-11-04）：应用窗 (584,252) 880x600 与 PIN 窗 (796,338) 456x476 确实重叠，
+    // 而 Z 序是 0=应用窗、1=PIN 窗 —— 也就是说用户看到的是被压住的窗口。
+    //
+    // ⚠️ 不能用 setAlwaysOnTop(true)：那会让**我们的**窗口跑到系统窗之上（实测 Z 序 0=electron），
+    //    更糟。也不能只 blur：实测 blur 过头会让验证窗根本弹不出来（对照组拿不到任何结果）。
+    // 正确做法是：确保本窗不置顶 + 保持前台，然后由 windows-hello 里的辅助脚本
+    // 轮询找到 CredentialUIBroker 窗口并 SetForegroundWindow 提上来（实测 RAISE_OK=True）。
+    const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+    try {
+      win?.setAlwaysOnTop(false);
+    } catch {}
+    let v;
+    try {
+      v = await windowsHello.verify("验证身份以解锁 MS Rewards 自动化工具");
+    } finally {
+      // 验证结束把焦点还给主窗，否则用户点完 PIN 回来发现应用点不动
+      try {
+        win?.focus();
+      } catch {}
+    }
+    if (!v.ok) return { ok: false, error: v.reason || "验证未通过" };
+
+    // 免密凭据可能已失效（.vaultkey 是别的 Windows 用户 / 别的机器写下的 DPAPI 密文，
+    // 2026-11-04 实测到一例：decryptString 直接抛错，文件躺在那里但永远解不开）。
+    //   · 当前已解锁 → 内存里就有 VK，顺手重建凭据，直接算成功
+    //   · 当前没解锁 → 只能让用户先用密码解开一次
+    if (!vault.unlockWithKeychain()) {
+      if (vault.isUnlocked() && vault.refreshKeychain().ok) {
+        logger.ok("Windows Hello 验证通过，并已重建系统免密凭据");
+        return { ok: true };
+      }
+      return {
+        ok: false,
+        error:
+          "验证已通过，但本机没有可用的免密凭据。请先用密码解锁一次（或到 设置 → 安全 里重新打开一次 Windows Hello 开关来重建），之后就能用 PIN 解锁了",
+      };
+    }
+    consumeRequirePasswordOnStart();
+    vaultMigrate.migrateAll();
+    startBackgroundWork();
+    pushAccounts();
+    return { ok: true };
+  });
+
+  /** 用当前会话的 VK 重建系统免密凭据（设置页开启 Windows Hello 时调用） */
+  ipcMain.handle("vault:refreshKeychain", () => vault.refreshKeychain());
+
+  /**
+   * 主动丢弃系统免密凭据（关闭 Windows Hello 解锁时调用）。
+   *
+   * ⚠️ 只有这一个入口会删凭据。lock() 不删 —— 否则「密码解锁 → 立即锁定 → PIN 解锁」
+   * 这条最自然的操作序列会直接断掉（2026-11-04 用户实测踩到）。
+   */
+  ipcMain.handle("vault:discardKeychain", () => {
+    const r = vault.discardKeychain();
+    return { ok: r, error: r ? "" : "清除免密凭据失败" };
   });
 
   ipcMain.handle("vault:changePassword", (_e, cur, next, hint) =>
@@ -2472,8 +2632,17 @@ app.whenReady().then(() => {
 
   // 保险库自动解锁：先试系统钥匙串（日常免密），再试环境变量（Docker 场景）。
   // 都失败就保持锁定，等用户在界面输密码后再启动自动任务。
-  vault.tryAutoUnlock();
-  if (vault.isUnlocked()) vaultMigrate.migrateAll();
+  //
+  // 「下次启动需要输入密码」（2026-11-04）：开了就整段跳过 —— 不读钥匙串、
+  // 也不读环境变量，界面按 unlocked=false 落到锁屏，用户必须手输。
+  // ⚠️ 只对桌面版生效：Docker/Web 版（src/server.js）走的是无人值守自动任务，
+  //    若跟着一起跳过解锁，容器重启后任务会一直停摆。
+  if (globalConfig.get()?.security?.requirePasswordOnStart === true) {
+    logger.info("已开启「下次启动需要输入密码」，跳过系统钥匙串自动解锁（等待手动输入）");
+  } else {
+    vault.tryAutoUnlock();
+    if (vault.isUnlocked()) vaultMigrate.migrateAll();
+  }
 
   const launchCfg = launch.get();
   // 确保系统登录项与保存的设置一致（例如被其它方式改过注册表）

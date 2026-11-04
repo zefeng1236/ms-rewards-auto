@@ -5,6 +5,7 @@ import type {
   AccountRunStatusValue,
   AppConfig,
   Appearance,
+  DesktopAppInfo,
   InstallProgress,
   LaunchConfig,
   Overview,
@@ -27,9 +28,9 @@ import { mergeDeep } from "../utils";
 
 const DEFAULT_CONFIG: AppConfig = {
   useGlobal: true,
-  tasks: { sign: true, read: true, daily: true, promos: true, claim: false, search: true },
+  tasks: { sign: true, read: true, daily: true, promos: true, claim: false, search: true, desktopApp: false },
   // 定期收取积分节奏 —— 必须与 config.js / global-config.js / types 逐字段对齐
-  claimSchedule: { mode: "interval", everyDays: 7, dailyAt: "09:00" },
+  claimSchedule: { mode: "interval", everyDays: 7, dailyAt: "09:00", threshold: 300 },
   region: { lock: true, ipProvider: "bing" },
   search: { span: 30, api: "offline" },
   limits: { random: false, read: 6, promos: 0, search: 6, allowExceed: false },
@@ -72,13 +73,18 @@ const DEFAULT_CONFIG: AppConfig = {
   },
   browser: {
     // mirror / engine 默认值必须与 src/config.js / src/global-config.js 一致（selfcheck 有跨文件守卫）
-    fingerprint: { enable: true, engine: "chromix", singleEngineOnly: true, seed: 0, brand: "Chrome", hardwareConcurrency: 0, platform: "windows", mirror: "cdn.gh-proxy.org" },
+    fingerprint: { enable: true, noFallback: false, engine: "chromix", singleEngineOnly: true, seed: 0, brand: "Chrome", hardwareConcurrency: 0, platform: "windows", mirror: "cdn.gh-proxy.org" },
   },
   // 软件本体更新（0.14.5 起）—— 必须与 config.js / global-config.js / types 逐字段对齐
   update: { silentDownload: false, lastPromptDate: "", readyVersion: "", readyFile: "", readyBytes: 0, readySha256: "", dismissedVersion: "" },
   // ⚠️ 必须与 src/global-config.js 的 GLOBAL_DEFAULTS.security、types/index.ts 的
   //    AppGlobalConfig.security 对齐（铁律：四处缺一 → 白屏）
-  security: { approvalMode: "auto" },
+  security: {
+    approvalMode: "auto",
+    allowWeakPassword: false,
+    requirePasswordOnStart: false,
+    unlockWithWindowsHello: false,
+  },
   cluster: {
     role: "off",
     reportUrl: "",
@@ -441,6 +447,20 @@ export function createMockApi(): ElectronApi {
     downloadWallpaper: async () => ({ ok: false, error: "浏览器预览模式不支持下载" }),
     saveTextFile: async () => ({ ok: false, error: "浏览器预览模式不支持保存文件" }),
 
+    // 预览模式：假装「没装」，方便调「未安装」引导弹窗的样式
+    detectDesktopApp: async (): Promise<DesktopAppInfo> => ({
+      installed: false,
+      running: false,
+      portReady: false,
+      // 与真实主进程一致：桌面专属任务暂缓上线，界面应显示「测试中」而不是「未安装」
+      delayed: true,
+      note: "该功能正在测试中，暂缓上线",
+    }),
+    featureGates: async () => ({
+      desktopApp: { allowed: false, note: "该功能正在测试中，暂缓上线" },
+    }),
+    openDesktopStore: async () => ({ ok: true }),
+
     getLaunch: async () => mockLaunch,
     setLaunch: async (patch) => {
       mockLaunch = { ...mockLaunch, ...patch };
@@ -481,6 +501,21 @@ export function createMockApi(): ElectronApi {
       mockVault = { ...mockVault, unlocked: false };
       return mockVault;
     },
+    // 预览模式没有真的 Windows Hello，但这里**假装可用** —— 否则设置页第三个开关
+    // 在 dev:web 里永远看不见，样式与禁用态都没法验。
+    // 真实 Web 版走 api/web.ts（那边恒报不支持），不受这里影响。
+    vaultHelloStatus: async () => ({
+      supported: true,
+      available: true,
+      reason: "",
+      enabled: false,
+    }),
+    vaultHelloUnlock: async (): Promise<VaultResult> => ({
+      ok: false,
+      error: "预览模式不支持 Windows Hello",
+    }),
+    vaultRefreshKeychain: async () => ({ ok: true }),
+    vaultDiscardKeychain: async () => ({ ok: true }),
     vaultChangePassword: async (cur, next) => {
       if (cur !== mockVaultPw) return { ok: false, error: "当前密码不正确" };
       if (!next || next.length < 6) return { ok: false, error: "新密码至少 6 位" };

@@ -397,6 +397,12 @@ function PageVault({ onNext }: { onNext: () => void }) {
   // 关掉「启用加密」时的风险确认弹窗
   const [confirmDisable, setConfirmDisable] = useState(false);
   const [countdown, setCountdown] = useState(5);
+  // 允许弱密码（2026-11-04）：开启后密码只要求「≥6 位且含字母与数字」。
+  // 开关状态存在全局设置里（此时保险库还没建，读不到 vault.json），
+  // 因此本页初次挂载要先读一次，保证用户上次的选择能延续。
+  const [allowWeak, setAllowWeak] = useState(false);
+  // 「允许弱密码」的降级风险确认（开启前必须确认一次）
+  const [confirmWeak, setConfirmWeak] = useState(false);
   // 升级老用户防御：保险库已配置时（覆盖安装、setup.json 缺失等场景），
   // 本页不能显示创建表单 —— vaultSetup 会报「保险库已配置，请勿重复设置」。
   // null=查询中，true=已配置（渲染「已就绪」分支），false=未配置（正常表单）。
@@ -413,8 +419,9 @@ function PageVault({ onNext }: { onNext: () => void }) {
     return () => clearTimeout(t);
   }, [confirmDisable, countdown]);
 
-  // 实时强度评估（仅用于界面提示，不参与加密）
-  const st = evaluatePassword(pw);
+  // 实时强度评估（仅用于界面提示，不参与加密）。allowWeak 决定规则集：
+  // 弱密码模式只要求 ≥6 位 + 字母 + 数字，不卡强度档位。
+  const st = evaluatePassword(pw, { allowWeak });
 
   // 查询保险库状态（Hook 必须在所有 early return 之前调用，原因同上）
   useEffect(() => {
@@ -427,6 +434,21 @@ function PageVault({ onNext }: { onNext: () => void }) {
       .catch(() => {
         if (alive) setVaultCfg(false);
       });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // 读「允许弱密码」设置。为什么读全局设置而不是 vault.json：
+  // 引导页这一步保险库**还没创建**，唯一的落点就是 global-config。
+  useEffect(() => {
+    let alive = true;
+    api
+      .getGlobalConfig()
+      .then((c) => {
+        if (alive) setAllowWeak(c?.security?.allowWeakPassword === true);
+      })
+      .catch(() => {});
     return () => {
       alive = false;
     };
@@ -533,6 +555,22 @@ function PageVault({ onNext }: { onNext: () => void }) {
     );
   }
 
+  /**
+   * 切换「允许弱密码」并落盘到全局设置。
+   *
+   * 为什么写全局配置而不是保险库：本页执行时保险库还没建出来。
+   * 写盘失败只记在后台，不回滚界面 —— 界面上的即时反馈比「配置写没写进去」
+   * 更重要，真没写进去下一次进入会以配置为准，用户能看出没生效。
+   */
+  const setWeakPassword = async (v: boolean) => {
+    setAllowWeak(v);
+    try {
+      await api.setGlobalConfig({ security: { allowWeakPassword: v } });
+    } catch {
+      /* 见上：以配置为准，界面不改回去 */
+    }
+  };
+
   const submit = async () => {
     // 状态查询已确认「已配置」时（或尚未返回、处于未知态）不再尝试建库，
     // 避免和主进程的「保险库已配置」报错撞车
@@ -545,12 +583,14 @@ function PageVault({ onNext }: { onNext: () => void }) {
       return;
     }
     setErr("");
-    if (!st.complex) {
-      setErr(`密码不符合要求：${st.missing.join("、")}`);
-      return;
-    }
-    if (st.level < 3) {
-      setErr("密码强度不足，请达到强度条的第 3 段");
+    // st.pass 已按当前规则集算好：弱模式只验「≥6 位 + 字母 + 数字」，
+    // 强模式还要强度到第 3 段。这里不再重复判断 level，避免两处口径打架。
+    if (!st.pass) {
+      setErr(
+        st.missing.length
+          ? `密码不符合要求：${st.missing.join("、")}`
+          : "密码强度不足，请达到强度条的第 3 段"
+      );
       return;
     }
     if (pw !== pw2) {
@@ -625,12 +665,33 @@ function PageVault({ onNext }: { onNext: () => void }) {
 
       {enable && (
         <div className="wz-fields">
+          {/* 允许弱密码（2026-11-04）：必须放在密码框之前 —— 它决定下面那条规则怎么校验。
+              勾选会先弹风险确认，确认后才真正开启。 */}
+          <div className="wz-weak">
+            <label className="wz-weak-row">
+              <input
+                type="checkbox"
+                checked={allowWeak}
+                onChange={(e) => {
+                  if (e.target.checked) setConfirmWeak(true);
+                  else void setWeakPassword(false);
+                }}
+              />
+              <span>允许弱密码（不推荐）</span>
+            </label>
+            <div className="hint">
+              {allowWeak
+                ? "当前规则：总长度 ≥6 位，且必须同时包含字母与数字（不要求大小写与特殊字符）。"
+                : "默认规则：≥8 位，含小写、大写、数字、特殊字符，且强度达到第 3 段。"}
+            </div>
+          </div>
+
           <label className="wz-field">
             <span>加密密码</span>
             <PasswordInput
               value={pw}
               onChange={setPw}
-              placeholder="至少 8 位，含大小写字母、数字和特殊字符"
+              placeholder={allowWeak ? "至少 6 位，须包含字母与数字" : "至少 8 位，含大小写字母、数字和特殊字符"}
               autoComplete="new-password"
             />
           </label>
@@ -652,7 +713,11 @@ function PageVault({ onNext }: { onNext: () => void }) {
               </div>
               <span className="wz-pw-label" style={{ color: st.level >= 3 ? STRENGTH_COLORS[4] : STRENGTH_COLORS[0] }}>
                 {st.label}
-                {st.pass ? "（符合要求）" : "（需达到第 3 段）"}
+                {st.pass
+                  ? "（符合要求）"
+                  : allowWeak
+                    ? "（需 ≥6 位且含字母与数字）"
+                    : "（需达到第 3 段）"}
               </span>
             </div>
           )}
@@ -727,6 +792,42 @@ function PageVault({ onNext }: { onNext: () => void }) {
                 }}
               >
                 启用密码
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 允许弱密码的风险确认：确认后才真正开启（默认仍推荐强密码） */}
+      {confirmWeak && (
+        <div className="wz-modal-mask" role="dialog" aria-modal="true" aria-label="允许弱密码的风险提示">
+          <div className="wz-modal">
+            <h3>确定允许弱密码吗？</h3>
+            <p className="wz-modal-lead">
+              开启后密码只要求<strong>总长度 ≥6 位且同时包含字母与数字</strong>，
+              不再要求大小写混排、特殊字符，也不再要求强度条达到第 3 段。
+            </p>
+            <p className="wz-modal-lead">
+              代价是<strong>被猜中的门槛明显降低</strong>。这类密码可能几十秒就被穷举出来，
+              而保险库保护的正是你的 MS 登录态 —— 一旦被解开，别人能直接拿去登录你的账户。
+            </p>
+            <p className="wz-modal-sug">
+              如果这台电脑只有你自己用、且磁盘没做全盘加密，弱密码勉强可以接受；
+              否则建议继续用强密码（≥8 位、四类字符齐全）。
+            </p>
+            <div className="wz-modal-act">
+              <button
+                type="button"
+                className="wz-btn-danger"
+                onClick={() => {
+                  void setWeakPassword(true);
+                  setConfirmWeak(false);
+                }}
+              >
+                我了解风险，启用弱密码
+              </button>
+              <button type="button" className="wz-btn-primary" onClick={() => setConfirmWeak(false)}>
+                继续用强密码
               </button>
             </div>
           </div>

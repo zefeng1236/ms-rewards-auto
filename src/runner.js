@@ -5,6 +5,8 @@ const logger = require("./logger");
 const notify = require("./notify");
 const rewards = require("./rewards");
 const tasks = require("./tasks");
+const plugins = require("./plugins");
+const pluginRules = require("./plugin-rules");
 const cancel = require("./cancel");
 const goals = require("./goals");
 const { STATUS } = require("./history");
@@ -144,6 +146,67 @@ async function runAccountGuarded(ctx, opts) {
 }
 
 /**
+ * 执行「桌面应用专属任务」。
+ *
+ * 与本项目登录态**完全无关**：它驱动的是微软 Rewards 桌面应用自己的会话，
+ * 不读本项目的 cookie / access token。所以未登录时也要照跑（见 runOnce 的未登录分支）。
+ *
+ * 走插件（desktop-app-tasks）：代码稳定，行为参数来自规则文件，每天可从 GitHub 热更新。
+ * 单条任务失败不能拖垮整轮，这里兜住异常并返回可读原因。
+ *
+ * @param {object} ctx 账户上下文
+ * @returns {Promise<object>} 结果对象（status / gained / points / reason / notInstalled …）
+ */
+async function runDesktopTask(ctx) {
+  try {
+    const plugin = plugins.get("desktop-app-tasks");
+    if (!plugin) return { status: "retry", reason: "插件 desktop-app-tasks 不可用" };
+    const { rules } = await pluginRules.ensureRules(plugin, { log: (m) => logger.info(m) });
+    return await plugin.module.run(ctx, rules, { onLog: (m) => logger.info(m) });
+  } catch (e) {
+    return { status: "error", error: String((e && e.message) || e).slice(0, 120) };
+  }
+}
+
+/**
+ * 把桌面任务结果转成汇总行文案（正常流程与「未登录」分支共用，保证说法一致）。
+ *
+ * 必须把「未启用 / 未安装 / 应用没起来 / 点了没到账 / 完成 N 项」分开说，
+ * 合并成一句「未运行」会让用户以为程序漏跑了。
+ */
+function formatDesktopLine(r) {
+  if (!r) return "未运行";
+  // 暂缓上线（2026-11-04）：老配置里 desktopApp 可能还是 true，但闸门挡住了。
+  // 不能报「未启用」（那是用户的选择）或「未运行」（像故障），要说清是功能还没开放。
+  if (r.delayed) return "暂缓上线";
+  if (r.disabled) return "未启用";
+  if (r.notInstalled) return "跳过(未安装 Rewards 应用)";
+  // 桌面应用自己没登录：与本项目登录态无关，跳过即可，不要当成项目故障
+  if (r.notLoggedIn) return `跳过(Rewards 桌面应用未登录)`;
+  if (r.status === "retry") return `未完成(${r.reason || "应用未就绪"})`;
+  if (r.status === "error") return `失败(${r.error || "未知错误"})`;
+  if (r.gained > 0) return `完成 ${r.gained} 项 +${r.points || 0} 分`;
+  // 点到了但没到账：必须如实说，不能算成「完成」
+  if (r.clicked > 0) return `已点击 ${r.clicked} 项但未到账`;
+  return r.reason || "今日无可做项";
+}
+
+/**
+ * 取出「该写进通知的具体错误内容」。
+ *
+ * 用户要求：桌面任务跳过/出错时，通知里要能直接看到原因，
+ * 而不是只有一句「未运行」逼他自己去开应用排查。
+ */
+function desktopDetailOf(r) {
+  if (!r) return "";
+  // detail 是「比摘要更具体的现场信息」（页面 URL / 页面内容）
+  if (r.detail) return String(r.detail).slice(0, 200);
+  if (r.status === "error") return String(r.error || "未知错误").slice(0, 200);
+  // retry 的原因已经写进摘要括号里，再列一遍只是噪音
+  return "";
+}
+
+/**
  * 运行单个账户的全部任务
  * @param {object} ctx 账户上下文
  * @param {{interactive?: boolean}} [opts]
@@ -214,6 +277,25 @@ async function runOnce(ctxRaw, opts = {}) {
   }
 
   // 4. 顺序执行任务（签入/阅读依赖 access token，无 token 则跳过并提示授权）
+  /**
+   * 每天首次运行：检查一次「可领取」是否达到阈值（2026-11-04 用户定的默认规则）。
+   *
+   * 与下面的定时领取**互相独立**：不看 shouldRunClaim 的天数节流，
+   * 只看「今天这个时机查过没有」+「可领取是否 ≥ threshold（默认 300）」。
+   * 放在任务链最前面：趁早把攒够的积分领掉，后面任务出错也不影响这一步。
+   */
+  if (cfg.tasks.claim) {
+    try {
+      const rStart = await tasks.taskClaimByThreshold(ctx, { trigger: "start" });
+      if (rStart && rStart.status !== "skip") {
+        logger.info(`🎁 首次运行检查：${rStart.reason || `+${rStart.gained || 0} 分`}`);
+      }
+    } catch (e) {
+      logger.warn(`首次运行阈值检查失败: ${String((e && e.message) || e).slice(0, 100)}`);
+    }
+    cancel.throwIfAborted();
+  }
+
   // 每个任务完成后增量保存今日合计，避免在搜索长等待中被中断时数据全丢
   const persistSummary = (extra) => {
     const g = state.get();
@@ -266,6 +348,24 @@ async function runOnce(ctxRaw, opts = {}) {
   // 定期收取积分：默认关闭（tasks.claim），开启后每周自动点一次「领取」（内部 7 天节流）
   const rClaim = cfg.tasks.claim ? await tasks.taskClaimRewards(ctx) : { status: "skip", disabled: true };
   result.tasks.claim = rClaim;
+  persistSummary();
+  cancel.throwIfAborted();
+  // 桌面应用专属任务（2026-10-31）：
+  // 这类活动标着「必须在本应用内完成」，用本项目自带浏览器去做一律不计分
+  // （程序化导航会被 Bing 附加 dmreload=1，服务端判定为非用户访问）。
+  // 所以它独立于其它任务，走外部进程驱动（src/desktop-app.js）。
+  let rDesktopApp;
+  // 发布闸门（2026-11-04）：功能暂缓上线 → 直接 skip，连外部程序都不启动。
+  // 注意这里判的是「闸门」而不是「用户开关」：老配置里 desktopApp 可能还是 true，
+  // 光看开关会照跑，而界面上这个入口已经是灰的。
+  if (cfg.tasks.desktopApp && require("./feature-gates").desktopAppGate().allowed) {
+    rDesktopApp = await runDesktopTask(ctx);
+  } else if (cfg.tasks.desktopApp) {
+    rDesktopApp = { status: "skip", reason: "功能暂缓上线", delayed: true };
+  } else {
+    rDesktopApp = { status: "skip", disabled: true };
+  }
+  result.tasks.desktopApp = rDesktopApp;
   persistSummary();
   cancel.throwIfAborted();
   const rSearch = await tasks.taskSearch(ctx);
@@ -396,6 +496,19 @@ async function runOnce(ctxRaw, opts = {}) {
   }
   lines.push(`🧩 积分活动: ${promosText}`);
 
+  // 桌面专属任务：必须把「未启用 / 未安装 / 应用没起来 / 今天没有 / 完成了 N 项」
+  // 这五种情况分开说。合并成一句「未运行」会让用户以为程序漏跑。
+  //
+  // 2026-11-04：功能暂缓上线期间整行都不输出 —— 这条汇总会推送到群/邮件，
+  // 多一行「暂缓上线」等于每轮都在解释一个用户根本没有的功能。
+  if (cfg.tasks.desktopApp && !(rDesktopApp && rDesktopApp.delayed)) {
+    lines.push(`🖥️ 桌面专属: ${formatDesktopLine(rDesktopApp)}`);
+    // 未登录 / 出错时把具体内容一并写进汇总（汇总会被推送出去），
+    // 用户看通知就能判断「要不要去 Rewards 应用里点一下登录」，不用自己复现。
+    const dDetail = desktopDetailOf(rDesktopApp);
+    if (dDetail) lines.push(`   ↳ ${dDetail}`);
+  }
+
   // 搜索：显示「已完成多少、还剩多少」，而不是只说「已完成」
   const sp2 = (rSearch && rSearch.progress) || tasks.searchProgressSnapshot(state);
   const searchDone = state.isTaskDoneToday("search");
@@ -445,6 +558,22 @@ async function runOnce(ctxRaw, opts = {}) {
   if (dayEval.done) {
     if (state.markDayComplete()) {
       logger.success(`账户「${ctx.name}」今日全部任务已完成，自动循环将在明日恢复`);
+      /**
+       * 当天收工：最后再查一次「可领取」（2026-11-04 默认规则）。
+       * 与「首次运行」那次是同一套逻辑、不同时机标记；一天各一次，
+       * 且**独立于定时节流**（不看 lastClaimDate）。
+       * 只在真正收工（markDayComplete 首次返回真）时做，避免每轮都开一次浏览器。
+       */
+      if (cfg.tasks.claim) {
+        try {
+          const rFinish = await tasks.taskClaimByThreshold(ctx, { trigger: "finish" });
+          if (rFinish && rFinish.status !== "skip") {
+            logger.info(`🎁 收工检查：${rFinish.reason || `+${rFinish.gained || 0} 分`}`);
+          }
+        } catch (e) {
+          logger.warn(`收工阈值检查失败: ${String((e && e.message) || e).slice(0, 100)}`);
+        }
+      }
     }
   } else if (dayEval.pending.length) {
     logger.info(`账户「${ctx.name}」尚未完成：${dayEval.pending.join("、")}`);
@@ -916,6 +1045,9 @@ function startDaemon(opts = {}) {
 
 module.exports = {
   runOnce,
+  // 汇总文案（单独导出便于验证通知里到底写了什么）
+  formatDesktopLine,
+  desktopDetailOf,
   runAll,
   runBatch,
   runAccountGuarded,

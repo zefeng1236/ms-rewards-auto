@@ -26,6 +26,8 @@ const GLOBAL_DEFAULTS = {
     daily: true,
     claim: false,
     search: true,
+    // 桌面应用专属任务：默认关闭（唯一依赖外部应用的开关）
+    desktopApp: false,
   },
   /**
    * 定期收取积分的节奏（2026-10-06）。
@@ -38,6 +40,8 @@ const GLOBAL_DEFAULTS = {
     mode: "interval", // interval=每隔 everyDays 天 | daily=每天到 dailyAt
     everyDays: 7,     // interval 模式：1~30，默认 7（与旧行为一致）
     dailyAt: "09:00", // daily 模式：本地时区 HH:MM
+    // 阈值补领：每天首次运行 / 收工时各读一次「可领取」，≥ 此值就领。0 = 关闭
+    threshold: 300,
   },
   region: {
     lock: true,
@@ -110,6 +114,9 @@ const GLOBAL_DEFAULTS = {
   browser: {
     fingerprint: {
       enable: true,    // 启用环境拟真浏览器（未安装则自动回落普通 Chromium；默认开启，首次运行自动下载）
+      // 取消普通浏览器兜底（2026-11-04）：勾选后只用指纹浏览器，不可用就报错停下，
+      // 详见 config.js 同名注释。前提是 enable 已开启；Docker 版不生效（本就无兜底）。
+      noFallback: false,
       // 环境拟真内核（2026-10-06 起两个内核并存，用户可自选）：
       //   chromix = Chromix 155（默认，稳定）
       //   fp150  = adryfish/fingerprint-chromium 150（备用，**当前不可选**：
@@ -160,6 +167,17 @@ const GLOBAL_DEFAULTS = {
    */
   security: {
     approvalMode: "auto",
+    // 允许弱密码（不推荐，2026-11-04）：开启后保险库密码只要求「≥6 位且含字母与数字」，
+    // 不再要求大小写/特殊字符/强度第 3 段。开启时界面必须弹窗告知安全性降低。
+    // 关闭（默认）走强密码规则。主进程始终保留「≥6 位」硬底线。
+    allowWeakPassword: false,
+    // 下次启动时要求输入密码（2026-11-04）：开启后跳过系统钥匙串的免密自动解锁，
+    // 启动即弹解锁界面。关闭时恢复「日常启动免密」。
+    requirePasswordOnStart: false,
+    // 用 Windows Hello（PIN / 指纹 / 面容）代替输入软件密码解锁（2026-11-04，仅 Windows）。
+    // ⚠️ 它只是「授权门」：验证通过后仍从系统钥匙串取真密钥，因为系统不返回 PIN 本身，
+    //    无法用 PIN 派生密钥。能挡「别人坐到你电脑前开软件」，挡不住「恶意程序已在你账户下运行」。
+    unlockWithWindowsHello: false,
   },
   // 跨客户端汇总（多台/多地客户端推送到同一个群时，一眼看出谁没完成）
   //

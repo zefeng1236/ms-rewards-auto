@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "version": 1,
+  "updatedAt": "2026-11-01",
+  "note": "这是「桌面应用专属任务」插件的远程规则。客户端每天拉取一次，只覆盖同名同类型字段，未知键会被丢弃。改这里不需要发新版本。",
+  "quest": {
+    "includePrefixes": ["WW_pcparent_", "ENWW_pcparent_"],
+    "earnUrl": "https://rewards.bing.com/earn",
+    "minRenderChars": 300
+  },
+  "card": {
+    "formParam": "form",
+    "selectorTemplate": "a[href*=\"form={form}\"]",
+    "forbidVisiblePseudo": true,
+    "maxWaitMs": 40000
+  },
+  "landing": {
+    "rejectPatterns": ["[?&]dmreload=1"],
+    "redirectRelayPattern": "rewards\\.bing\\.com/redirect",
+    "dwellMs": 2500,
+    "dwellRounds": 3
+  },
+  "cooldown": {
+    "hints": [
+      "间隔至少 24 小时",
+      "每次搜索必须间隔",
+      "24 hours",
+      "every 24 hours",
+      "一天一次",
+      "每天一次"
+    ],
+    "skipIfNoGain": true,
+    "skipScope": "day"
+  },
+  "runtime": {
+    "renderWaitMs": 18000,
+    "maxItemsPerRun": 1,
+    "startTimeoutMs": 30000,
+    "restartOnRenderBroken": true,
+    "restartMaxTimes": 1
+  }
+}

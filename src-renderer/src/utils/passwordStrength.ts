@@ -97,16 +97,38 @@ function hitCommon(pw: string): boolean {
   return false;
 }
 
+/** 强密码规则的最小长度 */
+export const STRONG_MIN_LEN = 8;
+/** 弱密码规则的最小长度（2026-11-04 用户指定：总长度不少于 6 位） */
+export const WEAK_MIN_LEN = 6;
+
+export interface PasswordRuleOptions {
+  /**
+   * 允许弱密码（不推荐）—— 对应设置项 security.allowWeakPassword。
+   *
+   * 开：总长度 ≥6 且同时含字母与数字即可（不要求大小写、不要求特殊字符、
+   *     不要求强度条到第 3 段）。
+   * 关（默认）：≥8 位 + 小写/大写/数字/特殊四类齐全 + 强度第 3 段。
+   *
+   * ⚠️ 无论开不开，主进程都有「≥6 位」的硬底线（src/vault/index.js），
+   * 这里只决定界面允不允许提交。
+   */
+  allowWeak?: boolean;
+}
+
 /**
  * 评估密码强度
  * @param pw 待评估的密码
+ * @param opts 规则选项（是否允许弱密码）
  */
-export function evaluatePassword(pw: string): PasswordStrength {
+export function evaluatePassword(pw: string, opts: PasswordRuleOptions = {}): PasswordStrength {
+  const allowWeak = opts.allowWeak === true;
+  const minLen = allowWeak ? WEAK_MIN_LEN : STRONG_MIN_LEN;
   const empty: PasswordStrength = {
     level: 0,
     complex: false,
     pass: false,
-    missing: ["长度至少 8 位"],
+    missing: [`长度至少 ${minLen} 位`],
     weakHints: [],
     label: "未输入",
   };
@@ -116,14 +138,21 @@ export function evaluatePassword(pw: string): PasswordStrength {
   const hasUpper = /[A-Z]/.test(pw);
   const hasDigit = /\d/.test(pw);
   const hasSpecial = SPECIAL_RE.test(pw);
-  const lenOk = pw.length >= 8;
+  const hasLetter = hasLower || hasUpper;
+  const lenOk = pw.length >= minLen;
 
   const missing: string[] = [];
-  if (!lenOk) missing.push("长度至少 8 位");
-  if (!hasLower) missing.push("小写字母");
-  if (!hasUpper) missing.push("大写字母");
-  if (!hasDigit) missing.push("数字");
-  if (!hasSpecial) missing.push("特殊字符");
+  if (!lenOk) missing.push(`长度至少 ${minLen} 位`);
+  if (allowWeak) {
+    // 弱模式：只要求「字母 + 数字」，大小写与特殊字符都算加分项
+    if (!hasLetter) missing.push("字母");
+    if (!hasDigit) missing.push("数字");
+  } else {
+    if (!hasLower) missing.push("小写字母");
+    if (!hasUpper) missing.push("大写字母");
+    if (!hasDigit) missing.push("数字");
+    if (!hasSpecial) missing.push("特殊字符");
+  }
   const complex = missing.length === 0;
 
   // 种类数（0~4）+ 长度加分 → 映射到 1~5 档
@@ -145,7 +174,8 @@ export function evaluatePassword(pw: string): PasswordStrength {
   if (hitCommon(pw)) weakHints.push("接近常见弱密码或键盘序列");
 
   const labels = ["太弱", "弱", "一般", "较强", "强", "非常强"];
-  const pass = complex && level >= 3;
+  // 弱模式下「合规即可提交」，不再卡强度档位；强模式维持原有要求。
+  const pass = allowWeak ? complex : complex && level >= 3;
 
   return {
     level,

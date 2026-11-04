@@ -63,9 +63,30 @@ function isUnlocked() {
 function adoptVk(nextVk) {
   vk = nextVk;
   if (keychain.isAvailable()) {
-    keychain.saveKey(KEY_FILE, crypto.toB64(nextVk));
+    // ⚠️ 检查返回值：写失败（权限 / DPAPI 异常）以前是静默的，
+    // 结果就是「明明输过密码，下次启动却还是没有免密凭据」，极难自查。
+    if (!keychain.saveKey(KEY_FILE, crypto.toB64(nextVk))) {
+      logger.warn("系统钥匙串写入失败，下次启动可能仍需输入密码（可在 设置 → 安全 里用「Windows Hello」开关重建）");
+    }
   }
   return true;
+}
+
+/**
+ * 用当前内存里的 VK 重建系统免密凭据（2026-11-04 加）。
+ *
+ * 场景：.vaultkey 是旧 DPAPI 密文（换过 Windows 用户、从别的机器拷过数据目录、
+ * 或历史版本写的），decryptString 直接抛错 → 免密解锁永远失败。
+ * 只要此刻保险库是解锁的（VK 在内存里），就能把正确的一份重新写回去。
+ */
+function refreshKeychain() {
+  if (!vk) return { ok: false, error: "保险库未解锁" };
+  if (!keychain.isAvailable()) return { ok: false, error: "当前系统不支持钥匙串托管" };
+  if (!keychain.saveKey(KEY_FILE, crypto.toB64(vk))) {
+    return { ok: false, error: "写入系统钥匙串失败（可能没有写入权限）" };
+  }
+  logger.ok("已重建系统免密凭据");
+  return { ok: true };
 }
 
 /**
@@ -149,7 +170,19 @@ function tryKeychainUnlock() {
   if (!isConfigured()) return false;
   if (!keychain.isAvailable()) return false;
   const s = keychain.loadKey(KEY_FILE);
-  if (!s) return false;
+  if (!s) {
+    // 文件存在但解不开（DPAPI 只对「同一 Windows 用户 + 同一台机器」有效）：
+    // 典型来源是换了 Windows 用户、从别的机器拷了整个数据目录、或历史版本写下的密文。
+    // 这里主动删掉死文件 —— 否则每次启动都白试一遍，而且用户永远不知道它坏了。
+    // 下一次「用密码 / 恢复密钥解锁」会通过 adoptVk 自动重建。
+    try {
+      if (fs.existsSync(KEY_FILE)) {
+        fs.unlinkSync(KEY_FILE);
+        logger.warn("系统钥匙串里的免密凭据已失效（无法解密），已清理；下次用密码解锁后会自动重建");
+      }
+    } catch {}
+    return false;
+  }
   const meta = readMeta();
   if (!meta) return false;
   try {
@@ -191,12 +224,23 @@ function tryAutoUnlock() {
   return false;
 }
 
-/** 锁定：丢弃内存主密钥与系统托管 */
+/**
+ * 锁定：只丢弃内存里的主密钥，**保留**系统钥匙串托管。
+ *
+ * 【为什么不能连钥匙串一起删 —— 2026-11-04 用户实测】
+ *   原来这里调 `keychain.clearKey(KEY_FILE)`，导致这条最自然的操作序列直接坏掉：
+ *       密码解锁（凭据被重建）→ 点「立即锁定」→ 凭据被删
+ *       → 用 Windows Hello 解锁 → 验证通过但找不到凭据 → 报「本机没有可用的免密凭据」
+ *   而「锁定」的语义本来就只是「清掉内存里的密钥，让界面回到锁屏」，
+ *   免密凭据是**这个 Windows 用户在这台机器上的长期授权**，不该被一次手动锁定抹掉。
+ *
+ * 什么时候才真的删凭据：用户主动「关闭 Windows Hello 解锁」、或凭据解不开（自愈路径）。
+ * 那是两个明确的意图，各有各的入口，不在这里顺带做。
+ */
 function lock() {
   vk = null;
   unlockedByEnv = false;
-  keychain.clearKey(KEY_FILE);
-  logger.info("保险库已锁定");
+  logger.info("保险库已锁定（系统免密凭据保留，Windows Hello 仍可解锁）");
   return true;
 }
 
@@ -274,6 +318,18 @@ function getRecoveryKey() {  const meta = readMeta();
   }
 }
 
+/**
+ * 主动丢弃系统免密凭据（2026-11-04）。
+ *
+ * 与 lock() 分开：lock 只清内存密钥，**不删凭据**；只有用户明确「关闭 Windows Hello
+ * 解锁」时才调这里 —— 否则就会出现「锁一下之后 PIN 就再也解不开了」。
+ */
+function discardKeychain() {
+  keychain.clearKey(KEY_FILE);
+  logger.info("已清除系统免密凭据（Windows Hello 将无法再解锁）");
+  return true;
+}
+
 /** 供界面渲染的状态快照 */
 function status() {
   const meta = readMeta();
@@ -309,12 +365,18 @@ module.exports = {
   unlock,
   unlockWithRecovery,
   tryAutoUnlock,
+  // 只走系统钥匙串这一条路（2026-11-04：Windows Hello 验证通过后用它取 VK）。
+  // 与 tryAutoUnlock 的区别：不碰环境变量，也不做「失败就报一堆日志」的兜底，
+  // 调用方已经决定了要用这条路径。
+  unlockWithKeychain: tryKeychainUnlock,
   exportVkB64,
   unlockWithVkB64,
   changePassword,
   resetPasswordWithRecovery,
   getRecoveryKey,
+  refreshKeychain,
   lock,
+  discardKeychain,
   status,
   encryptJSON,
   decryptJSON,

@@ -16,6 +16,7 @@ import type {
   ClusterReportStats,
   ClusterRuntimeState,
   DeepPartial,
+  DesktopAppInfo,
   DownloadResult,
   FingerprintStatus,
   ReleaseNotesResult,
@@ -53,6 +54,15 @@ import type {
  */
 
 /* ============================== 传输层 ============================== */
+
+/**
+ * 微软 Rewards 桌面应用的 Microsoft Store 安装页。
+ *
+ * 与主进程 src/electron-main.js 里的 DESKTOP_APP_STORE_URL 保持一致 ——
+ * 桌面版由主进程用 shell.openExternal 打开，浏览器版只能 window.open，
+ * 两边各存一份常量（不想为此加一个 RPC 往返）。
+ */
+const DESKTOP_APP_STORE_URL = "https://apps.microsoft.com/detail/9mw3cmw8jksd?hl=zh-CN&gl=CN";
 
 class NotLoggedInError extends Error {
   constructor() {
@@ -328,6 +338,26 @@ export function createWebApi(): ElectronApi {
       }
     },
 
+    /* ---------------- 微软 Rewards 桌面应用 ---------------- */
+    // 浏览器 / Docker 版跑在服务端，碰不到本机的 Rewards 桌面应用，
+    // 所以一律按「未安装」返回，让 UI 走安装引导（而不是开一个永远跑不起来的开关）。
+    detectDesktopApp: async (): Promise<DesktopAppInfo> => ({
+      installed: false,
+      running: false,
+      portReady: false,
+      error: "浏览器 / Docker 版无法使用本机桌面应用",
+    }),
+    openDesktopStore: async () => {
+      try {
+        if (typeof window !== "undefined") {
+          window.open(DESKTOP_APP_STORE_URL, "_blank", "noopener,noreferrer");
+        }
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, error: (e as Error).message };
+      }
+    },
+
     /* ---------------- 每日一言 ---------------- */
     getHitokoto: () => rpc<Hitokoto | null>("getHitokoto"),
     // 浏览器版把一言同步到标签页标题（等价于桌面版的原生窗口标题栏）
@@ -368,6 +398,26 @@ export function createWebApi(): ElectronApi {
       return r;
     },
     vaultLock: () => rpc<VaultStatus>("vaultLock"),
+    // Windows Hello 是桌面版独占能力（靠 powershell 调 WinRT），Web/Docker 恒不支持。
+    // 返回固定结构而不是抛错：锁屏页据此就不渲染那个按钮，不必额外判 IS_WEB。
+    vaultHelloStatus: async () => ({
+      supported: false,
+      available: false,
+      reason: "仅 Windows 桌面版支持 Windows Hello",
+      enabled: false,
+    }),
+    vaultHelloUnlock: async (): Promise<VaultResult> => ({
+      ok: false,
+      error: "仅 Windows 桌面版支持 Windows Hello",
+    }),
+    // 桌面版才有「系统钥匙串托管」这回事，Web/Docker 用环境变量或凭据文件
+    vaultRefreshKeychain: async () => ({ ok: false, error: "仅桌面版支持系统钥匙串托管" }),
+    vaultDiscardKeychain: async () => ({ ok: false, error: "仅桌面版支持系统钥匙串托管" }),
+    // Web 版同样吃发布闸门：桌面应用专属任务在容器里本来就跑不了，
+    // 这里直接报「暂缓上线」，与桌面版口径一致。
+    featureGates: async () => ({
+      desktopApp: { allowed: false, note: "该功能正在测试中，暂缓上线" },
+    }),
     vaultChangePassword: (current, next, hint) => rpc<VaultResult>("vaultChangePassword", current, next, hint),
     vaultRecoveryKey: () => rpc<VaultResult>("vaultRecoveryKey"),
     vaultResetPasswordWithRecovery: async (key, next, hint) => {

@@ -539,19 +539,247 @@ function shouldRunClaim({ mode, everyDays, dailyAt, lastDate, lastAt, todayNum, 
   return { ok: true };
 }
 
+/**
+ * 读取页面上「可领取」的积分数（读不到返回 null）。
+ *
+ * 用途：领取前后各读一次，只有数字**真的变小**才算领到。
+ * 之前是「点完就 claimed++」，点了没生效也会报「已处理 N 个领取入口」，
+ * 用户看到的是「每天都在点、积分就是不涨」（2026-11-04 用户报障）。
+ */
+async function readPendingPoints(page) {
+  try {
+    return await page.evaluate(() => {
+      const t = (document.body.innerText || "").replace(/\s+/g, " ");
+      const m = /可领取[^0-9]{0,20}([\d,]{1,9})/.exec(t);
+      return m ? Number(m[1].replace(/,/g, "")) : null;
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 领取动作本体：打开页面 → 读「可领取」→（可选阈值）→ 精确点击 → 回读验证。
+ *
+ * 被两个**互相独立**的入口复用，它们只共享「怎么领」，不共享「该不该跑」：
+ *   taskClaimRewards      定时节奏（每 N 天 / 每天到点）
+ *   taskClaimByThreshold  按金额触发（每天首次运行 / 收工各查一次，满阈值就领）
+ *
+ * @param {object} ctx
+ * @param {{ threshold?: number }} [opts] threshold>0 时，低于该值直接返回 below 不点击
+ * @returns {Promise<{kind:"claimed"|"below"|"none"|"stalled"|"error",
+ *   before?:number|null, after?:number|null, delta?:number|null, threshold?:number, error?:string}>}
+ */
+async function claimOnce(ctx, opts = {}) {
+  const { threshold = 0 } = opts;
+  const state = ctx.state;
+  let handle = null;
+  try {
+    handle = await browser.openContext(ctx, true, { cookies: state.getCookies() });
+    const page = handle.context.pages()[0] || (await handle.context.newPage());
+    // dashboard 才有「可领取 N 积分」卡片；根路径有时只渲染导航和广告位
+    await page.goto("https://rewards.bing.com/dashboard", {
+      waitUntil: "domcontentloaded",
+      timeout: 60000,
+    });
+    await sleep(5000);
+
+    const before = await readPendingPoints(page);
+    logger.info(`🎁 当前可领取：${before == null ? "读取失败" : `${before} 分`}`);
+
+    // 阈值补领：没到阈值就不点（点一次要开浏览器 + 点击 + 回读，成本不低）
+    if (threshold > 0 && before != null && before < threshold) {
+      return { kind: "below", before, threshold };
+    }
+
+    /**
+     * 选「领取」按钮必须选**最精确、面积最小**的那个（2026-11-04 修）。
+     *
+     * 页面里整张「可领取 / 2,839 / 领取」卡片本身也是 button 或 a，它的 innerText
+     * 同样含「领取」。原来用 includes("领取") 会先命中外层容器，点它等于点卡片 ——
+     * 什么都不发生，但日志照样打「已点击领取入口」，于是表现为：
+     *   每次运行都点了、积分永远不涨、点击后一个 HTTP 请求都没有（用户报障原症状）。
+     */
+    const pick = await page.evaluate(() => {
+      const visible = (el) => {
+        const r = el.getBoundingClientRect();
+        const s = getComputedStyle(el);
+        return r.width > 1 && r.height > 1 && s.visibility !== "hidden" && s.display !== "none";
+      };
+      const all = Array.from(document.querySelectorAll("button, a[href], [role='button']")).filter((el) => {
+        const t = (el.innerText || el.getAttribute("aria-label") || "").trim();
+        return visible(el) && t.includes("领取") && !t.includes("已领取");
+      });
+      if (!all.length) return { count: 0, diag: [] };
+      const exact = all.filter((el) => (el.innerText || "").trim() === "领取");
+      const pool = exact.length ? exact : all;
+      const area = (el) => {
+        const r = el.getBoundingClientRect();
+        return r.width * r.height;
+      };
+      // 面积最小的最像按钮本身（外层容器往往远大于按钮）
+      pool.sort((a, b) => area(a) - area(b));
+      const target = pool[0];
+      target.setAttribute("data-msr-claim", "1");
+      const r = target.getBoundingClientRect();
+      return {
+        count: pool.length,
+        text: (target.innerText || "").trim().replace(/\s+/g, " ").slice(0, 30),
+        exact: exact.length > 0,
+        rect: [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)],
+        diag: all.slice(0, 6).map((el) => (el.innerText || "").trim().replace(/\s+/g, " ").slice(0, 40)),
+      };
+    });
+
+    if (!pick.count) {
+      /**
+       * 区分「确实没有可领」和「页面根本没加载出领取区域」。
+       * 后者最常见的原因就是**没登录**（打开的是登录引导页）。
+       */
+      const hasClaimArea = await page
+        .evaluate(() => /可领取/.test(document.body.innerText || ""))
+        .catch(() => false);
+      if (!hasClaimArea) {
+        return { kind: "error", error: "页面上没有「可领取」区域（可能未登录）", before };
+      }
+      return { kind: "none", before };
+    }
+    logger.log(
+      "🎁",
+      `找到 ${pick.count} 个领取入口，点击目标「${pick.text}」${pick.exact ? "" : "（无精确匹配，退回包含匹配）"}`
+    );
+
+    /**
+     * 用真实鼠标点击，而不是 `el.click()`。
+     * Fluent / React 组件对纯 DOM click 可能不响应，表现为「点了但没有任何网络请求」。
+     * 真点失败再退回 DOM click 兜底。
+     */
+    let clicked = false;
+    try {
+      await page.locator('[data-msr-claim="1"]').first().click({ timeout: 10000 });
+      clicked = true;
+    } catch (e) {
+      logger.warn(`真实点击失败，退回 DOM click：${String((e && e.message) || e).slice(0, 80)}`);
+      try {
+        await page.evaluate(() => document.querySelector('[data-msr-claim="1"]')?.click());
+        clicked = true;
+      } catch {}
+    }
+    if (!clicked) return { kind: "error", error: "领取入口无法点击", before };
+    logger.log("🎁", "已点击领取入口，等待生效");
+    await sleep(3000);
+
+    // 点击后可能出现确认对话框（也可能整页跳转到领取/兑换页）
+    const confirmResult = await page
+      .evaluate(() => {
+        const dialogs = Array.from(
+          document.querySelectorAll("[role='dialog'], [aria-modal='true'], [data-rac]")
+        );
+        const visible = dialogs.find((node) => {
+          const style = getComputedStyle(node);
+          const rect = node.getBoundingClientRect();
+          return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+        });
+        if (!visible) return { dialog: false, clicked: false, text: "" };
+        const buttons = Array.from(visible.querySelectorAll("button, [role='button'], a[href]"));
+        const action = buttons.find((node) => {
+          const text = (node.innerText || node.getAttribute("aria-label") || "").trim();
+          return /^(领取|确认|确定|继续|立即领取|兑换)/.test(text) && !/取消|关闭/.test(text);
+        });
+        if (!action) return { dialog: true, clicked: false, text: (visible.innerText || "").slice(0, 60) };
+        action.click();
+        return { dialog: true, clicked: true, text: (action.innerText || "").trim().slice(0, 20) };
+      })
+      .catch(() => ({ dialog: false, clicked: false, text: "" }));
+    if (confirmResult.dialog) {
+      logger.log(
+        "🎁",
+        confirmResult.clicked
+          ? `已确认对话框按钮「${confirmResult.text}」`
+          : `出现对话框但没找到确认按钮：${String(confirmResult.text || "").slice(0, 40)}`
+      );
+      await sleep(3000);
+    }
+
+    /**
+     * 另一种常见形态：点卡片后**整页跳转**到领取/兑换页，确认按钮在页面上而不是对话框里。
+     * 只在「没找到对话框」且已经离开 dashboard 时才试，避免在首页乱点。
+     */
+    if (!confirmResult.clicked && !/\/dashboard/i.test(page.url())) {
+      const landedBtn = await page
+        .evaluate(() => {
+          const cands = Array.from(document.querySelectorAll("button, a[href], [role='button']")).filter((el) => {
+            const t = (el.innerText || "").trim();
+            const r = el.getBoundingClientRect();
+            return r.width > 1 && r.height > 1 && /^(领取|确认|立即领取|兑换|兑换奖励)$/.test(t);
+          });
+          if (!cands.length) return null;
+          cands[0].setAttribute("data-msr-confirm", "1");
+          return (cands[0].innerText || "").trim();
+        })
+        .catch(() => null);
+      if (landedBtn) {
+        await page
+          .locator('[data-msr-confirm="1"]')
+          .first()
+          .click({ timeout: 8000 })
+          .catch(() => {});
+        logger.log("🎁", `已在落地页点击「${landedBtn}」`);
+        await sleep(3000);
+      } else {
+        logger.log("🎁", `点击后跳转到 ${page.url().slice(0, 80)}，但页面上没找到可点的确认按钮`);
+      }
+    }
+
+    /**
+     * 验证：回 dashboard 重新读「可领取」。
+     * 只有数字真的变小才算领到 —— 点了不等于领到，这一步是判据。
+     */
+    if (!/rewards\.bing\.com/i.test(page.url())) {
+      await page
+        .goto("https://rewards.bing.com/dashboard", { waitUntil: "domcontentloaded", timeout: 60000 })
+        .catch(() => {});
+    } else {
+      await page.reload({ waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => {});
+    }
+    await sleep(4500);
+    const after = await readPendingPoints(page);
+    const delta = before != null && after != null ? before - after : null;
+    if (delta && delta > 0) return { kind: "claimed", before, after, delta };
+    return { kind: "stalled", before, after };
+  } catch (e) {
+    if (e && e.isAbort) throw e;
+    return { kind: "error", error: String((e && e.message) || e).slice(0, 160) };
+  } finally {
+    if (handle) await browser.closeContext(handle).catch(() => {});
+  }
+}
+
+/**
+ * 入口一：按**定时节奏**领取（原有行为，受 claimSchedule.mode 节流）。
+ */
 async function taskClaimRewards(ctx) {
   const state = ctx.state;
-  // 开关守卫：默认关闭（见 config DEFAULTS.tasks.claim）。关闭时 runner 也不会调用，
-  // 这里再守一层，避免任何旧调用路径绕过开关。
   if (!ctx.config.get().tasks.claim) {
     return { status: "skip", reason: "未开启定期收取积分" };
   }
   const todayNum = Number(state.getDateNum()); // YYYYMMDD
 
+  /**
+   * 今天已经试过但没领到 → 本轮不再重试。
+   *
+   * 为什么不用 lastClaimDate 挡：那是「成功过」的时间戳，一旦在失败时也写进去，
+   * 就会把下一次尝试推到 N 天后 —— 正是「每天都开电脑却一直没领到」的成因之一。
+   * 失败单独记 lastClaimFailedDate，按天失效，明天自然会再试。
+   */
+  if (Number(state.get().lastClaimFailedDate || 0) === todayNum) {
+    const prev = String(state.get().lastClaimFailReason || "").slice(0, 80);
+    return { status: "skip", reason: `今天已尝试领取但未成功${prev ? `（${prev}）` : ""}，明天再试` };
+  }
+
   // 节奏配置（2026-10-06）。⚠️ 用 || 回退到默认值：旧配置文件没有这段，
   // 直接解构会拿到 undefined → everyDays 变 NaN → 节流判定恒为真 → 每次都领。
-  const cfgAll = ctx.config.get() || {};
-  const sched = cfgAll.claimSchedule || {};
+  const sched = (ctx.config.get() || {}).claimSchedule || {};
   const gate = shouldRunClaim({
     mode: sched.mode,
     everyDays: sched.everyDays,
@@ -574,98 +802,98 @@ async function taskClaimRewards(ctx) {
       ? `每天 ${String(sched.dailyAt || "09:00")}`
       : `每 ${Math.min(30, Math.max(1, Math.floor(Number(sched.everyDays) || 7)))} 天`;
 
-  let handle = null;
-  let claimed = 0;
-  try {
-    handle = await browser.openContext(ctx, true, { cookies: state.getCookies() });
-    const page = handle.context.pages()[0] || (await handle.context.newPage());
-    await page.goto("https://rewards.bing.com/", { waitUntil: "domcontentloaded", timeout: 60000 });
-    await sleep(4000);
+  const r = await claimOnce(ctx);
 
-    // 找出所有「可点击的领取入口」：文案含「领取」且不在「已领取」语境里
-    const targets = await page.evaluate(() => {
-      const out = [];
-      const els = document.querySelectorAll("button, a[href], [role='button']");
-      for (const el of els) {
-        const t = (el.innerText || el.getAttribute("aria-label") || "").trim();
-        if (!t || !t.includes("领取")) continue;
-        if (t.includes("已领取")) continue;
-        // 卡片整体文案，用来判断是不是「待领取」状态
-        const card = el.closest("[class*='card'], [class*='Card']") || el.parentElement;
-        const cardText = (card && card.innerText ? card.innerText : t).replace(/\s+/g, " ");
-        out.push({ text: t.slice(0, 60), cardText: cardText.slice(0, 120) });
-      }
-      return out;
-    });
+  if (r.kind === "claimed") {
+    state.get().lastClaimDate = todayNum;
+    state.get().lastClaimAt = claimNow;
+    delete state.get().lastClaimFailedDate;
+    delete state.get().lastClaimFailReason;
+    state.save();
+    logger.success(`🎁 领取成功：可领取 ${r.before} → ${r.after}（+${r.delta} 分，${claimCadence}）`);
+    return { status: "done", claimed: 1, gained: r.delta };
+  }
 
-    if (!targets.length) {
-      logger.info("🎁 没有可领取的积分（未找到待领取入口）");
-      state.get().lastClaimDate = todayNum;
-      state.get().lastClaimAt = claimNow;
-      state.save();
-      return { status: "done", claimed: 0, reason: "无待领取项" };
-    }
-
-    // 逐个点击（页面中「领取」入口可能不止一个）。
-    // 第一次点击可能弹出站内确认对话框；若继续用 Playwright 普通 click 点页面旧元素，
-    // 对话框遮罩会拦截 pointer events 并等待满 30 秒。这里用 DOM click 触发入口，
-    // 随后优先处理可见对话框中的「领取 / 确认 / 继续」按钮。
-    const els = await page.$$("button, a[href], [role='button']");
-    for (const el of els) {
-      cancel.throwIfAborted();
-      let info = null;
-      try {
-        info = await el.evaluate((n) => {
-          const t = (n.innerText || n.getAttribute("aria-label") || "").trim();
-          return { t };
-        });
-      } catch {
-        continue;
-      }
-      if (!info || !info.t || !info.t.includes("领取") || info.t.includes("已领取")) continue;
-      try {
-        await el.evaluate((n) => n.click());
-        logger.log("🎁", `已点击领取入口：${info.t.slice(0, 40)}`);
-        await sleep(800);
-
-        const confirmed = await page.evaluate(() => {
-          const dialogs = Array.from(document.querySelectorAll("[role='dialog'], [aria-modal='true'], [data-rac]"));
-          const visible = dialogs.find((node) => {
-            const style = getComputedStyle(node);
-            const rect = node.getBoundingClientRect();
-            return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
-          });
-          if (!visible) return false;
-          const buttons = Array.from(visible.querySelectorAll("button, [role='button'], a[href]"));
-          const action = buttons.find((node) => {
-            const text = (node.innerText || node.getAttribute("aria-label") || "").trim();
-            return /^(领取|确认|确定|继续|立即领取)/.test(text) && !/取消|关闭/.test(text);
-          });
-          if (!action) return false;
-          action.click();
-          return true;
-        });
-        if (confirmed) logger.log("🎁", "已确认领取对话框");
-        claimed++;
-        await sleep(2500);
-      } catch (e) {
-        logger.warn(`点击领取入口失败: ${e.message}`);
-      }
-    }
-
+  if (r.kind === "none") {
+    logger.info("🎁 没有可领取的积分（未找到待领取入口）");
     state.get().lastClaimDate = todayNum;
     state.get().lastClaimAt = claimNow;
     state.save();
-    const msg = claimed > 0 ? `🎁 已处理 ${claimed} 个领取入口（${claimCadence}）` : `🎁 ${claimCadence}，本次无需领取`;
-    logger.success(msg);
-    return { status: "done", claimed };
-  } catch (e) {
-    if (e && e.isAbort) throw e;
-    logger.warn(`领取积分出错: ${e.message}`);
-    return { status: "error", error: e.message };
-  } finally {
-    if (handle) await browser.closeContext(handle).catch(() => {});
+    return { status: "done", claimed: 0, reason: "无待领取项" };
   }
+
+  // error / stalled：不写 lastClaimDate（否则 N 天内不再试），只记「今天试过但失败」
+  const reason =
+    r.kind === "stalled"
+      ? `点击后未生效（${r.before ?? "?"}→${r.after ?? "?"}）`
+      : String(r.error || "未知原因").slice(0, 100);
+  state.get().lastClaimFailedDate = todayNum;
+  state.get().lastClaimFailReason = reason;
+  state.save();
+  logger.warn(`🎁 领取未成功：${reason}。已记录，明天再试。`);
+  return { status: "error", error: reason };
+}
+
+/**
+ * 入口二：**阈值补领**（2026-11-04 用户定的默认规则）。
+ *
+ * 与定时节奏**完全独立**：不看 lastClaimDate / shouldRunClaim，只看两件事
+ *   ① 今天这个时机（start = 每天首次运行 / finish = 当天收工）查过没有；
+ *   ② 「可领取」是否 ≥ claimSchedule.threshold（默认 300）。
+ *
+ * 为什么单独成方法：定时节奏解决「隔多久领一次」，阈值解决「够多了就赶紧领」，
+ * 两者的判据不同；混在一个函数里会让节流和时间戳互相污染（旧版就是这么出问题的）。
+ *
+ * @param {object} ctx
+ * @param {{ trigger?: "start"|"finish" }} [opts]
+ */
+async function taskClaimByThreshold(ctx, opts = {}) {
+  const trigger = opts && opts.trigger === "finish" ? "finish" : "start";
+  const when = trigger === "finish" ? "收工" : "首次运行";
+  const state = ctx.state;
+  if (!ctx.config.get().tasks.claim) {
+    return { status: "skip", reason: "未开启定期收取积分" };
+  }
+  const sched = (ctx.config.get() || {}).claimSchedule || {};
+  const threshold = Math.max(0, Math.floor(Number(sched.threshold)) || 0);
+  if (threshold <= 0) {
+    return { status: "skip", reason: "阈值补领已关闭（threshold=0）" };
+  }
+  const todayNum = Number(state.getDateNum());
+  const mark = trigger === "start" ? "lastClaimStartCheck" : "lastClaimFinishCheck";
+  if (Number(state.get()[mark] || 0) === todayNum) {
+    return { status: "skip", reason: `今天已做过「${when}」检查` };
+  }
+  // 同一时机每天只查一次：**无论结果如何都打标记**，避免一天内反复开浏览器。
+  state.get()[mark] = todayNum;
+  state.save();
+
+  const r = await claimOnce(ctx, { threshold });
+
+  if (r.kind === "below") {
+    logger.info(`🎁 可领取 ${r.before} 分，未达阈值 ${threshold}，「${when}」检查不领`);
+    return { status: "done", claimed: 0, reason: `未达阈值（${r.before}/${threshold}）` };
+  }
+  if (r.kind === "claimed") {
+    // 既然真领到了，顺带把定时入口的时间戳也更新，避免下一轮定时再开一次浏览器
+    state.get().lastClaimDate = todayNum;
+    state.get().lastClaimAt = Date.now();
+    delete state.get().lastClaimFailedDate;
+    delete state.get().lastClaimFailReason;
+    state.save();
+    logger.success(`🎁 满 ${threshold} 自动领取（${when}）：${r.before} → ${r.after}（+${r.delta} 分）`);
+    return { status: "done", claimed: 1, gained: r.delta, reason: `满阈值领取 +${r.delta}` };
+  }
+  if (r.kind === "none") {
+    logger.info(`🎁 「${when}」检查：没有可领取的积分`);
+    return { status: "done", claimed: 0, reason: "无可领取项" };
+  }
+
+  // 阈值检查失败**不写 lastClaimFailedDate**：那是定时入口的状态，
+  // 让它写会把「定时领取」也一并挡掉，两个入口就又耦合上了。
+  const reason = r.kind === "stalled" ? `点击后未生效（${r.before ?? "?"}→${r.after ?? "?"}）` : String(r.error || "未知原因").slice(0, 100);
+  logger.warn(`🎁 阈值补领（${when}）未成功：${reason}`);
+  return { status: "error", error: reason };
 }
 
 /**
@@ -1127,6 +1355,8 @@ module.exports = {
   taskDaily,
   taskPromos,
   taskClaimRewards,
+  // 阈值补领（独立于定时节奏，由 runner 在「每天首次运行 / 收工」两处调用）
+  taskClaimByThreshold,
   // 节流判定抽成纯函数导出（2026-10-06）—— 门禁要拿固定 now 直接驱动它做断言，
   // 不必真的开无头浏览器访问 rewards.bing.com
   shouldRunClaim,

@@ -16,6 +16,8 @@ import type {
   ClusterReportStats,
   ClusterRuntimeState,
   DeepPartial,
+  DesktopAppInfo,
+  FeatureGates,
   DownloadResult,
   FingerprintStatus,
   HistorySnapshot,
@@ -89,6 +91,14 @@ export interface ElectronApi {
   /** 某账户某月的日历 + 连续签到 + 勋章计数（year/month 缺省为当前月） */
   getHistory(id: string, year?: number, month?: number): Promise<HistorySnapshot>;
 
+  // ---- 微软 Rewards 桌面应用 ----
+  /** 只读探测：是否安装 / 是否在运行 / 调试端口是否就绪（不启动应用） */
+  detectDesktopApp(): Promise<DesktopAppInfo>;
+  /** 功能发布闸门：哪些功能还在「测试中 · 延迟上线」 */
+  featureGates(): Promise<FeatureGates>;
+  /** 打开 Microsoft Store 的 Rewards 安装页（地址固定在主进程，不接受参数） */
+  openDesktopStore(): Promise<{ ok: boolean; error?: string }>;
+
   // ---- 外观 ----
   getAppearance(): Promise<Appearance>;
   setAppearance(patch: Partial<Appearance>): Promise<AppearanceSetResult>;
@@ -121,6 +131,14 @@ export interface ElectronApi {
   /** 用恢复密钥解锁（忘记密码时） */
   vaultUnlockRecovery(key: string, remember?: boolean): Promise<VaultResult>;
   vaultLock(): Promise<VaultStatus>;
+  /** Windows Hello（PIN / 指纹 / 面容）是否可用，以及用户是否选了用它解锁 */
+  vaultHelloStatus(): Promise<{ supported: boolean; available: boolean; reason: string; enabled: boolean }>;
+  /** 弹系统级验证窗，验证通过后从钥匙串取 VK 解锁（仅 Windows） */
+  vaultHelloUnlock(): Promise<VaultResult>;
+  /** 用当前会话的主密钥重建系统免密凭据（开启 Windows Hello 时先跑一次） */
+  vaultRefreshKeychain(): Promise<{ ok: boolean; error?: string }>;
+  /** 主动清除系统免密凭据（关闭 Windows Hello 解锁时调用） */
+  vaultDiscardKeychain(): Promise<{ ok: boolean; error?: string }>;
   vaultChangePassword(current: string, next: string, hint?: string): Promise<VaultResult>;
   /** 取恢复密钥（仅已解锁时可用，内部会轮换一把新的） */
   vaultRecoveryKey(): Promise<VaultResult>;

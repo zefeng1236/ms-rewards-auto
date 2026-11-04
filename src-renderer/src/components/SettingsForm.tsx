@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { GlassButton, GlassSwitch } from "@ttqtt/liquid-glass-react";
 import { Input, InputNumber, Modal, Select, SelectOption } from "./liquidGlassCompat";
 import { NumberField, Section, SelectField, SwitchField, TextField, TimeField } from "./fields";
+import { DesktopAppMissingDialog } from "./DesktopAppMissingDialog";
+import { api } from "../api/ipc";
 import type { AppConfig, DeepPartial, GoalItem, ScheduleWindow } from "../types";
 
 const SEARCH_API_OPTIONS: SelectOption[] = [
@@ -36,6 +38,13 @@ const TASK_LABELS: { key: keyof AppConfig["tasks"]; label: string; hint?: string
     hint: "自动点击「领取」按钮，收取待领取的积分；频率在下方设置",
   },
   { key: "search", label: "搜索积分", hint: "自动使用 Bing 搜索，每次 3 分，满额为止" },
+  {
+    key: "desktopApp",
+    label: "桌面应用专属任务",
+    // 这类活动必须在微软自家 Rewards 桌面应用内「真实点击」才计分，
+    // 用本软件自带浏览器会被服务端判为程序化访问而不给分，因此单独成一个开关。
+    hint: "自动完成「必须在本应用内完成」类活动（每周专属、月度、联名 punchcard）；需已安装微软 Rewards 桌面应用",
+  },
 ];
 
 /**
@@ -137,6 +146,23 @@ export function SettingsForm({
   showLogging?: boolean;
 }) {
   const [testing, setTesting] = useState(false);
+
+  // 「桌面应用专属任务」开关：打开前先探测是否装了 Rewards 桌面应用。
+  // 没装就弹引导（开关保持关闭），避免用户开了一个永远跑不起来的开关。
+  const [deskChecking, setDeskChecking] = useState(false);
+  const [deskMissing, setDeskMissing] = useState(false);
+  const [storeBusy, setStoreBusy] = useState(false);
+  /**
+   * 「桌面应用专属任务」是否暂缓上线（2026-11-04）。
+   *
+   * 状态来自主进程的发布闸门，**不在渲染层写死常量** —— 否则界面灰着、主进程照跑，
+   * 这种不一致极难自查。取不到时按「可用」处理（保守：宁可显示可用后被拦，
+   * 也不要因为一次 IPC 失败就让所有人看到一个永远点不动的开关）。
+   */
+  const [deskDelayed, setDeskDelayed] = useState<{ delayed: boolean; note: string }>({
+    delayed: false,
+    note: "",
+  });
   const [pushOpen, setPushOpen] = useState(false);
   // 收起态展示的「已启用通道」= 已配置且开关为开（只把真会收到推送的列出来）
   const activePushProviders = PUSH_PROVIDERS.filter(
@@ -145,6 +171,64 @@ export function SettingsForm({
 
   const patchSchedule = (p: Partial<AppConfig["schedule"]>) =>
     onChange({ schedule: p } as DeepPartial<AppConfig>);
+
+  // 读发布闸门：桌面专属任务暂缓上线时，入口置灰 + 标「测试中」
+  useEffect(() => {
+    let alive = true;
+    api
+      .featureGates()
+      .then((g) => {
+        if (!alive) return;
+        setDeskDelayed({
+          delayed: !g?.desktopApp?.allowed,
+          note: g?.desktopApp?.note || "该功能正在测试中，暂缓上线",
+        });
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  /**
+   * 任务开关的统一入口。
+   *
+   * 只有「桌面应用专属任务」需要前置检查：它靠外部 Rewards 桌面应用完成，
+   * 没装就开了也只是每轮报「未安装」。所以先探测，未安装就弹引导、开关保持关闭。
+   * 其余开关一律直通（不要给别的开关加隐式副作用）。
+   */
+  const handleTaskToggle = async (key: keyof AppConfig["tasks"], v: boolean) => {
+    if (key !== "desktopApp" || !v) {
+      onChange({ tasks: { [key]: v } } as DeepPartial<AppConfig>);
+      return;
+    }
+    setDeskChecking(true);
+    try {
+      const info = await api.detectDesktopApp();
+      if (!info.installed) {
+        setDeskMissing(true);
+        return; // 开关保持关闭
+      }
+      onChange({ tasks: { desktopApp: true } } as DeepPartial<AppConfig>);
+    } catch {
+      // 探测失败也按未安装处理：至少能让用户看到「去哪装」，比静默失败好
+      setDeskMissing(true);
+    } finally {
+      setDeskChecking(false);
+    }
+  };
+
+  const openDesktopStore = async () => {
+    setStoreBusy(true);
+    try {
+      await api.openDesktopStore();
+    } catch {
+      /* 系统没关联商店时静默：弹窗仍会关掉，用户可自行搜索应用名 */
+    } finally {
+      setStoreBusy(false);
+      setDeskMissing(false);
+    }
+  };
 
   const windows = value.schedule?.windows ?? [];
 
@@ -211,9 +295,23 @@ export function SettingsForm({
             <SwitchField
               key={key}
               label={label}
-              hint={hint}
-              checked={!!value.tasks?.[key]}
-              onChange={(v) => onChange({ tasks: { [key]: v } } as DeepPartial<AppConfig>)}
+              hint={
+                key === "desktopApp" && deskDelayed.delayed
+                  ? `${deskDelayed.note}（暂时无法开启）`
+                  : key === "desktopApp" && deskChecking
+                    ? "正在检测 Rewards 桌面应用…"
+                    : hint
+              }
+              // 暂缓上线时也显示「测试中」徽标（不是隐藏入口 —— 藏起来会让人以为没这功能）
+              badge={key === "desktopApp" && deskDelayed.delayed ? "测试中 · 延迟上线" : undefined}
+              // 暂缓上线期间一律显示为关闭：哪怕老配置里是 true，实际也不会执行
+              // （runner / desktop-app 都按闸门跳过）。显示「开启 + 禁用」会让人以为它还在跑。
+              checked={
+                key === "desktopApp" && deskDelayed.delayed ? false : !!value.tasks?.[key]
+              }
+              // 探测要跑一次 PowerShell（1~2 秒），期间禁用以防连点拨出两个状态
+              disabled={(key === "desktopApp" && deskChecking) || (key === "desktopApp" && deskDelayed.delayed)}
+              onChange={(v) => void handleTaskToggle(key, v)}
             />
           ))}
         </div>
@@ -567,6 +665,14 @@ export function SettingsForm({
           </div>
         )}
       </Section>
+
+      {/* 未安装引导：Modal 走 portal + 原生 <dialog>，放在表单内部也不会被布局裁掉 */}
+      <DesktopAppMissingDialog
+        open={deskMissing}
+        busy={storeBusy}
+        onCancel={() => setDeskMissing(false)}
+        onOpenStore={() => void openDesktopStore()}
+      />
     </div>
   );
 }

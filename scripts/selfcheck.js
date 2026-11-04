@@ -314,8 +314,73 @@ fs.rmSync(testRoot, { recursive: true, force: true });
 /* ============ 6. 领取弹窗确认逻辑静态守卫 ============ */
 console.log("\n【6】领取弹窗确认逻辑");
 const tasksSource = fs.readFileSync(path.join(ROOT, "src", "tasks.js"), "utf8");
-checkTrue("领取入口改用 DOM click 避免遮罩拦截", tasksSource.includes("await el.evaluate((n) => n.click())"));
-checkTrue("领取后会处理可见确认对话框", tasksSource.includes("[role='dialog']") && tasksSource.includes("已确认领取对话框"));
+/**
+ * 2026-11-04 改判：旧守卫「改用 DOM click」**把 bug 当成了规范**。
+ *
+ * 实情：页面里整张「可领取 / 2,839 / 领取」卡片也是 button/a，innerText 同样含
+ * 「领取」，includes 会先命中外层容器；再叠加 DOM click 对 Fluent 组件不生效，
+ * 结果就是「每次运行都点、积分永远不涨、点击后一个 HTTP 请求都没有」。
+ * 现在要求：真实鼠标点击为主，DOM click 只能作兜底。
+ */
+checkTrue(
+  "领取入口必须用真实点击（DOM click 仅兜底）",
+  /locator\('\[data-msr-claim="1"\]'\)\.first\(\)\.click\(/.test(tasksSource),
+  "纯 DOM click 对 Fluent/React 按钮可能不触发任何网络请求"
+);
+checkTrue(
+  "领取按钮只选精确匹配/面积最小的元素",
+  tasksSource.includes("exact.length ? exact : all") && tasksSource.includes("area(a) - area(b)"),
+  "按包含匹配会命中外层卡片容器，点它等于什么都没做"
+);
+checkTrue("领取后会处理可见确认对话框", tasksSource.includes("[role='dialog']") && tasksSource.includes("已确认对话框按钮"));
+checkTrue(
+  "领取结果必须用「可领取」数字变化来验证",
+  tasksSource.includes("readPendingPoints") && tasksSource.includes("before - after"),
+  "点了不等于领到；不验证就会报「已处理 N 个」而积分没动"
+);
+checkTrue(
+  "领取失败不写 lastClaimDate（否则 N 天内不再重试）",
+  tasksSource.includes("lastClaimFailedDate") && tasksSource.includes("lastClaimFailReason"),
+  "失败也更新成功时间戳，就是「每天都开电脑却一直领不到」的成因"
+);
+checkTrue(
+  "领取：找不到「可领取」区域时不能记成已领",
+  tasksSource.includes("if (!hasClaimArea)") &&
+    // 该分支必须**直接返回错误**（记为失败），不能顺势往下走成「今天已领取」
+    /if \(!hasClaimArea\) \{[\s\S]{0,350}?return \{ kind: "error"/.test(tasksSource),
+  "未登录时页面同样没有领取入口，会被判成「今天领过了」，叠加节流就永远领不到"
+);
+// —— 阈值补领是独立入口（2026-11-04 用户要求「和节流的分开」）——
+// 注意：模块级的 runnerSrc 在文件后面才定义，这里必须自己读一份
+const runnerForClaim = fs.readFileSync(path.join(ROOT, "src", "runner.js"), "utf8");
+checkTrue(
+  "领取：阈值补领是独立函数，不混进定时节流",
+  /async function taskClaimByThreshold\(ctx, opts = \{\}\)/.test(tasksSource) &&
+    /tasks\.taskClaimByThreshold/.test(runnerForClaim),
+  "混在一个函数里会让节流和时间戳互相污染"
+);
+checkTrue(
+  "领取：阈值补领不看 lastClaimDate（与节流解耦）",
+  /async function taskClaimByThreshold[\s\S]{0,1200}?lastClaimStartCheck/.test(tasksSource),
+  "阈值入口若也受天数节流约束，就退化成一个更慢的定时领取"
+);
+checkTrue(
+  "领取：阈值补领有「首次运行 / 收工」两个触发点",
+  /trigger: "start"/.test(runnerForClaim) && /trigger: "finish"/.test(runnerForClaim),
+  "少一个时机就少一次补领机会"
+);
+checkTrue(
+  "领取：阈值默认 300，四处配置对齐",
+  /threshold: 300/.test(fs.readFileSync(path.join(ROOT, "src", "config.js"), "utf8")) &&
+    /threshold: 300/.test(fs.readFileSync(path.join(ROOT, "src", "global-config.js"), "utf8")) &&
+    /threshold: 300/.test(
+      fs.readFileSync(path.join(ROOT, "src-renderer", "src", "api", "mock.ts"), "utf8")
+    ) &&
+    /threshold: number/.test(
+      fs.readFileSync(path.join(ROOT, "src-renderer", "src", "types", "index.ts"), "utf8")
+    ),
+  "四处缺一 → 旧配置读不到默认阈值（或渲染层白屏）"
+);
 
 /* ============ 7. 向导升级兼容静态守卫 ============ */
 console.log("\n【7】向导升级兼容（覆盖安装老用户）");
@@ -680,8 +745,8 @@ check("global-config：每日活动默认启用", globalDefaults.tasks.daily, tr
 check("global-config：定期收取积分默认关闭", globalDefaults.tasks.claim, false);
 check("global-config：IP 服务默认 bing", globalDefaults.region.ipProvider, "bing");
 checkTrue(
-  "渲染层 mock 新开关默认同步（daily:true / claim:false / ipProvider:bing）",
-  /tasks: \{ sign: true, read: true, daily: true, promos: true, claim: false, search: true \}/.test(mockSrc) &&
+  "渲染层 mock 新开关默认同步（daily:true / claim:false / desktopApp:false / ipProvider:bing）",
+  /tasks: \{ sign: true, read: true, daily: true, promos: true, claim: false, search: true, desktopApp: false \}/.test(mockSrc) &&
     /region: \{ lock: true, ipProvider: "bing" \}/.test(mockSrc)
 );
 
@@ -2408,7 +2473,8 @@ checkTrue(
   "状态接口下发镜像清单（界面下拉不另写一份），且每个节点带实测延迟",
   // 0.13.8 起 Docker 侧改为镜像预装：预装时不必也没法选下载源，直接返回空数组
   // （同时省掉最长 4s 的测速探测，容器启动更快）。非预装路径仍按下发清单渲染下拉。
-  /mirrors:\s*pre \? \[\] : await mirrorOptionsWithLatency\(\)/.test(fpSrc) &&
+  // 2026-11-04：停用内置内核时同样跳过（都不下载了，测速纯属浪费，还会让「已停用」看起来在准备什么）。
+  /mirrors:\s*(?:disabled \|\| )?pre \? \[\] : await mirrorOptionsWithLatency\(\)/.test(fpSrc) &&
     /async function mirrorLatency/.test(fpSrc) &&
     /latencyMs/.test(fpSrc),
   "镜像清单不再由主进程下发 → 前后端各写一份镜像表，改一处漏一处"
@@ -2698,7 +2764,10 @@ checkTrue(
 // TypeError → 白屏。而白屏只在「升级安装」这条路上出现，开发机上全新安装永远复现不了。
 function browserFpBlock(src) {
   const i = src.indexOf("browser: {");
-  return i < 0 ? "" : src.slice(i, i + 900);
+  // 窗口要留够：这个块里字段上方的注释只会越写越长（2026-11-04 加 disableEngine 说明时
+  // 就因为 900 字符窗口截断，把末尾的 platform / mirror 挤出范围，误报「缺字段」）。
+  // 窗口偏大没有副作用（多含后面几个块也照样能匹配到字段），偏小会假红。
+  return i < 0 ? "" : src.slice(i, i + 1800);
 }
 const cfgFpBlock = browserFpBlock(cfgSrcFp);
 const gcfgFpBlock = browserFpBlock(gcfgSrcFp);
@@ -2721,7 +2790,8 @@ for (const [label, block] of [["config.js", cfgFpBlock], ["global-config.js", gc
 // platform 照样通过，白屏照旧发生。
 const typesFpBlock = (() => {
   const i = typesSrcFp.indexOf("fingerprint: {");
-  return i < 0 ? "" : typesSrcFp.slice(i, i + 900);
+  // 同 browserFpBlock：窗口按「字段 + 注释」的实际体量给足，别卡在临界值上
+  return i < 0 ? "" : typesSrcFp.slice(i, i + 1600);
 })();
 checkTrue(
   "types/index.ts 的 browser.fingerprint 类型含 platform（渲染层编译期契约）",
@@ -3313,7 +3383,7 @@ checkTrue(
 checkTrue(
   "忘记密码为卡片内 3D 翻页：preserve-3d + rotateY + backface 隐藏，背面绝对定位内部滚动",
   /login-flip\$\{face === "rescue" \? " flipped" : ""\}/.test(vaultLockSrc) &&
-    /<VaultRescue variant="panel"/.test(vaultLockSrc) &&
+    /<VaultRescue[\s\S]{0,120}?variant="panel"/.test(vaultLockSrc) &&
     /login-flip-backbtn/.test(vaultLockSrc) &&
     /inert=\{face !== "login"\}/.test(vaultLockSrc) &&
     /inert=\{face !== "rescue"\}/.test(vaultLockSrc) &&
@@ -3324,6 +3394,247 @@ checkTrue(
     /variant = "accordion"/.test(rescueSrc0133) && /isPanel/.test(rescueSrc0133),
   "翻页结构/动画/约束任一缺失 → 自救面板要么点不到要么溢出卡片"
 );
+
+// —— 弱密码开关（2026-11-04 用户要求）——
+// 关闭（默认）维持强密码；开启只要求「≥6 位 + 字母 + 数字」。
+// 引导页与设置页必须共用同一个配置字段，否则会出现「一处能设、另一处设不了」。
+{
+  const strengthSrc = fs.readFileSync(
+    path.join(ROOT, "src-renderer", "src", "utils", "passwordStrength.ts"),
+    "utf8"
+  );
+  const wizardSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "views", "SetupWizard.tsx"), "utf8");
+  const vaultPanelSrc = fs.readFileSync(
+    path.join(ROOT, "src-renderer", "src", "components", "VaultPanel.tsx"),
+    "utf8"
+  );
+  const rescueSrc = fs.readFileSync(
+    path.join(ROOT, "src-renderer", "src", "components", "VaultRescue.tsx"),
+    "utf8"
+  );
+
+  checkTrue(
+    "弱密码规则：≥6 位且同时含字母与数字，且不再卡强度档位",
+    /export const WEAK_MIN_LEN = 6/.test(strengthSrc) &&
+      /const allowWeak = opts\.allowWeak === true/.test(strengthSrc) &&
+      /if \(!hasLetter\) missing\.push\("字母"\)/.test(strengthSrc) &&
+      /if \(!hasDigit\) missing\.push\("数字"\)/.test(strengthSrc) &&
+      // 弱模式仍卡第 3 段的话，6 位字母+数字永远提交不了，开关等于没开
+      /const pass = allowWeak \? complex : complex && level >= 3/.test(strengthSrc),
+    "弱模式仍卡强度档位 → 开关等于没开"
+  );
+  checkTrue(
+    "引导页/设置页都有「允许弱密码」开关，开启前必须过风险确认",
+    /允许弱密码（不推荐）/.test(wizardSrc) &&
+      /setConfirmWeak\(true\)/.test(wizardSrc) &&
+      /\{confirmWeak && \(/.test(wizardSrc) &&
+      /security: \{ allowWeakPassword: v \}/.test(wizardSrc) &&
+      /允许弱密码（不推荐）/.test(vaultPanelSrc) &&
+      /setConfirmWeak\(true\)/.test(vaultPanelSrc) &&
+      // 设置页必须用 Modal（portal），手写 fixed 遮罩会被内容容器的 transform 推到视口外
+      /open=\{confirmWeak\}/.test(vaultPanelSrc) &&
+      /security: \{ allowWeakPassword: v \}/.test(vaultPanelSrc),
+    "只加开关不给风险提示 → 用户不知道自己在降低安全性"
+  );
+  checkTrue(
+    "四处密码校验统一走 st.pass（弱模式不被旧的 level/complex 判断卡住）",
+    /if \(!st\.pass\)/.test(wizardSrc) &&
+      /if \(!stPw\.pass\)/.test(vaultPanelSrc) &&
+      /if \(!stNxt\.pass\)/.test(vaultPanelSrc) &&
+      /if \(!st\.pass\)/.test(rescueSrc) &&
+      // 旧写法一旦残留，弱密码就在那条路径上仍然被拒
+      !/if \(!stPw\.complex\)/.test(vaultPanelSrc) &&
+      !/if \(!st\.complex\)/.test(wizardSrc),
+    "残留旧校验 → 同一个密码在引导页能设、改密页设不了"
+  );
+
+  // —— 下次启动需要输入密码（2026-11-04 用户要求）——
+  const mainSrcPw = fs.readFileSync(path.join(ROOT, "src", "electron-main.js"), "utf8");
+  const serverSrcPw = fs.readFileSync(path.join(ROOT, "src", "server.js"), "utf8");
+  checkTrue(
+    "开了「下次启动需密码」时跳过钥匙串自动解锁（tryAutoUnlock 必须落在 else 里）",
+    (() => {
+      const iGate = mainSrcPw.indexOf("requirePasswordOnStart === true");
+      if (iGate < 0) return false;
+      const iElse = mainSrcPw.indexOf("} else {", iGate);
+      const iAuto = mainSrcPw.indexOf("vault.tryAutoUnlock()", iGate);
+      // 判断存在、else 在其后、tryAutoUnlock 又在 else 之后 —— 三者缺一，开关要么无效要么白写
+      return iElse > iGate && iAuto > iElse;
+    })(),
+    "把 tryAutoUnlock 留在判断外面 → 开关写着「下次要输密码」，实际照样自动解锁"
+  );
+  checkTrue(
+    "Docker/Web 版不吃「下次启动需密码」（否则容器重启后任务永久停摆）",
+    !/requirePasswordOnStart/.test(serverSrcPw),
+    "无人值守场景跟着锁 → 保险库一直锁着，自动任务全部跳过"
+  );
+  checkTrue(
+    "安全页有「下次启动时需要输入密码」开关，且只在已建库时显示",
+    /下次启动时需要输入密码/.test(vaultPanelSrc) &&
+      /requirePasswordOnStart: v/.test(vaultPanelSrc) &&
+      // 未建库时显示只会让人困惑（没有密码可输）
+      /status\.configured && \([\s\S]{0,400}?下次启动时需要输入密码/.test(vaultPanelSrc),
+    "没建库也显示 → 用户勾了却没密码可输"
+  );
+
+  // —— Windows Hello（PIN / 指纹）解锁（2026-11-04 用户要求）——
+  const helloSrc = fs.readFileSync(path.join(ROOT, "src", "windows-hello.js"), "utf8");
+  const lockSrc = fs.readFileSync(
+    path.join(ROOT, "src-renderer", "src", "views", "VaultLock.tsx"),
+    "utf8"
+  );
+  const webApiSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "api", "web.ts"), "utf8");
+  const mockApiSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "api", "mock.ts"), "utf8");
+  checkTrue(
+    "Windows Hello 走 PowerShell 5.1 + WinRT UserConsentVerifier，脚本必须带 BOM",
+    /UserConsentVerifier/.test(helloSrc) &&
+      /spawn\("powershell\.exe"/.test(helloSrc) &&
+      // 不带 BOM → PS 5.1 按 GBK 读脚本，中文乱码并把字符串截断（实测「字符串缺少终止符」）
+      /"\\ufeff" \+ CHECK_SCRIPT/.test(helloSrc),
+    "换 pwsh 7 直接不可用（没有 System.Runtime.WindowsRuntime）；缺 BOM 连脚本都解析不了"
+  );
+  checkTrue(
+    "Hello 验证通过后才从钥匙串取 VK，且取不到要报清楚",
+    /windowsHello\.verify\(/.test(mainSrcPw) &&
+      /vault\.unlockWithKeychain\(\)/.test(mainSrcPw) &&
+      /验证已通过，但本机没有可用的免密凭据/.test(mainSrcPw),
+    "只验证不检查钥匙串 → 用户过了 PIN 却解不开，还以为是验证失败"
+  );
+  checkTrue(
+    "锁屏按钮按「设备可用 + 用户已开启」双条件显示",
+    /hello\?\.available && hello\?\.enabled/.test(lockSrc) && /vaultHelloUnlock/.test(lockSrc),
+    "无条件显示 → 点了必然被拒，比不显示更糟"
+  );
+  checkTrue(
+    "Web / 预览模式恒报不支持 Windows Hello",
+    /supported: false/.test(webApiSrc) &&
+      /vaultHelloStatus/.test(webApiSrc) &&
+      /vaultHelloStatus/.test(mockApiSrc),
+    "Web 版跟着显示按钮 → 点了必然报错（容器里根本没有 Hello）"
+  );
+
+  // —— 三个安全开关统一控件 + 一次性密码要求 + 免密凭据自愈（2026-11-04 用户要求）——
+  const vaultSrc = fs.readFileSync(path.join(ROOT, "src", "vault", "index.js"), "utf8");
+  checkTrue(
+    "安全页三个选项都用开关（SwitchField），不再混用裸 checkbox",
+    (vaultPanelSrc.match(/<SwitchField/g) || []).length >= 3 &&
+      !/className="wz-weak-row"/.test(vaultPanelSrc),
+    "混用两种控件语言 → 用户分不清哪个是「立即执行」哪个只是保存配置"
+  );
+  checkTrue(
+    "开启 Windows Hello 时重建免密凭据（否则 PIN 过了也解不开）",
+    /vaultRefreshKeychain/.test(vaultPanelSrc) &&
+      /await api\.vaultRefreshKeychain\(\)/.test(vaultPanelSrc),
+    "不重建 → .vaultkey 若是别的 Windows 用户的 DPAPI 密文，验证通过也取不到 VK"
+  );
+  checkTrue(
+    "坏掉的免密凭据会被自动清理（否则每次启动白试一次且毫无线索）",
+    /fs\.unlinkSync\(KEY_FILE\)/.test(vaultSrc) && /免密凭据已失效/.test(vaultSrc),
+    "只返回失败不清理 → 用户永远不知道它坏了"
+  );
+  checkTrue(
+    "「立即锁定」不得删除系统免密凭据（否则锁一下就再也用不了 PIN）",
+    // 2026-11-04 用户实测：密码解锁 → 立即锁定 → PIN 解锁报「本机没有可用的免密凭据」。
+    // 根因是 lock() 里调了 keychain.clearKey()。锁定只该清内存密钥。
+    (() => {
+      const iLock = vaultSrc.indexOf("function lock()");
+      if (iLock < 0) return false;
+      const iNext = vaultSrc.indexOf("function ", iLock + 10);
+      const body = vaultSrc.slice(iLock, iNext > 0 ? iNext : iLock + 400);
+      // lock 体内不许出现 clearKey；clearKey 只允许出现在 discardKeychain 里
+      if (/clearKey/.test(body)) return false;
+      const iDiscard = vaultSrc.indexOf("function discardKeychain()");
+      if (iDiscard < 0) return false;
+      const dNext = vaultSrc.indexOf("function ", iDiscard + 10);
+      const dBody = vaultSrc.slice(iDiscard, dNext > 0 ? dNext : iDiscard + 400);
+      return /clearKey/.test(dBody);
+    })(),
+    "lock 里删凭据 → 密码解锁后点「立即锁定」，PIN 就再也解不开了"
+  );
+  checkTrue(
+    "关闭 Windows Hello 开关时主动清除凭据（删除入口唯一且明确）",
+    /vaultDiscardKeychain/.test(vaultPanelSrc) && /vault:discardKeychain/.test(mainSrcPw),
+    "关开关却留着凭据 → 用户以为已经不能 PIN 解锁了，实际还能"
+  );
+  checkTrue(
+    "「下次启动需密码」是一次性的：解锁成功后自动关",
+    /function consumeRequirePasswordOnStart\(\)/.test(mainSrcPw) &&
+      (mainSrcPw.match(/consumeRequirePasswordOnStart\(\);/g) || []).length >= 2,
+    "不自动关 → 每次开机都要输密码，等于把免密能力永久关掉"
+  );
+  checkTrue(
+    "Windows Hello 验证窗必须主动提到前台（实测默认被应用窗压住）",
+    // 2026-11-04 实测数据：应用窗 (584,252) 880x600 与 PIN 窗 (796,338) 456x476 重叠，
+    // Z 序是 0=应用窗、1=PIN 窗。只关置顶不够（实测仍被压），必须 SetForegroundWindow 提窗。
+    /function raiseConsentWindow/.test(helloSrc) &&
+      /SetForegroundWindow/.test(helloSrc) &&
+      /AttachThreadInput/.test(helloSrc) &&
+      // 必须在 verify 之前起，否则用户先看到的是被压住的窗口
+      /raiseConsentWindow\(\);[\s\S]{0,200}?runScript\("verify"/.test(helloSrc),
+    "不提窗 → 用户看不到 PIN 输入框，以为点了没反应（实测已复现）"
+  );
+  checkTrue(
+    "提窗不靠应用自己置顶（那会让应用窗压住系统窗），也不靠 blur（会让验证窗弹不出来）",
+    !/win\?\.setAlwaysOnTop\(true/.test(mainSrcPw) &&
+      !/win\?\.blur\(\)/.test(mainSrcPw) &&
+      /win\?\.setAlwaysOnTop\(false\)/.test(mainSrcPw),
+    "置顶/过度让位都实测过：前者让应用压住 PIN 窗，后者让 PIN 窗根本不出现"
+  );
+}
+// —— 功能发布闸门：桌面 Rewards 专属任务暂缓上线（2026-11-04 用户要求）——
+// 要求：界面置灰 + 标「测试中」、主进程探测与执行全部拦住、推送汇总不出现该行。
+// 三层缺一层就会出现「界面灰了但后台照跑」这种最难自查的不一致。
+{
+  const gatesSrc = fs.readFileSync(path.join(ROOT, "src", "feature-gates.js"), "utf8");
+  const runnerSrc = fs.readFileSync(path.join(ROOT, "src", "runner.js"), "utf8");
+  const desktopAppSrc = fs.readFileSync(path.join(ROOT, "src", "desktop-app.js"), "utf8");
+  const mainSrcGate = fs.readFileSync(path.join(ROOT, "src", "electron-main.js"), "utf8");
+  const settingsSrc = fs.readFileSync(
+    path.join(ROOT, "src-renderer", "src", "components", "SettingsForm.tsx"),
+    "utf8"
+  );
+  const fieldsSrc = fs.readFileSync(
+    path.join(ROOT, "src-renderer", "src", "components", "fields.tsx"),
+    "utf8"
+  );
+
+  checkTrue(
+    "桌面专属任务当前处于「暂缓上线」状态（单一真源 = feature-gates.js）",
+    /const DESKTOP_APP_DELAYED = true/.test(gatesSrc) && /function desktopAppGate/.test(gatesSrc),
+    "闸门值改回 false 就等于上线了 —— 要上线请连同界面文案一起改，别让它悄悄开着"
+  );
+  checkTrue(
+    "任务执行器与外部驱动都按闸门跳过（老配置 desktopApp=true 也跑不起来）",
+    /desktopAppGate\(\)\.allowed/.test(runnerSrc) &&
+      /desktopAppGate\(\)\.allowed/.test(desktopAppSrc),
+    "只看用户开关 → 老用户配置里是 true，界面灰着但任务照跑"
+  );
+  checkTrue(
+    "探测与推送汇总都遵守闸门（不白跑 PowerShell、不刷「暂缓上线」行）",
+    /desktopAppGate\(\)/.test(mainSrcGate) &&
+      /rDesktopApp && rDesktopApp\.delayed/.test(runnerSrc) &&
+      /if \(r\.delayed\) return "暂缓上线"/.test(runnerSrc),
+    "探测照跑 + 汇总照印 → 每轮推送都在解释一个用户根本用不上的功能"
+  );
+  checkTrue(
+    "设置页入口置灰并标「测试中 · 延迟上线」（不隐藏入口）",
+    /badge=\{key === "desktopApp" && deskDelayed\.delayed \? "测试中 · 延迟上线"/.test(settingsSrc) &&
+      /deskDelayed\.delayed\)/.test(settingsSrc) &&
+      /badge\?: string/.test(fieldsSrc),
+    "隐藏入口 → 用户以为没这功能；不置灰 → 点了没反应更糟"
+  );
+  checkTrue(
+    "闸门状态由主进程下发，渲染层不写死常量",
+    /ipcMain\.handle\("app:featureGates"/.test(mainSrcGate) &&
+      /featureGates: \(\) => ipcRenderer\.invoke\("app:featureGates"\)/.test(
+        fs.readFileSync(path.join(ROOT, "src", "electron-preload.js"), "utf8")
+      ) &&
+      // 渲染层不该出现「硬编码 false/true 来判断桌面任务是否开放」
+      !/DESKTOP_APP_DELAYED/.test(settingsSrc),
+    "两处各写一份 → 改一处漏一处，界面与主进程必然有一天对不上"
+  );
+}
+
 checkTrue(
   "登录页深色玻璃质感：卡片半透明深底 + backdrop blur + 高光描边，图区深色渐变，页面级主题变量固定深色",
   /\.login-page \{[\s\S]*?--lg-text-primary: #e8ecf2/.test(cssSource) &&
@@ -3471,9 +3782,38 @@ checkTrue(
 );
 checkTrue(
   "状态接口暴露 preinstalled，且预装时跳过镜像测速探测",
-  /preinstalled:\s*!!pre/.test(fpbSrc) && /mirrors:\s*pre \? \[\] : await mirrorOptionsWithLatency\(\)/.test(fpbSrc),
+  /preinstalled:\s*!!pre/.test(fpbSrc) && /mirrors:\s*(?:disabled \|\| )?pre \? \[\] : await mirrorOptionsWithLatency\(\)/.test(fpbSrc),
   "不暴露 preinstalled → 界面在容器里仍显示「下载并安装/删除」按钮"
 );
+// —— 取消普通浏览器兜底（2026-11-04 用户定义语义）——
+// 语义：勾了它就不许用普通 Chromium，指纹浏览器不可用时本轮任务直接失败。
+// 与 enable 的关系是「前提」而不是「互斥」：没启用指纹就不能勾。
+checkTrue(
+  "取消兜底时不再回落普通 Chromium，而是返回 no-fallback",
+  /kind: "no-fallback"/.test(browserSrcFp) &&
+    /const noFallback = cfg\.noFallback && !forced/.test(browserSrcFp) &&
+    // 必须在取普通 Chromium 之前就 return，否则勾了「取消兜底」照样会被顶上
+    browserSrcFp.indexOf('kind: "no-fallback"') < browserSrcFp.indexOf("const fb = fallbackChromiumPath()"),
+  "回落分支先执行 → 勾了「取消兜底」仍然会用普通 Chromium 顶上"
+);
+checkTrue(
+  "未启用指纹却勾了取消兜底 → 直接判不可用（不猜用户意图）",
+  /if \(noFallback && !cfg\.enable\) \{[\s\S]{0,240}?no-fallback/.test(browserSrcFp),
+  "配置自相矛盾时静默回落 = 用户以为有伪装，其实跑的是普通浏览器"
+);
+checkTrue(
+  "openContext 对 no-fallback 给出可操作错误，而不是笼统的「未检测到可用浏览器」",
+  /source\.kind === "no-fallback"/.test(browserSrcFp) && /取消普通浏览器兜底/.test(browserSrcFp),
+  "只说「未检测到浏览器」→ 用户会去装 Chromium，而真正原因是他自己勾的开关"
+);
+// 反向守卫：这个开关绝不能变成「停用内置内核」—— 旧语义（停用内核改用普通 Chromium）
+// 与现在的语义正好相反，残留一句就会让行为完全反掉。
+checkTrue(
+  "不得残留「停用内置内核」旧语义（该开关是取消兜底，不是禁用内核）",
+  !/disableEngine/.test(browserSrcFp) && !/disableEngine/.test(fpbSrc),
+  "旧语义残留 → 勾选后行为与文案相反，且极难自查"
+);
+
 checkTrue(
   "预装存在时拒绝运行时安装与卸载（避免白下一份、也避免删除镜像层）",
   /环境拟真浏览器已由镜像内置预装，无需下载/.test(fpbSrc) &&
@@ -4799,11 +5139,16 @@ const DOC_SECRET_PATTERNS = [
   const tsSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "types", "index.ts"), "utf8");
   const mockSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "api", "mock.ts"), "utf8");
   checkTrue(
-    "设置项 security.approvalMode 四处对齐（缺一 → 白屏）",
+    "设置项 security 四处对齐（approvalMode / allowWeakPassword / requirePasswordOnStart）",
     /security:\s*\{\s*\n?\s*approvalMode:\s*"auto"/.test(gcSrc) &&
-      /security:\s*\{[\s\S]{0,200}?approvalMode:\s*"ask"\s*\|\s*"auto"\s*\|\s*"full"/.test(tsSrc) &&
-      /security:\s*\{\s*approvalMode:\s*"auto"\s*\}/.test(mockSrc),
-    "security.approvalMode 在 global-config / types / mock 里没对齐 → 白屏"
+      /allowWeakPassword:\s*false/.test(gcSrc) &&
+      /requirePasswordOnStart:\s*false/.test(gcSrc) &&
+      /security:\s*\{[\s\S]{0,600}?approvalMode:\s*"ask"\s*\|\s*"auto"\s*\|\s*"full"/.test(tsSrc) &&
+      /allowWeakPassword:\s*boolean/.test(tsSrc) &&
+      /requirePasswordOnStart:\s*boolean/.test(tsSrc) &&
+      /security:\s*\{[^}]*approvalMode:\s*"auto"/.test(mockSrc) &&
+      /security:\s*\{[^}]*allowWeakPassword:\s*false/.test(mockSrc),
+    "security 字段在 global-config / types / mock 里没对齐 → 白屏"
   );
 }
 
@@ -6668,10 +7013,21 @@ checkTrue(
   // 操作系统 / 镜像源」里看不出来「这是切内核」，用户反馈找不到切换。
   // 语义不变：两个内核都要列出来，不可用的**灰显 + disabled**，不是隐藏。
   /role="radiogroup"[\s\S]{0,80}aria-label="环境拟真内核选择"/.test(fpPanelR) &&
-    /disabled=\{blocked\}/.test(fpPanelR) &&
+    // 0.14.7 是 disabled={blocked}；2026-11-04 加了「停用内置内核」后变成 blocked || off，
+    // 两种写法都必须拦住「不可选的内核还能点」。
+    /disabled=\{blocked(?: \|\| off)?\}/.test(fpPanelR) &&
     /const blocked = !e\.available/.test(fpPanelR) &&
     /theme-card fp-engine-card/.test(fpPanelR),
   "隐藏不可用内核 → 用户以为没这个内核，看不到「修好就能用」；不 disabled → 用户能选中会崩的"
+);
+checkTrue(
+  "设置页有「取消普通浏览器兜底」开关，且未启用指纹时禁用",
+  /label="取消普通浏览器兜底（只用指纹浏览器）"/.test(fpPanelR) &&
+    /noFallback: v/.test(fpPanelR) &&
+    /const noFallbackOn = !!cfg\.noFallback/.test(fpPanelR) &&
+    // 不启用指纹就不能勾：disabled 条件里必须出现 !cfg.enable
+    /disabled=\{[^}]*!cfg\.enable[^}]*\}/.test(fpPanelR),
+  "允许在未启用指纹时勾选 → 一勾就必然报错，等于给用户挖坑"
 );
 checkTrue(
   "不可用内核的原因由主进程原样下发并展示（前端不自己编措辞）",
@@ -7510,6 +7866,224 @@ console.log("\n【0.14.7】CodeQL 安全告警修复守卫");
         "（这正是 v0.14.9 线上正文哈希为空的成因）—— 必须逐个校验六个值非空"
     );
   }
+}
+
+/* ============ 桌面应用专属任务（0.15.9） ============ */
+console.log("\n【0.15.9】桌面应用专属任务（外部进程驱动）");
+{
+  const deskSrc = fs.readFileSync(path.join(ROOT, "src", "desktop-app.js"), "utf8");
+  const deskCode = stripJsComments(deskSrc);
+  const runnerSrc = fs.readFileSync(path.join(ROOT, "src", "runner.js"), "utf8");
+  const runnerCode = stripJsComments(runnerSrc);
+
+  check("desktop-app：CDP 端口固定 9333", /const CDP_PORT = 9333;/.test(deskCode), true);
+  checkTrue(
+    "desktop-app：靠环境变量 + spawn 注入调试端口（不改注册表）",
+    deskCode.includes("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS") && /spawn\(exePath/.test(deskCode),
+    "端口只能在进程创建时注入；改 HKCU 策略会让端口常开，本模块刻意不走那条路"
+  );
+  checkTrue(
+    "desktop-app：任务项必须真实 click（dmreload=1 铁律）",
+    /card\.click\(/.test(deskCode),
+    "程序化导航会被 Bing 附加 dmreload=1 → 服务端判为非用户访问 → 永不计分（2026-10-31 实测）"
+  );
+  checkTrue(
+    "desktop-app：读取 punchcard 绕缓存（no-store）",
+    deskCode.includes('cache: "no-store"'),
+    "CDN 缓存会返回旧 punchcard，让「已完成」看起来没生效"
+  );
+  const deskRenderWait = (deskCode.match(/const RENDER_WAIT_MS = (\d+);/) || [])[1];
+  check("desktop-app：渲染等待 ≥15s（RSC 慢，过早读会漏项）", Number(deskRenderWait) >= 15000, true);
+  // —— 一轮做完所有可做项（2026-11-02 用户要求「一次性完成」）——
+  // 应用同一实例连续进第二个详情页必水合失败，所以「做完一项就重启」是唯一可行路径。
+  // 上限不能退回 1：那是「一轮一项、靠多次调度铺开」的旧策略。
+  const deskMaxItems = (deskCode.match(/const MAX_ITEMS_PER_RUN = (\d+);/) || [])[1];
+  check("desktop-app：单轮上限 ≥5（支撑一轮做完）", Number(deskMaxItems) >= 5, true);
+  checkTrue(
+    "desktop-app：做完一项后重启换干净实例",
+    // 这句带行尾注释，要在未剥注释的 deskSrc 上匹配
+    /restarts\+\+; \/\/ 下一项需要干净实例/.test(deskSrc) &&
+      /if \(restarts > 0\) \{[\s\S]{0,150}?await stop\(\)/.test(deskCode),
+    "不重启就做第二项，第二个详情页必渲染失败"
+  );
+  checkTrue(
+    "desktop-app：外层循环有次数上限（防无限重启）",
+    /maxIterations/.test(deskCode) && /iter < maxIterations/.test(deskCode),
+    "某项一直失败会无限重启"
+  );
+  // —— 重启竞态与主窗口保护（2026-11-04 实跑踩到）——
+  checkTrue(
+    "desktop-app：只能关闭新弹窗，绝不能关主窗口",
+    /if \(popup !== page\) await popup\.close\(\)/.test(deskCode),
+    "兑换类任务（redeem/sku）是主窗口自己导航过去的，关掉 popup 等于杀掉主窗口，随后 waitForTimeout 抛 Target closed"
+  );
+  checkTrue(
+    "desktop-app：等页面就绪要接住「页面被销毁」",
+    /return false;[\s\S]{0,120}?页面已销毁/.test(deskSrc) ||
+      /页面已销毁[\s\S]{0,200}?return false;/.test(deskSrc),
+    "不接住会直接抛 Target page closed 把整轮打断"
+  );
+  checkTrue(
+    "desktop-app：重启后先等旧调试端口消失",
+    /if \(restarted\) \{[\s\S]{0,300}?isPortReady\(\)/.test(deskCode),
+    "旧实例端口残留时会连到正在退出的进程，页面随时被销毁"
+  );
+  // —— 桌面应用自身的登录态（2026-11-02 用户澄清语义）——
+  // 「未登录」指的是 **Rewards 桌面应用没登录**，不是本项目没登录。
+  // 此时应跳过桌面任务、本项目其它任务照常跑完，并把具体原因写进通知。
+  checkTrue(
+    "desktop-app：能识别桌面应用未登录（停在微软登录域）",
+    /LOGIN_URL_RE/.test(deskCode) && /notLoggedIn: true/.test(deskCode),
+    "未登录会被误判成「今天没有可做任务」，用户永远不知道该去登录"
+  );
+  checkTrue(
+    "desktop-app：停在登录页时立即返回，不空等 24s",
+    /if \(st && LOGIN_URL_RE\.test\(st\.url\)\) return "login"/.test(deskCode),
+    "白等一轮也只是浪费时间"
+  );
+  checkTrue(
+    "desktop-app：登录判定不得用泛化的「积分」",
+    /赚取奖励\|今日积分\|积分明细/.test(deskCode) && !/赚取奖励\|积分\|Rewards\/i/.test(deskCode),
+    "登录引导页写的是「登录以开始赚取积分」，含「积分」二字，泛化匹配会判成已登录"
+  );
+  checkTrue(
+    "runner：桌面任务跳过/出错时把具体原因写进汇总",
+    /desktopDetailOf\(rDesktopApp\)/.test(stripJsComments(runnerSrc)) &&
+      /if \(r\.notLoggedIn\) return `跳过\(Rewards 桌面应用未登录\)`/.test(stripJsComments(runnerSrc)),
+    "只写「未运行」等于让用户自己去猜"
+  );
+  checkTrue(
+    "runner：本项目未登录不额外跑桌面任务（两件事互不影响）",
+    !/if \(loggedIn === false\) \{[\s\S]{0,900}?runDesktopTask\(ctx\)/.test(stripJsComments(runnerSrc)),
+    "本项目未登录就直接收工，别把桌面任务塞进这个分支"
+  );
+  checkTrue(
+    "runner：桌面任务走独立函数（正常流程调用）",
+    /async function runDesktopTask\(ctx\)/.test(stripJsComments(runnerSrc)) &&
+      /rDesktopApp = await runDesktopTask\(ctx\)/.test(stripJsComments(runnerSrc)),
+    "内联会让「失败不影响整轮」的结构消失"
+  );
+  // —— 未安装引导弹窗（2026-11-02）——
+  // 开关拨开前必须探一次是否装了 Rewards 桌面应用，没装就引导去商店，
+  // 否则用户只会看到汇总行天天报「未安装」却不知道去哪装。
+  const mainSrc = fs.readFileSync(path.join(ROOT, "src", "electron-main.js"), "utf8");
+  const preloadSrc = fs.readFileSync(path.join(ROOT, "src", "electron-preload.js"), "utf8");
+  const settingsSrc = fs.readFileSync(
+    path.join(ROOT, "src-renderer", "src", "components", "SettingsForm.tsx"),
+    "utf8"
+  );
+  const dialogSrc = fs.readFileSync(
+    path.join(ROOT, "src-renderer", "src", "components", "DesktopAppMissingDialog.tsx"),
+    "utf8"
+  );
+  checkTrue(
+    "主进程：desktop:detect / desktop:openStore 两个 IPC 都在",
+    /ipcMain\.handle\("desktop:detect"/.test(mainSrc) && /ipcMain\.handle\("desktop:openStore"/.test(mainSrc),
+    "缺一个弹窗按钮就点不动"
+  );
+  checkTrue(
+    "主进程：商店地址写死、handler 不接受 URL 参数",
+    /const DESKTOP_APP_STORE_URL = "https:\/\/apps\.microsoft\.com\/detail\/9mw3cmw8jksd/.test(mainSrc) &&
+      /ipcMain\.handle\("desktop:openStore",\s*async\s*\(\)\s*=>/.test(mainSrc),
+    "接受 URL 参数会让这个 IPC 变成「用系统浏览器打开任意网址」的跳板"
+  );
+  checkTrue(
+    "preload：暴露 detectDesktopApp / openDesktopStore",
+    /detectDesktopApp:\s*\(\)\s*=>\s*ipcRenderer\.invoke\("desktop:detect"\)/.test(preloadSrc) &&
+      /openDesktopStore:\s*\(\)\s*=>\s*ipcRenderer\.invoke\("desktop:openStore"\)/.test(preloadSrc),
+    "渲染层拿不到这两个方法，弹窗就成了摆设"
+  );
+  checkTrue(
+    "设置页：拨开桌面开关前先探测，未安装不写配置",
+    /api\.detectDesktopApp\(\)/.test(settingsSrc) && /setDeskMissing\(true\)/.test(settingsSrc),
+    "直接写配置 = 开关亮了但永远跑不起来"
+  );
+  checkTrue(
+    "设置页：只给 desktopApp 加前置检查（别的开关不许有隐式副作用）",
+    /if \(key !== "desktopApp" \|\| !v\)/.test(settingsSrc),
+    "给所有开关都塞检测会让人点一下卡两秒"
+  );
+  checkTrue(
+    "未安装弹窗：提供「去 Microsoft Store 安装」入口",
+    // 弹窗本身不直接调 api（那是设置页的职责），它只接收 onOpenStore 回调并绑到按钮上
+    /onOpenStore/.test(dialogSrc) && /onClick=\{onOpenStore\}/.test(dialogSrc) && /Microsoft Store/.test(dialogSrc),
+    "只说不装、不给入口，等于把用户堵在这"
+  );
+  check("config：桌面专属任务默认关闭", cfgDefaults.tasks.desktopApp, false);
+  check("global-config：桌面专属任务默认关闭", globalDefaults.tasks.desktopApp, false);
+  // —— 重启后的就绪判定（2026-11-02）——
+  // 应用刚重启时它自己的首次导航还在跑，等 domcontentloaded 会被打断成 net::ERR_ABORTED，
+  // 连试 3 次都失败 → 整轮静默返回 done:0，汇总行谎报「今日无可做项」。
+  checkTrue(
+    "desktop-app：/earn 导航用 commit（避开重启后的 ERR_ABORTED）",
+    /page\.goto\(EARN_URL, \{ waitUntil: "commit"/.test(deskCode),
+    "改回 domcontentloaded 会在应用刚重启时整轮失败"
+  );
+  checkTrue(
+    "desktop-app：发现失败不得当成「今天没任务」",
+    /questIds === null/.test(deskCode) && /return navigated \? \[\] : null;/.test(deskCode),
+    "导航没成功却返回 done:0，等于静默失败"
+  );
+  // —— 插件化 + 规则热更新（2026-11-01）——
+  const plugDir = path.join(ROOT, "plugins", "desktop-app-tasks");
+  checkTrue(
+    "插件三件套齐全（manifest / rules / index）",
+    ["manifest.json", "rules.json", "index.js"].every((f) => fs.existsSync(path.join(plugDir, f))),
+    "缺一个插件就加载不了"
+  );
+  const plugManifest = JSON.parse(fs.readFileSync(path.join(plugDir, "manifest.json"), "utf8"));
+  check("插件 manifest.id 与目录名一致", plugManifest.id, "desktop-app-tasks");
+  check("插件声明了任务键", plugManifest.task, "desktopApp");
+  const pkgJson = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
+  checkTrue(
+    "打包白名单包含 plugins/**/*（否则装好的版本没有插件）",
+    Array.isArray(pkgJson.build && pkgJson.build.files) && pkgJson.build.files.includes("plugins/**/*"),
+    "electron-builder 按文件系统收集文件，漏在白名单外 = 插件不随安装包分发，用户只会看到「插件不可用」"
+  );
+
+  const pluginRulesMod = require(path.join(ROOT, "src", "plugin-rules.js"));
+  const builtinRules = JSON.parse(fs.readFileSync(path.join(plugDir, "rules.json"), "utf8"));
+  const remoteRules = JSON.parse(fs.readFileSync(path.join(ROOT, "rules", "desktop-app-tasks.json"), "utf8"));
+  check("内置规则通过结构校验", pluginRulesMod.validate(builtinRules).ok, true);
+  check("远程规则通过结构校验", pluginRulesMod.validate(remoteRules).ok, true);
+  check("内置与远程规则 schema 一致", builtinRules.schema, remoteRules.schema);
+
+  const pluginsSrc = fs.readFileSync(path.join(ROOT, "src", "plugins.js"), "utf8");
+  const pluginRulesSrc = fs.readFileSync(path.join(ROOT, "src", "plugin-rules.js"), "utf8");
+  const pluginRulesCode = stripJsComments(pluginRulesSrc);
+  checkTrue(
+    "插件加载器有 id 正则 + 入口越界检查（防路径穿越）",
+    /ID_RE = \/\^\[a-z0-9\]/.test(pluginsSrc) && pluginsSrc.includes("startsWith(dir + path.sep)"),
+    "少了这两条就能用 ../../ 读到插件目录以外的文件"
+  );
+  checkTrue(
+    "规则合并只认白名单键（防远程注入未知字段）",
+    /function mergeKnown/.test(pluginRulesSrc) && pluginRulesSrc.includes("for (const k of Object.keys(base))"),
+    "远程新增的未知键必须丢弃，只允许覆盖内置已有字段"
+  );
+  checkTrue(
+    "规则模块不执行远程代码（无 eval / new Function）",
+    !/\beval\s*\(/.test(pluginRulesCode) && !/new Function\s*\(/.test(pluginRulesCode),
+    "远程下发只能是数据；一旦允许执行代码等于开放任意代码执行"
+  );
+  checkTrue(
+    "选择器模板做形态约束（必须以 a[href 开头且含 {form}）",
+    pluginRulesMod.validSelector('a[href*="form={form}"]') === true &&
+      pluginRulesMod.validSelector("javascript:alert(1)") === false,
+    "选择器不设约束就能被改成 script 类目标"
+  );
+  checkTrue(
+    "runner：走插件链路并先取规则",
+    runnerCode.includes('require("./plugins")') &&
+      runnerCode.includes('plugins.get("desktop-app-tasks")') &&
+      runnerCode.includes("ensureRules("),
+    "任务链没接上插件，等于功能没装"
+  );
+  checkTrue(
+    "runner：汇总行含「桌面专属」",
+    runnerSrc.includes("🖥️ 桌面专属"),
+    "完成/跳过/未就绪三种状态要能一眼看到，否则用户以为没跑"
+  );
 }
 
 /* ============ 汇总 ============ */

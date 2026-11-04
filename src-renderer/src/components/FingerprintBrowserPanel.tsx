@@ -15,6 +15,8 @@ type FpCfg = AppConfig["browser"]["fingerprint"];
 // ⚠️ mirror / engine 默认值必须与 src/config.js / src/global-config.js 一致（selfcheck 有跨文件守卫）
 const FALLBACK: FpCfg = {
   enable: false,
+  // 取消普通浏览器兜底（默认 false）。与 config.js / global-config.js 对齐
+  noFallback: false,
   // 与 GLOBAL_DEFAULTS 一致：默认内核是 Chromix 155（fp150 备用，当前不可选）
   engine: "chromix",
   // 默认只留一个内核（切换时自动卸载旧的）
@@ -67,6 +69,13 @@ export function FingerprintBrowserPanel() {
    * 表现为闪一下就没。st.downloading 由主进程在 pushFingerprintStatus 时下发。
    */
   const busy = localBusy || !!st?.downloading;
+
+  /**
+   * 是否取消了普通浏览器兜底（2026-11-04）。
+   *
+   * 以配置为准，而不是 st：patch 之后配置立刻变，status 要等一次重新拉取才更新。
+   */
+  const noFallbackOn = !!cfg.noFallback;
 
   useEffect(() => {
     api
@@ -292,6 +301,39 @@ export function FingerprintBrowserPanel() {
               onChange={(v) => void patch({ enable: v })}
             />
 
+            {/* 取消普通浏览器兜底（2026-11-04 用户定义语义）。
+                和上面那个开关不是重复项，方向相反：
+                  上面关掉 = 这轮不用它（但启动仍会后台补下载，跑任务时回落普通 Chromium）
+                  这里打开 = 不许回落（只能用指纹浏览器，不可用就报错停下）
+                前提是上面已经启用：没启用就没有可用的浏览器，勾了必然报错，所以直接禁用并说明。 */}
+            <div style={{ marginTop: 6 }}>
+              <SwitchField
+                label="取消普通浏览器兜底（只用指纹浏览器）"
+                hint={
+                  st?.preinstalled
+                    ? "Docker 版容器内只有镜像内置的指纹浏览器，本就是无兜底，此开关在镜像内不生效"
+                    : !cfg.enable
+                      ? "需先启用上面的「环境拟真浏览器」才能勾选 —— 否则一台可用浏览器都没有"
+                      : "勾选后不再回落普通 Chromium：内核未安装或损坏时本轮任务直接报错停下，而不是悄悄换浏览器跑"
+                }
+                checked={noFallbackOn && !st?.preinstalled}
+                // 依赖链：Docker（本就无兜底）> 未启用指纹 > 内核不可用
+                disabled={!!st?.preinstalled || !cfg.enable || !st?.ready}
+                onChange={(v) => {
+                  void (async () => {
+                    await patch({ noFallback: v });
+                    await refresh();
+                  })();
+                }}
+              />
+            </div>
+
+            {noFallbackOn && !st?.preinstalled && !!st?.ready ? (
+              <div className="hint fp-note" style={{ marginTop: 6, color: "var(--warn, #d97706)" }}>
+                已取消兜底：指纹浏览器一旦不可用，本轮任务会直接失败并报错，不会改用普通 Chromium。
+              </div>
+            ) : null}
+
             <div className="form-grid" style={{ marginTop: 12 }}>
               {/* —— 内核选择（2026-10-06 多内核，0.14.7 重排为卡片视图）——
                   两个内核做成「当前/备用」一眼看到的卡片：选中的高亮、不可用的灰显。
@@ -326,7 +368,9 @@ export function FingerprintBrowserPanel() {
                         title={
                           blocked
                             ? e.unavailableReason || "上游存在问题，修复后即可选择"
-                            : `切换到 ${e.label}${e.installed ? "（已装）" : "（将自动下载）"}`
+                            : active
+                              ? `${e.label} 是当前正在使用的内核`
+                              : `切换到 ${e.label}${e.installed ? "（已装）" : "（将自动下载）"}`
                         }
                         onClick={() => {
                           if (blocked) return;
@@ -346,9 +390,17 @@ export function FingerprintBrowserPanel() {
                         <div className="theme-card-desc">
                           {blocked
                             ? "暂不可选 · 上游缺陷"
-                            : e.installed
-                              ? "已安装，点此切换并保留此内核"
-                              : "未安装，切换时会自动下载"}
+                            : active
+                              ? // 当前内核还说「点此切换」会让人以为没生效（用户实测提出过），
+                                // 这里按状态分开写
+                                e.installed
+                                ? "当前正在使用 · 已安装"
+                                : // 现在这台机器上没有这个内核：不能写「正在使用」，
+                                  // 否则和顶部「○ 未安装」的 Tag 直接打架
+                                  "当前所选内核 · 未安装"
+                              : e.installed
+                                ? "已安装，点此切换并保留此内核"
+                                : "未安装，切换时会自动下载"}
                         </div>
                         <div className="theme-card-desc" style={{ marginTop: 2, opacity: 0.75 }}>
                           {e.notes || (e.key === "chromix" ? "231 个 patch 的指纹一致性 Chromium" : "")}

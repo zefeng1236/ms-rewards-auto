@@ -90,6 +90,12 @@ export interface AppConfig {
     /** 定期收取积分（自动点「领取」），默认关闭；节奏见 claimSchedule */
     claim: boolean;
     search: boolean;
+    /**
+     * 桌面应用专属任务（2026-10-31），默认关闭。
+     * 这类活动必须由微软 Rewards 桌面应用内的**真实点击**完成才计分，
+     * 用本软件自带浏览器会被服务端判为程序化访问（dmreload=1）而不给分。
+     */
+    desktopApp: boolean;
   };
   /**
    * 定期收取积分的节奏（2026-10-06）。
@@ -103,6 +109,11 @@ export interface AppConfig {
     everyDays: number;
     /** daily 模式：每天几点（本地时区 HH:MM，如 "09:00"） */
     dailyAt: string;
+    /**
+     * 阈值补领（默认 300）：每天「首次运行」和「任务收工」各读一次「可领取」，
+     * ≥ 此值就立刻领掉。设为 0 关闭这道补领。
+     */
+    threshold: number;
   };
   region: {
     lock: boolean;
@@ -203,6 +214,10 @@ export interface AppConfig {
      */
     fingerprint: {
       enable: boolean;
+      /** 取消普通浏览器兜底（默认 false）。
+       *  true 时不再回落普通 Chromium：指纹浏览器不可用就让本轮任务报错停下。
+       *  前提是 enable=true；Docker 版不生效（容器里只有镜像内置的指纹浏览器）。 */
+      noFallback: boolean;
       /** 环境拟真内核：chromix = Chromix 155（默认）；fp150 = adryfish
        *  fingerprint-chromium 150（备用，当前不可选 —— 有 canvas 读像素崩溃缺陷，
        *  上游 issue #94 暂无补丁）。保留是为了等上游修好后直接放开选择。 */
@@ -249,6 +264,14 @@ export interface AppConfig {
      * ⚠️ 不覆盖路径边界：越界路径在任何档位下都会被拒。
      */
     approvalMode: "ask" | "auto" | "full";
+    /** 允许弱密码（不推荐，默认 false）：开启后密码规则放宽为「≥6 位且含字母与数字」，
+     *  不再要求大小写/特殊字符/强度第 3 段；开启时必须弹窗告知安全性降低。 */
+    allowWeakPassword: boolean;
+    /** 下次启动时要求输入密码（默认 false）：开启后跳过系统钥匙串免密解锁。 */
+    requirePasswordOnStart: boolean;
+    /** 用 Windows Hello（PIN / 指纹）代替输入软件密码解锁（仅 Windows）。
+     *  它只是「授权门」—— 验证通过后再从系统钥匙串取真密钥。 */
+    unlockWithWindowsHello: boolean;
   };
 
   /** 跨客户端汇总：多台客户端推同一个群时，一眼看出谁没完成 */
@@ -749,6 +772,32 @@ export interface SaveTextResult {
   error?: string;
   /** 用户在保存对话框点了取消 */
   canceled?: boolean;
+}
+
+/**
+ * 微软 Rewards 桌面应用的探测结果（只读，不启动应用）。
+ *
+ * 勾选「桌面应用专属任务」前先探一次：没装的话这个开关开了也跑不起来，
+ * 应当拦下来并引导去 Microsoft Store 安装。
+ */
+export interface DesktopAppInfo {
+  /** 是否安装了 Rewards 桌面应用（MSIX 包） */
+  installed: boolean;
+  /** 是否正在运行 */
+  running: boolean;
+  /** 调试端口（9333）是否已就绪 —— 只有本软件拉起的实例才有 */
+  portReady: boolean;
+  /** 探测本身失败时的原因（按「未安装」展示，但保留原文便于排查） */
+  error?: string;
+  /** 功能暂缓上线（2026-11-04）：true 时不要提示「未安装」，那是误导 —— 原因不是没装 */
+  delayed?: boolean;
+  /** 暂缓上线的说明文案 */
+  note?: string;
+}
+
+/** 功能发布闸门（主进程是真源，渲染层只读） */
+export interface FeatureGates {
+  desktopApp: { allowed: boolean; note: string };
 }
 
 export interface AppearanceSetResult {

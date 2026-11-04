@@ -19,6 +19,10 @@ const DEFAULTS = {
     daily: true,   // 每日活动（dashboard dailySet，每日三格）
     claim: false,  // 定期收取积分（自动点「领取」），默认关闭
     search: true,  // 搜索积分
+    // 桌面应用专属任务（2026-10-31）
+    // 驱动微软 Rewards 桌面应用（外部 MSIX 进程）完成「必须在本应用内完成」的活动。
+    // 默认关闭：它是本软件唯一依赖外部程序的任务，未安装应用时开启只会每轮报错。
+    desktopApp: false,
   },
   /**
    * 定期收取积分的节奏（2026-10-06）。
@@ -36,6 +40,15 @@ const DEFAULTS = {
     mode: "interval", // interval | daily
     everyDays: 7,     // interval 模式：每隔几天（1~30）。默认 7 = 与旧行为一致
     dailyAt: "09:00", // daily 模式：每天几点（本地时区 HH:MM）
+    /**
+     * 阈值补领（2026-11-04 用户定的默认规则）。
+     *
+     * 除了上面的定时节奏，每天「首次运行」和「任务收工」各读一次「可领取」，
+     * 只要 ≥ threshold 就立刻领掉。0 = 关闭这道补领。
+     * 为什么需要：定时节奏（默认 7 天）在「可领取」早已过百时显得太迟钝，
+     * 而每次都读又要开浏览器；两个固定时机 + 阈值正好折中。
+     */
+    threshold: 300,
   },
   // 区域设置
   region: {
@@ -141,6 +154,13 @@ const DEFAULTS = {
   browser: {
     fingerprint: {
       enable: true,    // 启用环境拟真浏览器（未安装则自动回落普通 Chromium；默认开启，首次运行自动下载）
+      // 取消普通浏览器兜底（2026-11-04 用户定义语义）：
+      // 勾选后**不再回落**普通 Chromium，只允许用指纹浏览器 —— 指纹浏览器未启用 /
+      // 未安装 / 主程序损坏时，本轮任务直接报错停下，而不是悄悄用普通 Chromium 顶上。
+      // 宁可失败，也不要跑在「一眼假」的环境里。
+      // 前提：必须先启用 enable（未启用时不允许勾选，见 resolveBrowserSource）。
+      // Docker 版不生效：容器里只有镜像内置的指纹浏览器，本就是「无兜底」。
+      noFallback: false,
       // 环境拟真内核（2026-10-06）：chromix=Chromix 155（默认）/ fp150=旧内核（备用，当前不可选）
       // 非法值回落 chromix；两个内核的差异全在 src/fingerprint-browser.js 的 ENGINES 里
       engine: "chromix",

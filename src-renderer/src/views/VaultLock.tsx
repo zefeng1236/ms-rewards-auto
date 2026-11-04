@@ -25,7 +25,7 @@ export function VaultLock({ onUnlocked }: { onUnlocked: () => void }) {
   const [pw, setPw] = useState("");
   const [rk, setRk] = useState("");
   const [mode, setMode] = useState<"pw" | "rk">("pw");
-  const [busy, setBusy] = useState<"" | "passkey" | "form" | "saved">("");
+  const [busy, setBusy] = useState<"" | "passkey" | "form" | "saved" | "hello">("");
   const [err, setErr] = useState("");
   const keyFileRef = useRef<HTMLInputElement | null>(null);
   const [rkFromFile, setRkFromFile] = useState("");
@@ -36,6 +36,27 @@ export function VaultLock({ onUnlocked }: { onUnlocked: () => void }) {
   const [remember, setRemember] = useState(false);
   /** 卡片翻页：login = 登录表单（正面），rescue = 忘记密码自救（背面） */
   const [face, setFace] = useState<"login" | "rescue">("login");
+  /** 是否允许弱密码（来自 security.allowWeakPassword）：重新设密码时与设置页同规则 */
+  const [allowWeak, setAllowWeak] = useState(false);
+  /** Windows Hello 状态（可用性 + 用户是否开启用它解锁） */
+  const [hello, setHello] = useState<{
+    supported: boolean;
+    available: boolean;
+    reason: string;
+    enabled: boolean;
+  } | null>(null);
+
+  useEffect(() => {
+    api
+      .getGlobalConfig()
+      .then((c) => setAllowWeak(c?.security?.allowWeakPassword === true))
+      .catch(() => {});
+    // Windows Hello 只在 Windows 桌面版存在；Web 版拿到的实现恒返回不支持
+    api
+      .vaultHelloStatus()
+      .then(setHello)
+      .catch(() => setHello(null));
+  }, []);
 
   useEffect(() => {
     api
@@ -78,6 +99,31 @@ export function VaultLock({ onUnlocked }: { onUnlocked: () => void }) {
       return;
     }
     if (byKey && IS_WEB) saveRecoveryKeyToBrowser(value);
+    afterUnlocked();
+  };
+
+  /**
+   * 用 Windows Hello 解锁（系统级弹窗，用户输本机 PIN / 指纹）。
+   *
+   * ⚠️ 这是「授权门」而不是「密钥绑定」：Hello 只回验证结果，拿不到 PIN 本身，
+   * 所以验证通过后仍由主进程从系统钥匙串取真密钥。详见 src/windows-hello.js。
+   */
+  const unlockWithHello = async () => {
+    setErr("");
+    setBusy("hello");
+    let r: Awaited<ReturnType<typeof api.vaultHelloUnlock>> | undefined;
+    try {
+      r = await api.vaultHelloUnlock();
+    } catch (e) {
+      setBusy("");
+      setErr((e as Error)?.message || "验证失败");
+      return;
+    }
+    setBusy("");
+    if (!r.ok) {
+      setErr(r.error || "验证未通过");
+      return;
+    }
     afterUnlocked();
   };
 
@@ -277,6 +323,22 @@ export function VaultLock({ onUnlocked }: { onUnlocked: () => void }) {
 
               {err && <div className="wz-err">{err}</div>}
 
+              {/* Windows Hello（PIN / 指纹 / 面容）：走系统级弹窗。
+                  只在「Windows 且设备可用 且用户在设置里开了这个方式」时出现，
+                  否则摆一个点不动的按钮只会让人以为坏了。 */}
+              {hello?.available && hello?.enabled && (
+                <div style={{ marginBottom: 10 }}>
+                  <GlassButton
+                    variant="glass"
+                    controlSize="small"
+                    disabled={busy !== ""}
+                    onClick={() => void unlockWithHello()}
+                  >
+                    {busy === "hello" ? "等待系统验证…" : "用 Windows Hello 解锁（PIN / 指纹）"}
+                  </GlassButton>
+                </div>
+              )}
+
               <button
                 type="button"
                 className="login-submit"
@@ -342,7 +404,12 @@ export function VaultLock({ onUnlocked }: { onUnlocked: () => void }) {
                   ← 返回登录
                 </button>
               </div>
-              <VaultRescue variant="panel" onReset={afterUnlocked} onWiped={() => window.location.reload()} />
+              <VaultRescue
+                variant="panel"
+                allowWeak={allowWeak}
+                onReset={afterUnlocked}
+                onWiped={() => window.location.reload()}
+              />
             </div>
           </div>
         </div>
