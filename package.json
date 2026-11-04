@@ -20,6 +20,7 @@
     "pack:dir": "electron-builder --win nsis --dir",
     "test": "node scripts/selfcheck.js",
     "verify:pack": "node scripts/verify-pack.js",
+    "verify:release": "node scripts/verify-release.js",
     "bump": "node scripts/bump-version.js",
     "clean:assets": "node scripts/clean-assets.js"
   },

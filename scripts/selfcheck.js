@@ -4650,6 +4650,47 @@ const DOC_SECRET_PATTERNS = [
       !/\bbody\s*=\s*[^;\n]*stripSignatureBlock/.test(updCode),
     "某出口仍把原始正文交给界面（会露出签名块），或验签前把 body 剥了（更新全被拒）"
   );
+
+  /**
+   * 线上 Release 是否真的带签名块（2026-11-04 补）。
+   *
+   * 为什么需要这条：上面所有守卫都只检查**代码逻辑** —— 代码全对，但我手工发版时
+   * 忘了跑 sign-release.js，Release 正文照样没有签名块，客户端一检查更新就报
+   * 「这个更新包没有通过签名校验，已拒绝下载」。用户实测截图就是这个。
+   *
+   * ⚠️ 这条守卫**只检查仓库内已知的最新版本文档**（release-notes/<version>.md），
+   *    因为自检必须是离线的（CI 里也跑）。真正线上校验放在发布流程的收尾命令里
+   *    （见下方 release-notes 与 package.json 版本号的强绑定）。
+   */
+  checkTrue(
+    "发布说明必须存在，且签名字段齐备（发版前先签，别指望客户端宽容）",
+    (() => {
+      const pkgVersion = JSON.parse(
+        fs.readFileSync(path.join(ROOT, "package.json"), "utf8")
+      ).version;
+      const notesFile = path.join(ROOT, "release-notes", `${pkgVersion}.md`);
+      if (!fs.existsSync(notesFile)) return false;
+      const notes = fs.readFileSync(notesFile, "utf8");
+      // 正文里要么已经有签名块（本地签过），要么至少写明安装包与哈希 ——
+      // 后者是签名的输入，缺了它 CI/手工签名都会签出一个空 payload。
+      const hasBlock = notes.includes("<!-- msr-signature");
+      const hasInputs =
+        /MS-Rewards-Auto-Setup-[\d.]+\.exe/.test(notes) && /SHA256/.test(notes);
+      return hasBlock || hasInputs;
+    })(),
+    "当前版本的发布说明缺失或没有安装包/哈希信息 → 签名无从谈起，客户端会拒收更新"
+  );
+
+  // 发版收尾核对脚本必须存在且被 package.json 暴露 —— 2026-11-04 的教训：
+  // 「代码全对 + 门禁全绿 + Release 建好了」仍然可能是坏版本（漏签名）。
+  checkTrue(
+    "发版收尾核对脚本存在（线上 Release 的签名/附件/哈希必须真核一遍）",
+    fs.existsSync(path.join(ROOT, "scripts", "verify-release.js")) &&
+      /"verify:release":\s*"node scripts\/verify-release\.js"/.test(
+        fs.readFileSync(path.join(ROOT, "package.json"), "utf8")
+      ),
+    "只靠离线自检 → 漏签名这类问题永远发现不了（0.15.9 实测踩过）"
+  );
 }
 
 // —— 跨客户端汇总：HTTP 上报链路的口径与安全（2026-10-11 重构）——
