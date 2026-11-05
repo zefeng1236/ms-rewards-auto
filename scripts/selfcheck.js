@@ -328,11 +328,52 @@ checkTrue(
   "纯 DOM click 对 Fluent/React 按钮可能不触发任何网络请求"
 );
 checkTrue(
-  "领取按钮只选精确匹配/面积最小的元素",
-  tasksSource.includes("exact.length ? exact : all") && tasksSource.includes("area(a) - area(b)"),
+  "领取按钮优先精确匹配，且整张卡片（含数字/可领取字样）必须被降权",
+  // 旧判据是 `area(a) - area(b)`：只按面积排序，页面没有精确按钮时
+  // 唯一候选就是整卡，排序也无从比较 → 2026-11-05 用户实测点错。
+  // 现在改成打分：文本短 + 面积小 + 整卡特征重罚。
+  tasksSource.includes("exact.length ? exact : near.length ? near : all") &&
+    /score\(a\) - score\(b\)/.test(tasksSource) &&
+    /if \(\\d|if \(\/\\d\//.test(tasksSource) &&
+    /n \+= 2000/.test(tasksSource),
   "按包含匹配会命中外层卡片容器，点它等于什么都没做"
 );
 checkTrue("领取后会处理可见确认对话框", tasksSource.includes("[role='dialog']") && tasksSource.includes("已确认对话框按钮"));
+// —— 领取对话框识别：2026-11-05 用户实测「出现对话框但没找到确认按钮：」冒号后空白 ——
+checkTrue(
+  "对话框选择器不许再用 [data-rac]（它是 React Aria 通用属性，几乎每个 div 都带）",
+  !/querySelectorAll\([^)]*\[data-rac\]/.test(tasksSource),
+  "[data-rac] 当对话框 → find() 取第一个可见元素常常是空壳，日志冒号后一片空白，确认环节整个白跑"
+);
+checkTrue(
+  "对话框候选要全部遍历、带回按钮清单，日志不许只打一个空冒号",
+  /for \(const node of dialogs\)/.test(tasksSource) &&
+    /diag\.push\(/.test(tasksSource) &&
+    /按钮=\$\{JSON\.stringify/.test(tasksSource),
+  "只 find 第一个对话框 + 空文本日志 → 下次出问题还是没法定位"
+);
+checkTrue(
+  "确认按钮匹配含英文（Rewards 兑换弹窗可能是 Claim/Redeem）",
+  /Claim\|Redeem\|OK\|Yes/.test(tasksSource),
+  "只认中文前缀 → 英文弹窗一律判「没找到确认按钮」"
+);
+checkTrue(
+  "确认按钮也要在 iframe 里找（Rewards 兑换弹窗常嵌 iframe）",
+  /page\.frames\(\)/.test(tasksSource) && /frame\.evaluate\(/.test(tasksSource),
+  "主文档找不到就放弃 → iframe 弹窗永远点不到确认按钮"
+);
+checkTrue(
+  "落地页兜底不能被「对话框误判 + 仍在 dashboard」整个跳过",
+  /shouldTryLanded/.test(tasksSource) && /diag \|\| \[\]\)\.length > 0/.test(tasksSource),
+  "旧条件 !clicked && !dashboard → 对话框误判时这段不跑，等于没有第二道保险"
+);
+checkTrue(
+  "领取候选要打进日志，且整卡特征（含数字/可领取字样）必须告警",
+  /候选清单：\$\{JSON\.stringify\(pick\.diag/.test(tasksSource) &&
+    /看起来是整张卡片而非按钮/.test(tasksSource) &&
+    /n \+= 2000/.test(tasksSource),
+  "diag 收集了却不输出 → 用户报「点击后未生效」时完全没有可用信息"
+);
 checkTrue(
   "领取结果必须用「可领取」数字变化来验证",
   tasksSource.includes("readPendingPoints") && tasksSource.includes("before - after"),

@@ -593,12 +593,23 @@ async function claimOnce(ctx, opts = {}) {
     }
 
     /**
-     * 选「领取」按钮必须选**最精确、面积最小**的那个（2026-11-04 修）。
+     * 选「领取」按钮必须选**最精确、面积最小**的那个（2026-11-04 修，2026-11-05 补强）。
      *
      * 页面里整张「可领取 / 2,839 / 领取」卡片本身也是 button 或 a，它的 innerText
      * 同样含「领取」。原来用 includes("领取") 会先命中外层容器，点它等于点卡片 ——
      * 什么都不发生，但日志照样打「已点击领取入口」，于是表现为：
      *   每次运行都点了、积分永远不涨、点击后一个 HTTP 请求都没有（用户报障原症状）。
+     *
+     * ⚠️ 2026-11-05 实测补强：页面改版后可能**根本没有** innerText === "领取" 的按钮
+     *   （日志：「找到 1 个领取入口，点击目标『可领取 2,842 领取』（无精确匹配，退回包含匹配）」）。
+     *   此时旧逻辑退回包含匹配，只剩 1 个候选 = 整张卡片，面积排序也无从比较 → 又点错。
+     *   所以现在多两道：
+     *     ① 候选池扩到 div/span（Fluent 自定义按钮常常没有 button 标签也没有 role），
+     *        但要求「看起来可点」：cursor:pointer / tabindex / onclick / role。
+     *     ② 打分排序，文本越接近「领取」越好、面积越小越好；
+     *        文本里带数字或「可领取」字样的整卡明确降权。
+     *     ③ 把候选诊断（文本/尺寸/标签）随 pick 带出来并打进日志 ——
+     *        旧版 diag 收集了却从不输出，排查时只能靠猜。
      */
     const pick = await page.evaluate(() => {
       const visible = (el) => {
@@ -606,28 +617,60 @@ async function claimOnce(ctx, opts = {}) {
         const s = getComputedStyle(el);
         return r.width > 1 && r.height > 1 && s.visibility !== "hidden" && s.display !== "none";
       };
-      const all = Array.from(document.querySelectorAll("button, a[href], [role='button']")).filter((el) => {
-        const t = (el.innerText || el.getAttribute("aria-label") || "").trim();
-        return visible(el) && t.includes("领取") && !t.includes("已领取");
+      const txt = (el) => (el.innerText || el.getAttribute("aria-label") || "").trim().replace(/\s+/g, " ");
+      const clickable = (el) => {
+        const tag = el.tagName.toLowerCase();
+        if (tag === "button" || (tag === "a" && el.hasAttribute("href"))) return true;
+        const role = el.getAttribute("role");
+        if (role === "button" || role === "link") return true;
+        const s = getComputedStyle(el);
+        return s.cursor === "pointer" || el.hasAttribute("tabindex") || el.hasAttribute("onclick");
+      };
+      const all = Array.from(
+        document.querySelectorAll("button, a[href], [role='button'], [role='link'], div, span")
+      ).filter((el) => {
+        const t = txt(el);
+        return visible(el) && clickable(el) && t.includes("领取") && !t.includes("已领取") && t.length <= 40;
       });
       if (!all.length) return { count: 0, diag: [] };
-      const exact = all.filter((el) => (el.innerText || "").trim() === "领取");
-      const pool = exact.length ? exact : all;
+
+      // 精确匹配：文本就是「领取」（允许前后空白）
+      const exact = all.filter((el) => txt(el) === "领取");
+      // 次级匹配：文本短且不含数字/「可领取」这些整卡特征
+      const near = all.filter((el) => {
+        const t = txt(el);
+        return /^领取[^\d]{0,6}$/.test(t) && !t.includes("可领取");
+      });
+      const pool = exact.length ? exact : near.length ? near : all;
       const area = (el) => {
         const r = el.getBoundingClientRect();
         return r.width * r.height;
       };
-      // 面积最小的最像按钮本身（外层容器往往远大于按钮）
-      pool.sort((a, b) => area(a) - area(b));
+      // 打分：文本越短越像按钮、面积越小越像按钮、带数字/可领取字样的整卡重罚
+      const score = (el) => {
+        const t = txt(el);
+        let n = t.length * 8 + area(el) / 100;
+        if (/\d/.test(t)) n += 2000; // 「可领取 2,842 领取」这类整卡
+        if (t.includes("可领取")) n += 2000;
+        return n;
+      };
+      pool.sort((a, b) => score(a) - score(b));
       const target = pool[0];
       target.setAttribute("data-msr-claim", "1");
       const r = target.getBoundingClientRect();
       return {
         count: pool.length,
-        text: (target.innerText || "").trim().replace(/\s+/g, " ").slice(0, 30),
+        text: txt(target).slice(0, 30),
+        tag: target.tagName.toLowerCase(),
         exact: exact.length > 0,
+        near: near.length > 0,
         rect: [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)],
-        diag: all.slice(0, 6).map((el) => (el.innerText || "").trim().replace(/\s+/g, " ").slice(0, 40)),
+        // 诊断：所有候选，下次再出问题能直接从日志看出页面结构
+        diag: all.slice(0, 8).map((el) => ({
+          tag: el.tagName.toLowerCase(),
+          t: txt(el).slice(0, 40),
+          area: Math.round(area(el)),
+        })),
       };
     });
 
@@ -646,8 +689,19 @@ async function claimOnce(ctx, opts = {}) {
     }
     logger.log(
       "🎁",
-      `找到 ${pick.count} 个领取入口，点击目标「${pick.text}」${pick.exact ? "" : "（无精确匹配，退回包含匹配）"}`
+      `找到 ${pick.count} 个领取入口，点击目标「${pick.text}」(${pick.tag})` +
+        `${pick.exact ? "精确匹配" : pick.near ? "近义匹配" : "（无精确匹配，退回包含匹配）"}`
     );
+    // 把候选清单打到日志：以前 diag 收集了却从不输出，出了「点错卡片」只能靠猜
+    logger.log("🎁", `候选清单：${JSON.stringify(pick.diag || [])}`);
+    // 目标文本里带数字或「可领取」→ 极可能仍是整张卡片，点它大概率白点。
+    // 明确告警比静默打一句「已点击领取入口」有用得多。
+    if (/\d/.test(pick.text) || pick.text.includes("可领取")) {
+      logger.warn(
+        `领取目标「${pick.text}」看起来是整张卡片而非按钮，真实点击很可能不生效；` +
+          `若本轮积分没涨，请把上面的候选清单发给开发者`
+      );
+    }
 
     /**
      * 用真实鼠标点击，而不是 `el.click()`。
@@ -670,42 +724,125 @@ async function claimOnce(ctx, opts = {}) {
     await sleep(3000);
 
     // 点击后可能出现确认对话框（也可能整页跳转到领取/兑换页）
+    //
+    // ⚠️ `[data-rac]` 不能当对话框选择器（2026-11-05 实测踩到）：
+    //   它是 React Aria 给**所有**组件挂的通用属性，页面上大量普通 div 都带。
+    //   旧代码用 `.find()` 取第一个可见节点就当对话框，结果经常取到一个空壳
+    //   （日志表现为「出现对话框但没找到确认按钮：」冒号后一片空白），
+    //   然后 `confirmResult.clicked=false` 又让下面的落地页兜底被跳过 → 整个确认环节白跑。
+    // 现在：① 只认真正的对话框语义标记；② 遍历所有候选，优先挑含按钮的；
+    //       ③ 把候选与按钮文本写进返回结构，供日志排查（diag 收集了却不用是浪费）。
     const confirmResult = await page
       .evaluate(() => {
-        const dialogs = Array.from(
-          document.querySelectorAll("[role='dialog'], [aria-modal='true'], [data-rac]")
-        );
-        const visible = dialogs.find((node) => {
+        const visible = (node) => {
           const style = getComputedStyle(node);
           const rect = node.getBoundingClientRect();
-          return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
-        });
-        if (!visible) return { dialog: false, clicked: false, text: "" };
-        const buttons = Array.from(visible.querySelectorAll("button, [role='button'], a[href]"));
-        const action = buttons.find((node) => {
-          const text = (node.innerText || node.getAttribute("aria-label") || "").trim();
-          return /^(领取|确认|确定|继续|立即领取|兑换)/.test(text) && !/取消|关闭/.test(text);
-        });
-        if (!action) return { dialog: true, clicked: false, text: (visible.innerText || "").slice(0, 60) };
-        action.click();
-        return { dialog: true, clicked: true, text: (action.innerText || "").trim().slice(0, 20) };
+          return (
+            style.display !== "none" &&
+            style.visibility !== "hidden" &&
+            rect.width > 1 &&
+            rect.height > 1
+          );
+        };
+        const dialogs = Array.from(
+          document.querySelectorAll(
+            "[role='dialog'], [aria-modal='true'], dialog[open], [class*='Dialog'], [class*='Modal']"
+          )
+        ).filter(visible);
+        if (!dialogs.length) return { dialog: false, clicked: false, text: "", diag: [] };
+
+        const actionRe = /^(领取|确认|确定|继续|立即领取|兑换|Claim|Redeem|OK|Yes)/i;
+        const diag = [];
+        for (const node of dialogs) {
+          const buttons = Array.from(node.querySelectorAll("button, [role='button'], a[href]"))
+            .filter(visible);
+          const texts = buttons
+            .map((b) => (b.innerText || b.getAttribute("aria-label") || "").trim())
+            .filter(Boolean);
+          diag.push({
+            text: (node.innerText || "").trim().replace(/\s+/g, " ").slice(0, 80),
+            buttons: texts.slice(0, 8),
+          });
+          const action = buttons.find((b) => {
+            const t = (b.innerText || b.getAttribute("aria-label") || "").trim();
+            return actionRe.test(t) && !/取消|关闭|返回|Cancel|Close|No\b/i.test(t);
+          });
+          if (action) {
+            action.click();
+            return {
+              dialog: true,
+              clicked: true,
+              text: (action.innerText || "").trim().slice(0, 20),
+              diag,
+            };
+          }
+        }
+        // 有对话框但都没找到可点的按钮 —— 把诊断信息带出去，日志别再只打一个空冒号
+        return {
+          dialog: true,
+          clicked: false,
+          text: diag.map((d) => d.text).filter(Boolean).join(" | ").slice(0, 120),
+          diag,
+        };
       })
-      .catch(() => ({ dialog: false, clicked: false, text: "" }));
+      .catch((e) => ({ dialog: false, clicked: false, text: "", diag: [], error: String(e && e.message).slice(0, 80) }));
     if (confirmResult.dialog) {
       logger.log(
         "🎁",
         confirmResult.clicked
           ? `已确认对话框按钮「${confirmResult.text}」`
-          : `出现对话框但没找到确认按钮：${String(confirmResult.text || "").slice(0, 40)}`
+          : `出现对话框但没找到确认按钮：${confirmResult.text || "（对话框无文本）"}` +
+            `｜候选=${(confirmResult.diag || []).length}` +
+            `｜按钮=${JSON.stringify((confirmResult.diag || []).flatMap((d) => d.buttons).slice(0, 10))}`
       );
       await sleep(3000);
     }
 
     /**
-     * 另一种常见形态：点卡片后**整页跳转**到领取/兑换页，确认按钮在页面上而不是对话框里。
-     * 只在「没找到对话框」且已经离开 dashboard 时才试，避免在首页乱点。
+     * 兜底：确认对话框有时嵌在 **iframe** 里（Rewards 的兑换弹窗就是这种）。
+     * 主文档里找不到按钮时，遍历同源可访问的 frame 再找一次。
+     * 跨域 frame 的 evaluate 会抛错，逐个 catch 掉，不能让一个 frame 拖垮整个流程。
      */
-    if (!confirmResult.clicked && !/\/dashboard/i.test(page.url())) {
+    if (!confirmResult.clicked) {
+      for (const frame of page.frames()) {
+        if (frame === page.mainFrame()) continue;
+        try {
+          const inFrame = await frame.evaluate(() => {
+            const actionRe = /^(领取|确认|确定|继续|立即领取|兑换|Claim|Redeem|OK|Yes)/i;
+            const btns = Array.from(document.querySelectorAll("button, [role='button'], a[href]"));
+            const hit = btns.find((b) => {
+              const t = (b.innerText || b.getAttribute("aria-label") || "").trim();
+              const r = b.getBoundingClientRect();
+              return r.width > 1 && r.height > 1 && actionRe.test(t) && !/取消|关闭|返回|Cancel|Close|No\b/i.test(t);
+            });
+            if (!hit) return null;
+            hit.click();
+            return (hit.innerText || "").trim().slice(0, 20);
+          });
+          if (inFrame) {
+            logger.log("🎁", `已在 iframe 内点击确认按钮「${inFrame}」`);
+            await sleep(3000);
+            break;
+          }
+        } catch {
+          /* 跨域 frame 不可访问，跳过 */
+        }
+      }
+    }
+
+    /**
+     * 另一种常见形态：点卡片后**整页跳转**到领取/兑换页，确认按钮在页面上而不是对话框里。
+     * 只在「没找到对话框可点按钮」时才试，避免在首页乱点。
+     * ⚠️ 旧版条件是 `!confirmResult.clicked && !/dashboard/`：一旦对话框误判
+     *    （dialog=true 但 clicked=false）且 URL 还在 dashboard，这段会被整个跳过，
+     *    确认环节等于白跑。现在改成：没点到按钮时，URL 已离开 dashboard **或**
+     *    确实检测到对话框候选（弹窗在页内、只是没认出按钮）都继续试，
+     *    避免既放开条件又在首页无差别乱点。
+     */
+    const shouldTryLanded =
+      !confirmResult.clicked &&
+      (!/\/dashboard/i.test(page.url()) || (confirmResult.diag || []).length > 0);
+    if (shouldTryLanded) {
       const landedBtn = await page
         .evaluate(() => {
           const cands = Array.from(document.querySelectorAll("button, a[href], [role='button']")).filter((el) => {
@@ -727,7 +864,11 @@ async function claimOnce(ctx, opts = {}) {
         logger.log("🎁", `已在落地页点击「${landedBtn}」`);
         await sleep(3000);
       } else {
-        logger.log("🎁", `点击后跳转到 ${page.url().slice(0, 80)}，但页面上没找到可点的确认按钮`);
+        // 别写死「跳转到」：条件已放开，可能仍停在 dashboard（对话框内嵌在页面里）
+        logger.log(
+          "🎁",
+          `未在${/\/dashboard/i.test(page.url()) ? "当前页" : "落地页"}找到可点的确认按钮（${page.url().slice(0, 80)}）`
+        );
       }
     }
 
@@ -830,7 +971,10 @@ async function taskClaimRewards(ctx) {
   state.get().lastClaimFailedDate = todayNum;
   state.get().lastClaimFailReason = reason;
   state.save();
-  logger.warn(`🎁 领取未成功：${reason}。已记录，明天再试。`);
+  const diag = r.kind === "stalled"
+    ? "；通常是领取按钮没点中（点到整张卡片）或确认对话框没认出来，请查本轮 🎁 候选清单/对话框日志"
+    : "";
+  logger.warn(`🎁 领取未成功：${reason}${diag}。已记录，明天再试。`);
   return { status: "error", error: reason };
 }
 
@@ -906,7 +1050,12 @@ async function taskClaimByThreshold(ctx, opts = {}) {
   // 阈值检查失败**不写 lastClaimFailedDate**：那是定时入口的状态，
   // 让它写会把「定时领取」也一并挡掉，两个入口就又耦合上了。
   const reason = r.kind === "stalled" ? `点击后未生效（${r.before ?? "?"}→${r.after ?? "?"}）` : String(r.error || "未知原因").slice(0, 100);
-  logger.warn(`🎁 阈值补领（${when}）未成功：${reason}`);
+  // 把「点了但没涨分」的原因说清：不是积分没到账，而是点击/确认环节没走通。
+  // 下一轮日志里有候选清单和对话框按钮清单，可以直接对照定位。
+  const diag = r.kind === "stalled"
+    ? "；通常是领取按钮没点中（点到整张卡片）或确认对话框没认出来，请查本轮 🎁 候选清单/对话框日志"
+    : "";
+  logger.warn(`🎁 阈值补领（${when}）未成功：${reason}${diag}`);
   return { status: "error", error: reason };
 }
 
