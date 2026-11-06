@@ -74,19 +74,36 @@ function DatePick({
     };
   });
 
+  // 年月日**同一行**（2026-11-06 用户要求）。
+  // .compat-select 的 CSS 写死了 width:100%，三个下拉在 flex 里会各占一整行
+  // （用户截图就是竖排三行）。必须用 inline style 覆盖成 flex 按比例分宽。
+  // 提示文字用 flexBasis:100% 单独占下一行，不能挤进同一行把下拉压扁。
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+    <div className="date-pick-row" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
       <span className="field-label" style={{ minWidth: 52 }}>{label}</span>
       <Select
         size="sm"
+        style={{ width: "auto", flex: "1.3 1 0%", minWidth: 0 }}
         value={String(y || today.getFullYear())}
         options={years.map((n) => ({ label: `${n} 年`, value: String(n) }))}
         onChange={(v) => setPart("y", Number(v))}
       />
-      <Select size="sm" value={String(m || 1)} options={monthOpts} onChange={(v) => setPart("m", Number(v))} />
-      <Select size="sm" value={String(d || 1)} options={dayOpts} onChange={(v) => setPart("d", Number(v))} />
+      <Select
+        size="sm"
+        style={{ width: "auto", flex: "1 1 0%", minWidth: 0 }}
+        value={String(m || 1)}
+        options={monthOpts}
+        onChange={(v) => setPart("m", Number(v))}
+      />
+      <Select
+        size="sm"
+        style={{ width: "auto", flex: "0.85 1 0%", minWidth: 0 }}
+        value={String(d || 1)}
+        options={dayOpts}
+        onChange={(v) => setPart("d", Number(v))}
+      />
       {!available.has(value) && (
-        <span className="hint" style={{ color: "var(--warn, #d97706)" }}>
+        <span className="hint" style={{ color: "var(--warn, #d97706)", flexBasis: "100%" }}>
           该日期没有日志，导出内容可能为空
         </span>
       )}
@@ -161,28 +178,39 @@ export function ReportProblemPanel() {
         {IS_WEB && " Web/Docker 版由浏览器下载，保存位置取决于浏览器设置。"}
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <span className="field-label" style={{ minWidth: 68 }}>时间段</span>
-        <div style={{ minWidth: 190 }}>
-          <Select
-            size="sm"
-            value={preset}
-            options={PRESETS}
-            onChange={(v) => setPreset(v as LogRangePreset)}
-          />
-        </div>
-      </div>
-
-      {/* 自定义：下方弹出一行日期选择器；没有日志的日期在日下拉里变灰 */}
-      {preset === "custom" && (
-        <div style={{ display: "grid", gap: 8, paddingLeft: 4 }}>
-          <DatePick label="开始" value={from} onChange={setFrom} available={availableSet} />
-          <DatePick label="结束" value={to} onChange={setTo} available={availableSet} />
-          <div className="hint">
-            灰色日期表示当天没有日志。共有 {available.length} 天存在日志。
+      <div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span className="field-label" style={{ minWidth: 68 }}>时间段</span>
+          <div style={{ minWidth: 190 }}>
+            <Select
+              size="sm"
+              value={preset}
+              options={PRESETS}
+              onChange={(v) => setPreset(v as LogRangePreset)}
+            />
           </div>
         </div>
-      )}
+
+        {/* 自定义日期区：常驻 DOM + CSS grid-template-rows 0fr→1fr 展开动画（2026-11-06）。
+            不用 {preset === "custom" && …} 条件渲染：那样只有「出现」、切走是直接消失，
+            而且常驻能让展开与收起双向都平滑。外层包一个普通 div 是为了让父级 grid
+            只看到一个 item —— 否则收起时 0 高度的面板仍会多吃一个 12px gap。
+            关闭态 visibility:hidden 保证里面的 select 不会被 Tab 聚焦。 */}
+        <div
+          className={`report-date-panel${preset === "custom" ? " is-open" : ""}`}
+          aria-hidden={preset !== "custom"}
+        >
+          <div className="report-date-panel-inner">
+            <div style={{ display: "grid", gap: 8, padding: "10px 0 0 4px" }}>
+              <DatePick label="开始" value={from} onChange={setFrom} available={availableSet} />
+              <DatePick label="结束" value={to} onChange={setTo} available={availableSet} />
+              <div className="hint">
+                灰色日期表示当天没有日志。共有 {available.length} 天存在日志。
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <div className="field-row" style={{ marginTop: 2 }}>
         <div style={{ minWidth: 0 }}>

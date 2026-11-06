@@ -4822,3 +4822,59 @@ html[data-preset="opaque"] .compat-toast {
     min-height: 0;
   }
 }
+
+/* ── 报告问题 → 自定义时间段：年月日一行 + 展开动画（2026-11-06） ──────────
+   年月日同排由 ReportProblemPanel 的 inline flex 样式实现（.compat-select 默认
+   width:100%，不覆盖就会竖排三行，见用户截图）。这里只负责面板展开/收起过渡：
+   grid-template-rows 0fr→1fr 能在不写死高度的前提下做平滑高度动画。 */
+.report-date-panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transform: translateY(-8px);
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    grid-template-rows .3s cubic-bezier(.22, 1, .36, 1),
+    opacity .22s ease,
+    transform .3s cubic-bezier(.22, 1, .36, 1),
+    visibility 0s linear .3s;
+}
+.report-date-panel.is-open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transform: translateY(0);
+  visibility: visible;
+  pointer-events: auto;
+  transition:
+    grid-template-rows .3s cubic-bezier(.22, 1, .36, 1),
+    opacity .22s ease,
+    transform .3s cubic-bezier(.22, 1, .36, 1),
+    visibility 0s;
+}
+/* 点开「自定义」时，年月日三个下拉依次轻轻淡入，让展开不只是整块长高 */
+@keyframes msr-date-field-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.report-date-panel.is-open .date-pick-row > .compat-select {
+  animation: msr-date-field-in .3s cubic-bezier(.22, 1, .36, 1) both;
+}
+/* 标签是第 1 个子节点，三个下拉依次是 2/3/4 */
+.report-date-panel.is-open .date-pick-row > .compat-select:nth-child(2) { animation-delay: .04s; }
+.report-date-panel.is-open .date-pick-row > .compat-select:nth-child(3) { animation-delay: .10s; }
+.report-date-panel.is-open .date-pick-row > .compat-select:nth-child(4) { animation-delay: .16s; }
+@media (prefers-reduced-motion: reduce) {
+  .report-date-panel,
+  .report-date-panel.is-open {
+    transition: none;
+  }
+  .report-date-panel.is-open .date-pick-row > .compat-select {
+    animation: none;
+  }
+}
+/* 0fr 生效的前提：内层可收缩且不溢出 */
+.report-date-panel-inner {
+  min-height: 0;
+  overflow: hidden;
+}

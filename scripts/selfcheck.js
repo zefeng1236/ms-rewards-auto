@@ -4914,12 +4914,40 @@ const DOC_SECRET_PATTERNS = [
     })(),
     "少一个预设 → 用户选不到想要的时间范围"
   );
+  const globalCssRp = fs.readFileSync(
+    path.join(ROOT, "src-renderer", "src", "styles", "global.css"),
+    "utf8"
+  );
   checkTrue(
-    "自定义才显示日期选择器，且没有日志的日期变灰",
-    /preset === "custom" && \(/.test(reportSrc) &&
+    "自定义才展开日期选择器，且没有日志的日期变灰",
+    /report-date-panel\$\{preset === "custom" \? " is-open" : ""\}/.test(reportSrc) &&
       /disabled: !available\.has\(key\)/.test(reportSrc) &&
       /getLogAvailableDays/.test(reportSrc),
     "没有日志的日期可选 → 导出空包，用户以为程序坏了"
+  );
+  checkTrue(
+    "年月日三个下拉排在同一行（必须覆盖 .compat-select 的 width:100%）",
+    // CSS 里 .compat-select 是 width:100%，不覆盖就是竖排三行（2026-11-06 用户截图）
+    (reportSrc.match(/width: "auto", flex: "/g) || []).length === 3 &&
+      /className="date-pick-row"/.test(reportSrc) &&
+      /flexBasis: "100%"/.test(reportSrc),
+    "三个下拉各撑满一行 → 用户要的「年月日做成一行」没实现，提示文字还会把下拉压扁"
+  );
+  checkTrue(
+    "选「自定义」时日期区有展开/收起过渡动画",
+    /report-date-panel-inner/.test(reportSrc) &&
+      /\.report-date-panel\s*\{[^}]*grid-template-rows:\s*0fr/.test(globalCssRp) &&
+      /\.report-date-panel\.is-open\s*\{[^}]*grid-template-rows:\s*1fr/.test(globalCssRp) &&
+      /prefers-reduced-motion/.test(globalCssRp),
+    "只有条件渲染没有过渡 → 点开是硬弹出，且切走时直接消失；还要尊重系统减少动画设置"
+  );
+  checkTrue(
+    "点开时三个下拉依次淡入（stagger），减少动画偏好下关闭",
+    /@keyframes msr-date-field-in/.test(globalCssRp) &&
+      /animation-delay: \.04s/.test(globalCssRp) &&
+      /animation-delay: \.16s/.test(globalCssRp) &&
+      /\.report-date-panel\.is-open \.date-pick-row > \.compat-select\s*\{\s*animation: none/.test(globalCssRp),
+    "整块一起冒出来就没有「点开」的反馈；系统开了减少动画却还在动会不适"
   );
   checkTrue(
     "脱敏默认关闭，开启后隐藏账号 ID 与推送密钥",

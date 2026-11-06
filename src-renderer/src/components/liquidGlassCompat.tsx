@@ -162,6 +162,8 @@ export interface SelectProps {
   disabled?: boolean;
   searchable?: boolean;
   "aria-label"?: string;
+  /** 透传到 <select>：调用方用它覆盖 CSS 里的 width:100%（年月日一行时必需） */
+  style?: CSSProperties;
 }
 
 export function Select({
