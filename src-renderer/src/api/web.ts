@@ -16,6 +16,9 @@ import type {
   ClusterReportStats,
   ClusterRuntimeState,
   DeepPartial,
+  ClaimNowResult,
+  LogExportOptions,
+  LogExportResult,
   DesktopAppInfo,
   DownloadResult,
   FingerprintStatus,
@@ -452,6 +455,30 @@ export function createWebApi(): ElectronApi {
     getAccountLogs: (id) => rpc<AccountLogEntry[]>("getAccountLogs", id),
     getAccountLogDays: (id) => rpc<string[]>("getAccountLogDays", id),
     getAccountLogHistory: (id, day) => rpc<AccountLogEntry[]>("getAccountLogHistory", id, day),
+    getLogAvailableDays: () => rpc<string[]>("getLogAvailableDays"),
+    // Web/Docker 没有原生保存对话框：服务端返回 base64，这里转成 Blob 触发浏览器下载。
+    // 「保存在哪」由浏览器自身的下载设置决定（开了「下载前询问」就会弹保存位置）。
+    exportLogs: async (opts: LogExportOptions): Promise<LogExportResult> => {
+      const r = await rpc<LogExportResult>("exportLogs", opts);
+      if (!r?.ok || !r.base64) return r;
+      try {
+        const bin = atob(r.base64);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        const url = URL.createObjectURL(new Blob([bytes], { type: "application/zip" }));
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = r.fileName || "ms-rewards-logs.zip";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+        return { ...r, path: `浏览器下载：${a.download}` };
+      } catch (e) {
+        return { ok: false, error: String((e as Error)?.message || e) };
+      }
+    },
+    claimNow: (id) => rpc<ClaimNowResult>("claimNow", id),
     getHistory: (id, year, month) => rpc<HistorySnapshot>("getHistory", id, year, month),
     chromiumStatus: () => rpc<ChromiumStatus>("chromiumStatus"),
     installBrowser: () => rpc<InstallBrowserResult>("installBrowser"),

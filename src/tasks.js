@@ -487,6 +487,12 @@ async function visitDailySetUrl(ctx, url) {
 function shouldRunClaim({ mode, everyDays, dailyAt, lastDate, lastAt, todayNum, now }) {
   const st = { lastDate: Number(lastDate || 0), lastAt: Number(lastAt || 0) };
 
+  // —— threshold：只按金额触发，定时节奏一律不跑。
+  //    纯函数层也要挡住：taskClaimRewards 虽已提前 return，但自检/调度层可能直接调它。
+  if (mode === "threshold") {
+    return { ok: false, reason: "已选「遵循下方阈值执行」，跳过定时节奏" };
+  }
+
   // —— daily：每天到点后跑一次，当天已跑过就跳过 ——
   if (mode === "daily") {
     // 解析 "HH:MM" → 当天该点的时间戳。故意**不用 new Date("...T..:..")**：
@@ -897,12 +903,51 @@ async function claimOnce(ctx, opts = {}) {
 }
 
 /**
+ * 入口三：**手动立即检查并领取**（2026-11-06 账户详情页按钮）。
+ *
+ * 与上面两个入口的区别，也是它存在的全部理由：
+ *   - 不看 tasks.claim 开关（用户主动点了就是要领，不该被配置挡回去）
+ *   - 不看 shouldRunClaim 的节流 / lastClaimFailedDate（「立即」二字）
+ *   - 不看 threshold（有多少领多少，不设门槛）
+ *   - **不写任何时间戳** —— 不写 lastClaimDate（会污染定时节奏的间隔计算），
+ *     也不写 lastClaimFailedDate（会让今天的定时入口误以为已经试过）。
+ *
+ * @returns {{ok:boolean, gained:number, message:string, error?:string}}
+ */
+async function taskClaimNow(ctx) {
+  const r = await claimOnce(ctx, { threshold: 0 });
+  if (r.kind === "claimed") {
+    logger.success(`🎁 手动领取成功：${r.before} → ${r.after}（+${r.delta} 分）`);
+    return { ok: true, gained: r.delta, message: `已领取 ${r.delta} 分（${r.before} → ${r.after}）` };
+  }
+  if (r.kind === "none") {
+    logger.info("🎁 手动检查：当前没有待领取的积分");
+    return { ok: true, gained: 0, message: "当前没有待领取的积分" };
+  }
+  const reason = r.kind === "stalled"
+    ? `点击后未生效（${r.before ?? "?"}→${r.after ?? "?"}）`
+    : String(r.error || "未知原因").slice(0, 120);
+  logger.warn(`🎁 手动领取未成功：${reason}`);
+  return { ok: false, gained: 0, message: `领取未成功：${reason}`, error: reason };
+}
+
+/**
  * 入口一：按**定时节奏**领取（原有行为，受 claimSchedule.mode 节流）。
  */
 async function taskClaimRewards(ctx) {
   const state = ctx.state;
   if (!ctx.config.get().tasks.claim) {
     return { status: "skip", reason: "未开启定期收取积分" };
+  }
+  /**
+   * 「遵循下方阈值执行(默认)」模式（2026-11-06 用户定）：
+   * 这个模式下**只**由 taskClaimByThreshold 在「首次运行 / 收工」按金额触发，
+   * 不再跑「每隔 N 天 / 每天定时」这条定时节奏 —— 否则用户选了阈值模式，
+   * 后台还是每隔几天照领一次，选项等于没起作用。
+   */
+  const schedMode = String((ctx.config.get() || {}).claimSchedule?.mode || "");
+  if (schedMode === "threshold") {
+    return { status: "skip", reason: "已选「遵循下方阈值执行」，跳过定时节奏" };
   }
   const todayNum = Number(state.getDateNum()); // YYYYMMDD
 
@@ -1520,6 +1565,8 @@ module.exports = {
   taskClaimRewards,
   // 阈值补领（独立于定时节奏，由 runner 在「每天首次运行 / 收工」两处调用）
   taskClaimByThreshold,
+  // 手动「立即检查并领取」（账户详情页，不受开关/节流/阈值/时间戳影响）
+  taskClaimNow,
   // 节流判定抽成纯函数导出（2026-10-06）—— 门禁要拿固定 now 直接驱动它做断言，
   // 不必真的开无头浏览器访问 rewards.bing.com
   shouldRunClaim,

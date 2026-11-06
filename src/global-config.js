@@ -37,7 +37,8 @@ const GLOBAL_DEFAULTS = {
    * 独立成段而不塞进 tasks.claim：那个是 boolean 开关，改成对象会破坏存量配置。
    */
   claimSchedule: {
-    mode: "interval", // interval=每隔 everyDays 天 | daily=每天到 dailyAt
+    // threshold=遵循下方阈值执行（默认）| interval=每隔 everyDays 天 | daily=每天到 dailyAt
+    mode: "threshold",
     everyDays: 7,     // interval 模式：1~30，默认 7（与旧行为一致）
     dailyAt: "09:00", // daily 模式：本地时区 HH:MM
     // 阈值补领：每天首次运行 / 收工时各读一次「可领取」，≥ 此值就领。0 = 关闭

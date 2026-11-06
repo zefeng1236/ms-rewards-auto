@@ -16,6 +16,9 @@ import type {
   ClusterReportStats,
   ClusterRuntimeState,
   DeepPartial,
+  ClaimNowResult,
+  LogExportOptions,
+  LogExportResult,
   DesktopAppInfo,
   FeatureGates,
   DownloadResult,
@@ -195,6 +198,12 @@ export interface ElectronApi {
   getAccountLogDays(id: string): Promise<string[]>;
   /** 某账号指定日期的历史日志 */
   getAccountLogHistory(id: string, day: string): Promise<AccountLogEntry[]>;
+  /** 「报告问题」：所有存在日志的日期（新→旧），自定义日期选择器据此置灰 */
+  getLogAvailableDays(): Promise<string[]>;
+  /** 「报告问题」：按时间段导出日志为 zip，桌面版会弹保存位置对话框 */
+  exportLogs(opts: LogExportOptions): Promise<LogExportResult>;
+  /** 账户详情页：立即检查是否有待领取积分，有就立即领取（不受定时/节流影响） */
+  claimNow(id: string): Promise<ClaimNowResult>;
   chromiumStatus(): Promise<ChromiumStatus>;
   installBrowser(): Promise<InstallBrowserResult>;
 

@@ -43,6 +43,8 @@ const core = require("./app-core");
 const clusterService = require("./cluster-service");
 const clusterSend = require("./cluster-send");
 const clusterHub = require("./cluster-hub");
+const tasks = require("./tasks");
+const logExport = require("./log-export");
 
 /** 壁纸本地缓存目录（与 electron-main 保持一致：storage/cache） */
 const BG_CACHE_DIR = path.join(path.dirname(appearance.FILE), "cache");
@@ -480,6 +482,43 @@ function createApi({ emit }) {
         const retentionDays = globalConfig.get()?.logging?.retentionDays || 7;
         return logger.getAccountHistory(id, day, retentionDays);
       } catch { return []; }
+    },
+    /** 「报告问题」：Docker 版没有原生保存对话框，返回 base64 由浏览器下载 */
+    getLogAvailableDays() {
+      try { return logExport.availableDays(path.dirname(logger.getLogFile())); } catch { return []; }
+    },
+    exportLogs(opts) {
+      try {
+        const o = opts && typeof opts === "object" ? opts : {};
+        const preset = logExport.RANGE_PRESETS.includes(o.preset) ? o.preset : "today";
+        const cleanDay = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || "")) ? String(v) : "");
+        const safeOpts = { preset, from: cleanDay(o.from), to: cleanDay(o.to), redact: o.redact === true };
+        const nowMs = Date.now();
+        const built = logExport.buildLogZip({
+          logDir: path.dirname(logger.getLogFile()),
+          version: require("../package.json").version,
+          opts: safeOpts,
+          nowMs,
+        });
+        return {
+          ok: true,
+          base64: built.buffer.toString("base64"),
+          fileName: logExport.exportFileName(built.sha256, nowMs),
+          bytes: built.bytes,
+          sha256: built.sha256,
+          files: built.files,
+          lines: built.lines,
+        };
+      } catch (e) {
+        return { ok: false, error: String((e && e.message) || e).slice(0, 160) };
+      }
+    },
+    claimNow(id) {
+      const vg = core.vaultGuard();
+      if (vg) return { ok: false, gained: 0, message: vg.error || "保险库未解锁", error: vg.error };
+      if (core.isRunning()) return { ok: false, gained: 0, message: "已有任务正在运行，请稍候", error: "已有任务正在运行" };
+      if (!accounts.get(id)) return { ok: false, gained: 0, message: "账户不存在", error: "账户不存在" };
+      return tasks.taskClaimNow(accounts.context(id));
     },
 
     /* ------------------------ 日历 / 签到勋章 ------------------------ */

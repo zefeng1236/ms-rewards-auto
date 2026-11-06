@@ -459,6 +459,29 @@ export function AccountDetail({
     }
   };
 
+  /**
+   * 立即检查待领取积分并领取（2026-11-06 用户定）。
+   *
+   * 与「立即运行」完全不同：后者跑整条任务链（签入/阅读/活动/搜索），
+   * 这里只做领取这一件事，且不受「定期收取积分」开关、定时节奏、阈值、
+   * 今天是否失败过的影响 —— 用户点了就是要领，不该被隐式条件挡回去。
+   */
+  const onClaimNow = async () => {
+    if (!account) return;
+    setBusy("claimNow");
+    try {
+      const r = await api.claimNow(account.id);
+      if (!r.ok) toast.error(r.error || r.message || "领取失败");
+      else if (r.gained > 0) toast.success(r.message);
+      else toast.info(r.message || "当前没有待领取的积分");
+      await refreshAccounts();
+    } catch (e) {
+      toast.error(String((e as Error)?.message || e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const onRename = async (name: string) => {
     if (!account) return;
     await api.renameAccount(account.id, name);
@@ -596,6 +619,15 @@ export function AccountDetail({
               disabled={running || busy === "sync"}
             >
               {busy === "sync" ? "正在工作…" : "⟳ 刷新状态"}
+            </GlassButton>
+            {/* 只检查并领取待领取积分，不跑其它任务、不受定时节奏与阈值影响 */}
+            <GlassButton variant="glass" controlSize="small"
+              onClick={() => void onClaimNow()}
+              loading={busy === "claimNow"}
+              disabled={running}
+              title="立即检查是否有积分待领取，有就立刻领掉；不影响定时节奏与阈值设置"
+            >
+              {busy === "claimNow" ? "检查中…" : "🎁 立即领取"}
             </GlassButton>
             {/* 正在跑这个账号：立即运行换成停止此账号；排队中可直接移出队列 */}
             {thisRunning ? (

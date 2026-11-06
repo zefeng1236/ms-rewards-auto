@@ -38,6 +38,8 @@ const { classifyOutcome } = require("./outcome");
 const setup = require("./setup");
 const sp = require("./storage-path");
 const vault = require("./vault");
+const tasks = require("./tasks");
+const logExport = require("./log-export");
 const { displayVersion } = require("./version");
 const vaultMigrate = require("./vault/migrate");
 const wipe = require("./wipe");
@@ -1705,6 +1707,87 @@ function registerIpc() {
       return logger.getAccountHistory(id, day, retentionDays);
     } catch {
       return [];
+    }
+  });
+
+  /**
+   * 「报告问题」：列出所有存在日志的日期。
+   * 自定义日期选择器据此把没有日志的日期置灰（用户指定行为）。
+   */
+  ipcMain.handle("app:getLogAvailableDays", () => {
+    try {
+      return logExport.availableDays(path.dirname(logger.getLogFile()));
+    } catch (e) {
+      logger.warn(`读取可用日志日期失败: ${e.message}`);
+      return [];
+    }
+  });
+
+  /**
+   * 「报告问题」：按时间段导出日志到 zip。
+   *
+   * 流程：先在内存里生成 zip → 算出 SHA256（文件名要带哈希）→ 弹原生保存对话框
+   * 让用户选位置 → 写盘。顺序不能反：先弹框再算就不知道默认文件名该写什么。
+   *
+   * ⚠️ 参数在主进程再校验一次，别信渲染层传进来的任意字符串（preset 白名单、
+   *    from/to 正则收口），避免拼出奇怪的时间范围把整个 app.log 全导出去。
+   */
+  ipcMain.handle("app:exportLogs", async (_e, opts) => {
+    try {
+      const o = opts && typeof opts === "object" ? opts : {};
+      const preset = logExport.RANGE_PRESETS.includes(o.preset) ? o.preset : "today";
+      const cleanDay = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || "")) ? String(v) : "");
+      const safeOpts = {
+        preset,
+        from: cleanDay(o.from),
+        to: cleanDay(o.to),
+        redact: o.redact === true, // 默认不脱敏（用户指定）
+      };
+      const nowMs = Date.now();
+      const built = logExport.buildLogZip({
+        logDir: path.dirname(logger.getLogFile()),
+        version: require("../package.json").version,
+        opts: safeOpts,
+        nowMs,
+      });
+      const fileName = logExport.exportFileName(built.sha256, nowMs);
+      const r0 = await dialog.showSaveDialog(mainWindow, {
+        title: "导出日志（报告问题）",
+        defaultPath: path.join(app.getPath("downloads") || app.getPath("home"), fileName),
+        filters: [{ name: "ZIP 压缩包", extensions: ["zip"] }, { name: "所有文件", extensions: ["*"] }],
+      });
+      if (r0.canceled || !r0.filePath) return { ok: false, canceled: true };
+      fs.writeFileSync(r0.filePath, built.buffer);
+      logger.info(`日志已导出：${r0.filePath}（${built.bytes} 字节，${built.lines} 行，脱敏=${safeOpts.redact}）`);
+      return {
+        ok: true,
+        path: r0.filePath,
+        bytes: built.bytes,
+        sha256: built.sha256,
+        files: built.files,
+        lines: built.lines,
+      };
+    } catch (e) {
+      return { ok: false, error: String((e && e.message) || e).slice(0, 160) };
+    }
+  });
+
+  /**
+   * 账户详情页「立即检查并领取」：手动触发，不受开关/节流/阈值/时间戳影响。
+   * 与 account:run 分开：那个会跑全部任务，这里只做领取这一件事，几秒就能给结果。
+   */
+  ipcMain.handle("account:claimNow", async (_e, id) => {
+    const vg = vaultGuard();
+    if (vg) return { ok: false, gained: 0, message: vg.error || "保险库未解锁", error: vg.error };
+    if (running) return { ok: false, gained: 0, message: "已有任务正在运行，请稍候", error: "已有任务正在运行" };
+    const acc = accounts.get(id);
+    if (!acc) return { ok: false, gained: 0, message: "账户不存在", error: "账户不存在" };
+    try {
+      return await tasks.taskClaimNow(accounts.context(id));
+    } catch (e) {
+      const msg = String((e && e.message) || e).slice(0, 160);
+      logger.warn(`手动领取失败: ${msg}`);
+      return { ok: false, gained: 0, message: `领取失败：${msg}`, error: msg };
     }
   });
 

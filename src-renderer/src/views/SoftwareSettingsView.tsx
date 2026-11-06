@@ -5,6 +5,7 @@ import { FingerprintBrowserPanel } from "../components/FingerprintBrowserPanel";
 import { VaultPanel } from "../components/VaultPanel";
 import { UpdatePanel } from "../components/UpdatePanel";
 import { ClusterPanel } from "../components/ClusterPanel";
+import { ReportProblemPanel } from "../components/ReportProblemPanel";
 import { IS_WEB } from "../api/ipc";
 import type { ReleaseNotesResult } from "../types";
 
@@ -23,6 +24,7 @@ export const SOFTWARE_SECTIONS: { key: string; label: string }[] = IS_WEB
       { key: "security", label: "安全" },
       { key: "cluster", label: "跨客户端汇总" },
       { key: "update", label: "更新" },
+      { key: "report", label: "报告问题" },
     ]
   : [
       { key: "personalize", label: "个性化" },
@@ -31,6 +33,7 @@ export const SOFTWARE_SECTIONS: { key: string; label: string }[] = IS_WEB
       { key: "security", label: "安全" },
       { key: "cluster", label: "跨客户端汇总" },
       { key: "update", label: "更新" },
+      { key: "report", label: "报告问题" },
     ];
 
 /**
@@ -158,6 +161,15 @@ export function SoftwareSettingsView({
             : "新版本检查与后台静默下载；下载不会申请管理员权限，安装时才弹 UAC"}
         </div>
         <UpdatePanel onShowNotes={onShowNotes} />
+      </div>
+
+      {/* 分类 ⑦：报告问题（一键导出日志）—— 紧跟「更新」下面（2026-11-06 用户指定） */}
+      <div className="sec sw-sec" id="swsec-report">
+        <div className="sec-title">报告问题</div>
+        <div className="hint" style={{ marginBottom: 8 }}>
+          排查问题时导出运行日志；可选时间段与脱敏，导出为带时间戳和哈希的 zip 文件
+        </div>
+        <ReportProblemPanel />
       </div>
     </div>
   );

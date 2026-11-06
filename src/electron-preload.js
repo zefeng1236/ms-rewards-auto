@@ -116,6 +116,11 @@ contextBridge.exposeInMainWorld("api", {
   getAccountLogs: (id) => ipcRenderer.invoke("app:getAccountLogs", id),
   getAccountLogDays: (id) => ipcRenderer.invoke("app:getAccountLogDays", id),
   getAccountLogHistory: (id, day) => ipcRenderer.invoke("app:getAccountLogHistory", id, day),
+  /** 「报告问题」：可用日志日期 + 导出 zip */
+  getLogAvailableDays: () => ipcRenderer.invoke("app:getLogAvailableDays"),
+  exportLogs: (opts) => ipcRenderer.invoke("app:exportLogs", opts),
+  /** 账户详情页：立即检查并领取待领取积分 */
+  claimNow: (id) => ipcRenderer.invoke("account:claimNow", id),
   chromiumStatus: () => ipcRenderer.invoke("app:chromiumStatus"),
   installBrowser: () => ipcRenderer.invoke("app:installBrowser"),
   fingerprintStatus: () => ipcRenderer.invoke("app:fingerprintStatus"),

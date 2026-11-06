@@ -37,7 +37,9 @@ const DEFAULTS = {
    * ⚠️ 必须与 global-config.js / types/index.ts / api/mock.ts 逐字段对齐。
    */
   claimSchedule: {
-    mode: "interval", // interval | daily
+    // threshold = 遵循下方阈值执行（默认）：只按金额触发，不跑定时节奏。
+    // interval   = 每隔 everyDays 天；daily = 每天到 dailyAt 一次。
+    mode: "threshold", // threshold | interval | daily
     everyDays: 7,     // interval 模式：每隔几天（1~30）。默认 7 = 与旧行为一致
     dailyAt: "09:00", // daily 模式：每天几点（本地时区 HH:MM）
     /**

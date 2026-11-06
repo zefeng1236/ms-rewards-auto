@@ -1042,11 +1042,14 @@ checkTrue(
   "任一处缺字段 → 旧配置文件读到 undefined，节流判定恒为真 → 每次运行都去领"
 );
 checkTrue(
-  "claimSchedule 默认值一致（mode=interval / everyDays=7 / dailyAt=09:00）",
-  /mode:\s*"interval"/.test(cfgSrcFp2) &&
+  "claimSchedule 默认值一致（mode=threshold / everyDays=7 / dailyAt=09:00）",
+  // ⚠️ 不能用宽的 /mode:\s*"interval"/ —— config.js 里还有 schedule.mode:"interval"，
+  //    那处是「每天什么时段运行」的另一个配置，不是 claimSchedule。必须锚定段内。
+  /claimSchedule:\s*\{[\s\S]{0,300}?mode:\s*"threshold"/.test(cfgSrcFp2) &&
+    /claimSchedule:\s*\{[\s\S]{0,300}?mode:\s*"threshold"/.test(gcSrcFp2) &&
+    /claimSchedule:\s*\{[^\n]*mode:\s*"threshold"/.test(mockSrcFp2) &&
     /everyDays:\s*7/.test(cfgSrcFp2) &&
     /dailyAt:\s*"09:00"/.test(cfgSrcFp2) &&
-    /mode:\s*"interval"/.test(gcSrcFp2) &&
     /everyDays:\s*7/.test(gcSrcFp2) &&
     /dailyAt:\s*"09:00"/.test(gcSrcFp2) &&
     /everyDays:\s*7/.test(mockSrcFp2) &&
@@ -1102,12 +1105,17 @@ checkTrue(
   "写死「每周一次」→ 用户配成每天 09:00，日志却说每周，排查时被误导"
 );
 checkTrue(
-  "设置页有节奏下拉 + 条件输入，且只在开关打开时显示",
+  "设置页有节奏下拉 + 三模式各自的条件输入框（2026-11-06 改为常驻可见）",
   /CLAIM_MODE_OPTIONS/.test(formSrcFp2) &&
-    /value\.tasks\?\.claim && \(/.test(formSrcFp2) &&
+    /label="收取节奏"/.test(formSrcFp2) &&
+    /claimMode === "threshold"/.test(formSrcFp2) &&
     /claimMode === "interval"/.test(formSrcFp2) &&
-    /label="收取节奏"/.test(formSrcFp2),
-  "关着开关时也摆出来 → 用户以为改频率有用（任务压根不会跑）"
+    /claimMode === "daily"/.test(formSrcFp2) &&
+    // 整块常驻可见，不再受 tasks.claim 遮蔽：11-04 用户报「找不到 300 积分领取」，
+    // 根因之一就是开关没开时连入口都看不到。开关只影响生效与否（hint 里说明）。
+    !/value\.tasks\?\.claim && \(/.test(formSrcFp2) &&
+    /当前「定期收取积分」是关闭的/.test(formSrcFp2),
+  "阈值模式被藏起来 → 又回到「看不到入口」；或三模式共用同一个输入框 → 选了别的还显示旧的"
 );
 checkTrue(
   "dailyAt 在渲染层就收口成 HH:MM（不把非法值存进配置）",
@@ -3637,23 +3645,31 @@ checkTrue(
 
   checkTrue(
     "设置页暴露「阈值补领」入口（默认 300，可改可关）",
-    /阈值补领/.test(settingsSrc2) &&
+    /攒够多少积分就立刻领/.test(settingsSrc2) &&
       /claimSchedule:\s*\{\s*\n?\s*threshold/.test(settingsSrc2) &&
       /min=\{0\}/.test(settingsSrc2),
     "界面没有入口 → 用户不知道有这个功能，也关不掉（0.15.9 实测被用户当场问到）"
   );
   checkTrue(
-    "阈值入口不受「定期收取积分」开关遮蔽（开关关着也要能看见）",
-    // 上面节奏区块仍受 tasks.claim 控制是对的；但阈值块必须独立在外面。
-    // 判据：阈值块出现的代码位置要在 `value.tasks?.claim &&` 那个块的**闭合之后**。
+    "阈值输入框只在「遵循下方阈值执行」模式出现，选其它两项隐藏",
+    // 2026-11-06 用户明确要求：把阈值框收进节奏下拉的条件分支里。
+    // 判据用「条件渲染包裹」而不是「出现过字符串」——后者在旧版独立常驻块里也成立。
     (() => {
-      const iGate = settingsSrc2.indexOf("{value.tasks?.claim && (");
-      // 锚定**阈值块自己的注释**（而不是「阈值补领」这个词 —— 它在 gate 块内的说明里也会出现，
-      // 用词做锚点会指向错误位置，实测踩过：把 iTh 指向 gate 内部后守卫假红）
-      const iThComment = settingsSrc2.indexOf("阈值补领的**独立入口**");
-      if (iGate < 0 || iThComment < 0) return false;
-      return iThComment > iGate;
+      const iCond = settingsSrc2.indexOf('{claimMode === "threshold" && (');
+      const iNum = settingsSrc2.indexOf('label="攒够多少积分就立刻领"');
+      if (iCond < 0 || iNum < 0) return false;
+      // 阈值框必须紧跟在条件分支内，且不能另有第二个独立常驻副本
+      const within = iNum > iCond && iNum - iCond < 400;
+      const onlyOne = (settingsSrc2.match(/label="攒够多少积分就立刻领"/g) || []).length === 1;
+      return within && onlyOne;
     })(),
+    "选了「每隔 N 天」还摆着阈值框 → 用户以为两者同时生效"
+  );
+  checkTrue(
+    "节奏区块常驻可见（开关关着也能看见阈值入口，只是提示不生效）",
+    // 2026-11-04 的教训不能丢：整个区块被 tasks.claim 藏起来会重新导致「找不到入口」。
+    !/\{value\.tasks\?\.claim && \(/.test(settingsSrc2) &&
+      /当前「定期收取积分」是关闭的/.test(settingsSrc2),
     "藏在 tasks.claim 里 → 开关没开时连「有这功能」都看不到（用户就是这么被坑的）"
   );
   checkTrue(
@@ -3685,7 +3701,7 @@ checkTrue(
     /label="攒够多少积分就立刻领/.test(settingsSrc2) &&
       /suffix="分"/.test(settingsSrc2) &&
       // 0 是特殊值（=关闭），必须用文字说明，否则用户以为「攒够 0 分」是另一条规则
-      /已关闭这道补领/.test(settingsSrc2),
+      /当前：已关闭/.test(settingsSrc2),
     "只显示裸数字 → 用户不知道是积分、天数还是次数（用户当场反馈过）"
   );
   checkTrue(
@@ -4808,6 +4824,117 @@ const DOC_SECRET_PATTERNS = [
         fs.readFileSync(path.join(ROOT, "package.json"), "utf8")
       ),
     "只靠离线自检 → 漏签名这类问题永远发现不了（0.15.9 实测踩过）"
+  );
+}
+
+// —— 「报告问题」与「立即领取」（2026-11-06 用户提的三项需求）——
+{
+  const reportSrc = fs.readFileSync(
+    path.join(ROOT, "src-renderer", "src", "components", "ReportProblemPanel.tsx"),
+    "utf8"
+  );
+  const swViewSrc = fs.readFileSync(
+    path.join(ROOT, "src-renderer", "src", "views", "SoftwareSettingsView.tsx"),
+    "utf8"
+  );
+  const logExportSrc = fs.readFileSync(path.join(ROOT, "src", "log-export.js"), "utf8");
+  const mainSrcRp = fs.readFileSync(path.join(ROOT, "src", "electron-main.js"), "utf8");
+  const webApiSrcRp = fs.readFileSync(path.join(ROOT, "src", "web-api.js"), "utf8");
+  const detailSrcRp = fs.readFileSync(
+    path.join(ROOT, "src-renderer", "src", "views", "AccountDetail.tsx"),
+    "utf8"
+  );
+  const tasksSrcRp = fs.readFileSync(path.join(ROOT, "src", "tasks.js"), "utf8");
+
+  checkTrue(
+    "「报告问题」位于软件设置「更新」分区下面，且加入侧栏分类",
+    (() => {
+      const iUpdate = swViewSrc.indexOf('id="swsec-update"');
+      const iReport = swViewSrc.indexOf('id="swsec-report"');
+      const labels = (swViewSrc.match(/label: "报告问题"/g) || []).length;
+      return iUpdate >= 0 && iReport > iUpdate && labels === 2;
+    })(),
+    "位置错了 / 侧栏少一项 → 点分类跳不过去（IS_WEB 与桌面两个清单都要加）"
+  );
+  checkTrue(
+    "八种时间段预设齐全（今天/24h/48h/72h/本周/本月/所有/自定义）",
+    (() => {
+      const le = require(path.join(ROOT, "src", "log-export.js"));
+      const want = ["today", "24h", "48h", "72h", "week", "month", "all", "custom"];
+      return want.every((p) => le.RANGE_PRESETS.includes(p)) &&
+        le.RANGE_PRESETS.length === want.length;
+    })(),
+    "少一个预设 → 用户选不到想要的时间范围"
+  );
+  checkTrue(
+    "自定义才显示日期选择器，且没有日志的日期变灰",
+    /preset === "custom" && \(/.test(reportSrc) &&
+      /disabled: !available\.has\(key\)/.test(reportSrc) &&
+      /getLogAvailableDays/.test(reportSrc),
+    "没有日志的日期可选 → 导出空包，用户以为程序坏了"
+  );
+  checkTrue(
+    "脱敏默认关闭，开启后隐藏账号 ID 与推送密钥",
+    // 默认必须是 false（用户指定「默认不打开」）
+    // 默认必须是 false（用户指定「默认不打开」）。
+    // ⚠️ 必须锚定 `const [redact, setRedact] = useState(false)` 这一整行：
+    //    文件里还有 busy/doneOpen 的 useState(false)，只查字符串的话改错一处守卫照样全绿。
+    /const \[redact, setRedact\] = useState\(false\)/.test(reportSrc) &&
+      /redact:\s*o\.redact === true/.test(mainSrcRp) &&
+      /账号ID已隐藏/.test(logExportSrc) &&
+      /已隐藏/.test(logExportSrc),
+    "默认开启会丢排查信息；不隐藏密钥则是隐私事故"
+  );
+  checkTrue(
+    "导出为 zip、文件名带当前时间与哈希、先弹保存位置对话框",
+    /makeZip/.test(logExportSrc) &&
+      /exportFileName/.test(logExportSrc) &&
+      /slice\(0, 8\)/.test(logExportSrc) &&
+      /dialog\.showSaveDialog\(mainWindow/.test(mainSrcRp) &&
+      /extensions: \["zip"\]/.test(mainSrcRp),
+    "文件名只有版本号 → 多次导出互相覆盖；不弹框 → 用户不知道文件存哪了"
+  );
+  checkTrue(
+    "导出完成弹免责提示（隐私/勿分享/作者免责）",
+    /不要随意分享/.test(reportSrc) &&
+      /可能包含隐私数据/.test(reportSrc) &&
+      /作者不对因用户人为因素和不可抗力造成的损失和信息泄露负责/.test(reportSrc),
+    "用户明确要求的免责措辞缺失"
+  );
+  checkTrue(
+    "桌面版与 Web/Docker 版都提供导出与手动领取（两端不能缺）",
+    /ipcMain\.handle\("app:exportLogs"/.test(mainSrcRp) &&
+      /exportLogs\(opts\)/.test(webApiSrcRp) &&
+      /getLogAvailableDays/.test(mainSrcRp) &&
+      /getLogAvailableDays\(\)/.test(webApiSrcRp),
+    "Web 端漏方法 → Docker 用户点导出直接报「未知方法」"
+  );
+  checkTrue(
+    "「立即领取」不受开关/节流/阈值/时间戳影响",
+    /async function taskClaimNow/.test(tasksSrcRp) &&
+      /claimOnce\(ctx, \{ threshold: 0 \}\)/.test(tasksSrcRp) &&
+      // 函数体里不许出现 lastClaimDate / shouldRunClaim / lastClaimFailedDate
+      (() => {
+        const i = tasksSrcRp.indexOf("async function taskClaimNow");
+        // ⚠️ 必须切到**下一个函数注释**为止。写死 1400 字符会越界到后面的
+        //    taskClaimRewards，那边当然有 lastClaimDate → 守卫恒红（实测踩过）。
+        const j = tasksSrcRp.indexOf("\n/**", i);
+        const body = tasksSrcRp.slice(i, j > i ? j : i + 900);
+        return !/lastClaimDate|shouldRunClaim|lastClaimFailedDate/.test(body);
+      })(),
+    "手动按钮若写 lastClaimDate → 污染定时节奏的间隔计算；若看开关 → 点了没反应"
+  );
+  checkTrue(
+    "账户详情页工具栏有「立即领取」按钮",
+    /api\.claimNow\(account\.id\)/.test(detailSrcRp) && /立即领取/.test(detailSrcRp),
+    "按钮没接上 → 功能做了但用户点不到"
+  );
+  checkTrue(
+    "阈值模式下定时节奏不再执行（选项必须真的生效）",
+    /schedMode === "threshold"/.test(tasksSrcRp) &&
+      /跳过定时节奏/.test(tasksSrcRp) &&
+      /mode === "threshold"/.test(tasksSrcRp),
+    "选了「遵循下方阈值执行」后台还每 7 天照领一次 → 选项等于没起作用"
   );
 }
 

@@ -65,7 +65,9 @@ function normalizeHHMM(input: unknown): string {
 }
 
 const CLAIM_MODE_OPTIONS: SelectOption[] = [
-  { label: "每隔 N 天（默认 7 天）", value: "interval" },
+  // 2026-11-06 用户定：阈值模式为默认，选中时下方出现阈值输入框，选其它两项隐藏。
+  { label: "遵循下方阈值执行(默认)", value: "threshold" },
+  { label: "每隔 N 天", value: "interval" },
   { label: "每天定时（到点就跑一次）", value: "daily" },
 ];
 
@@ -283,7 +285,10 @@ export function SettingsForm({
   // ⚠️ 全部经收口后再用：旧配置文件没有 claimSchedule 段，值会是 undefined，
   // 直接进 Number()/正则会得到 NaN → 界面显示空白或 NaN。
   const sched = value.claimSchedule || {};
-  const claimMode: "interval" | "daily" = sched.mode === "daily" ? "daily" : "interval";
+  // 三态：threshold（默认，按金额触发）/ interval（每隔 N 天）/ daily（每天定时）。
+  // 旧配置没有这个字段时按默认的 threshold 处理 —— 与 config.js / global-config.js 一致。
+  const claimMode: "threshold" | "interval" | "daily" =
+    sched.mode === "daily" ? "daily" : sched.mode === "interval" ? "interval" : "threshold";
   const claimEveryDays = Math.min(30, Math.max(1, Math.floor(Number(sched.everyDays)) || 7));
   const claimDailyAt = normalizeHHMM(sched.dailyAt);
   /**
@@ -338,92 +343,85 @@ export function SettingsForm({
           ))}
         </div>
 
-        {/* —— 定期收取积分的节奏（2026-10-06）——
-            只在开关打开时显示：关着的时候改频率没有意义（任务压根不会跑），
-            摆在那里只会让人以为改了有用。
-            ⚠️ 这里的值一律经 Math.min/max + 正则收口 —— 主进程也会再收一次，
-               但渲染层先收口能避免用户输「0 天」时界面就显示异常值。
+        {/* —— 收取节奏（2026-11-06 用户定）——
+            三种模式互斥，各自只显示自己需要的那个输入框：
+              threshold（默认）→ 阈值输入框（默认 300）
+              interval          → 间隔天数
+              daily             → 每天几点
+            选其它两项时阈值框**隐藏**（用户明确要求），所以阈值不再是独立常驻区块。
 
-            2026-11-04：用户报「检测到 300 积分领取怎么没有」—— 根因不只是阈值没入口，
-            还叠了一层：整个区块被 `tasks.claim` 藏着，开关没开时连"这里有个阈值"都看不到。
-            所以阈值那一项改成**始终显示**（它本身就是「够多了就领」的开关式参数，
-            关掉 tasks.claim 时给一句说明即可），节奏/间隔/时间仍跟随开关。 */}
-        {value.tasks?.claim && (
-          <div className="form-grid" style={{ marginTop: 8 }}>
-            <SelectField
-              label="收取节奏"
-              hint="「每隔 N 天」按上次领取日算差值；「每天定时」到点就跑一次，当天已领过会跳过"
-              value={claimMode}
-              options={CLAIM_MODE_OPTIONS}
-              onChange={(v) => onChange({ claimSchedule: { mode: v } } as DeepPartial<AppConfig>)}
-            />
-            {claimMode === "interval" ? (
-              <NumberField
-                label="间隔天数"
-                hint="1 ~ 30 天。默认 7 天（与旧行为一致）"
-                value={claimEveryDays}
-                min={1}
-                max={30}
-                onChange={(v) =>
-                  onChange({
-                    claimSchedule: {
-                      everyDays: Math.min(30, Math.max(1, Math.floor(v) || 7)),
-                    },
-                  } as DeepPartial<AppConfig>)
-                }
-              />
-            ) : (
-              <TimeField
-                label="每天几点"
-                hint="本地时区 24 小时制。到点后当天跑一次，当天已领过会自动跳过"
-                value={claimDailyAt}
-                onChange={(v) =>
-                  onChange({
-                    claimSchedule: { dailyAt: normalizeHHMM(v) },
-                  } as DeepPartial<AppConfig>)
-                }
-              />
-            )}
-          </div>
-        )}
-
-        {/* 阈值补领的**独立入口**（2026-11-04）。
-            为什么从上面那块拆出来：上面整块受 `tasks.claim` 控制，开关没开时用户
-            连「有阈值补领这回事」都看不到 —— 这正是用户报「检测到 300 积分领取怎么没有」的
-            第二个原因。阈值本身是「够多了就领」的判据，与「隔几天领一次」是两套并行触发，
-            所以它应该独立可见：关掉定期收取时明确告知「本项不生效」，而不是整个消失。 */}
+            ⚠️ 整块保持常驻可见，不受 tasks.claim 开关遮蔽：2026-11-04 用户报
+              「检测到 300 积分领取怎么没有」，其中一个原因就是开关没开时连入口都看不到。
+              开关只影响「生不生效」（hint 里说明），不该决定「看不看得见」。 */}
         <div className="form-grid" style={{ marginTop: 8 }}>
-          <NumberField
-            label="攒够多少积分就立刻领（阈值补领）"
-            // 单位必须显示在框里：只给一个裸「300」，用户看不出是积分还是天数
-            // （2026-11-04 用户原话「你不能就叫 300 啊，谁能看懂」）。
-            suffix="分"
+          <SelectField
+            label="收取节奏"
             hint={
               value.tasks?.claim
-                ? "每天「首次运行」和「收工」各查一次可领取金额，攒到这个数就立刻领掉，不必等间隔天数。与上面的节奏并行生效"
-                : "当前「定期收取积分」是关闭的，本项不会生效；打开上面那个开关后，每天「首次运行」和「收工」各查一次可领取金额，攒到这个数就立刻领掉"
+                ? "「遵循下方阈值执行」按可领取金额触发；「每隔 N 天」按上次领取日算差值；「每天定时」到点跑一次"
+                : "当前「定期收取积分」是关闭的，以下设置不会生效；打开上面那个开关后才开始工作"
             }
-            // 0 是特殊值（= 关闭），必须用文字说出来，否则用户以为「攒够 0 分」是另一种规则
-            suffixHint={
-              claimThreshold > 0
-                ? `当前：攒够 ${claimThreshold} 分就提前领；填 0 可关闭这道补领`
-                : "当前：已关闭这道补领（填 0 即关闭）。想恢复就填一个正数，例如 300"
-            }
-            value={claimThreshold}
-            min={0}
-            max={5000}
-            onChange={(v) =>
-              onChange({
-                claimSchedule: {
-                  threshold: (() => {
-                    const n = Number(v);
-                    if (!Number.isFinite(n)) return 300;
-                    return Math.min(5000, Math.max(0, Math.floor(n)));
-                  })(),
-                },
-              } as DeepPartial<AppConfig>)
-            }
+            value={claimMode}
+            options={CLAIM_MODE_OPTIONS}
+            onChange={(v) => onChange({ claimSchedule: { mode: v } } as DeepPartial<AppConfig>)}
           />
+          {claimMode === "threshold" && (
+            <NumberField
+              label="攒够多少积分就立刻领"
+              // 单位必须显示在框里：只给一个裸「300」，用户看不出是积分还是天数
+              // （2026-11-04 用户原话「你不能就叫 300 啊，谁能看懂」）。
+              suffix="分"
+              hint="每天「首次运行」和「收工」各查一次可领取金额，攒到这个数就立刻领掉。默认 300，填 0 关闭"
+              // 0 是特殊值（= 关闭），必须用文字说出来
+              suffixHint={
+                claimThreshold > 0
+                  ? `当前：攒够 ${claimThreshold} 分就提前领；填 0 可关闭`
+                  : "当前：已关闭（填 0 即关闭）。想恢复就填一个正数，例如 300"
+              }
+              value={claimThreshold}
+              min={0}
+              max={5000}
+              onChange={(v) =>
+                onChange({
+                  claimSchedule: {
+                    threshold: (() => {
+                      const n = Number(v);
+                      if (!Number.isFinite(n)) return 300;
+                      return Math.min(5000, Math.max(0, Math.floor(n)));
+                    })(),
+                  },
+                } as DeepPartial<AppConfig>)
+              }
+            />
+          )}
+          {claimMode === "interval" && (
+            <NumberField
+              label="间隔天数"
+              hint="1 ~ 30 天。默认 7 天（与旧行为一致）"
+              value={claimEveryDays}
+              min={1}
+              max={30}
+              onChange={(v) =>
+                onChange({
+                  claimSchedule: {
+                    everyDays: Math.min(30, Math.max(1, Math.floor(v) || 7)),
+                  },
+                } as DeepPartial<AppConfig>)
+              }
+            />
+          )}
+          {claimMode === "daily" && (
+            <TimeField
+              label="每天几点"
+              hint="本地时区 24 小时制。到点后当天跑一次，当天已领过会自动跳过"
+              value={claimDailyAt}
+              onChange={(v) =>
+                onChange({
+                  claimSchedule: { dailyAt: normalizeHHMM(v) },
+                } as DeepPartial<AppConfig>)
+              }
+            />
+          )}
         </div>
       </Section>
 

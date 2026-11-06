@@ -103,8 +103,11 @@ export interface AppConfig {
    * 独立成段而不并进 tasks.claim：那个是 boolean 开关，改成对象会破坏存量配置。
    */
   claimSchedule: {
-    /** interval = 每隔 everyDays 天一次；daily = 每天到 dailyAt 一次 */
-    mode: "interval" | "daily";
+    /**
+     * threshold = 遵循下方阈值执行（**默认**）：只按金额触发，不跑定时节奏；
+     * interval  = 每隔 everyDays 天一次；daily = 每天到 dailyAt 一次。
+     */
+    mode: "threshold" | "interval" | "daily";
     /** interval 模式：每隔几天（1~30）。默认 7（与旧行为一致） */
     everyDays: number;
     /** daily 模式：每天几点（本地时区 HH:MM，如 "09:00"） */
@@ -1043,4 +1046,45 @@ export interface HistorySnapshot {
   years: number[];
   /** 今天 YYYY-MM-DD */
   today: string;
+}
+
+/* ---------------- 报告问题：日志导出（2026-11-06） ---------------- */
+
+/** 导出时间段预设。custom 时用 from/to 指定起止日期（YYYY-MM-DD） */
+export type LogRangePreset = "today" | "24h" | "48h" | "72h" | "week" | "month" | "all" | "custom";
+
+export interface LogExportOptions {
+  preset: LogRangePreset;
+  /** custom 专用：起止日期 YYYY-MM-DD（含两端） */
+  from?: string;
+  to?: string;
+  /** 脱敏：隐藏账号 ID 与推送地址里的密钥。默认 false（用户指定） */
+  redact: boolean;
+}
+
+export interface LogExportResult {
+  ok: boolean;
+  /** 取消保存对话框时为 true（不是错误，不要弹失败提示） */
+  canceled?: boolean;
+  /** 桌面版：实际保存路径；Web 版：下载用的文件名 */
+  path?: string;
+  bytes?: number;
+  sha256?: string;
+  /** 打进包里的文件清单 */
+  files?: string[];
+  lines?: number;
+  error?: string;
+  /** Web/Docker 版没有原生保存对话框，返回 base64 让浏览器下载 */
+  base64?: string;
+  fileName?: string;
+}
+
+/** 手动「立即检查并领取待领取积分」结果 */
+export interface ClaimNowResult {
+  ok: boolean;
+  /** 领取到的积分；0 表示没有可领取或未成功 */
+  gained: number;
+  /** 给用户看的一句话结论 */
+  message: string;
+  error?: string;
 }

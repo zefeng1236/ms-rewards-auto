@@ -30,7 +30,7 @@ const DEFAULT_CONFIG: AppConfig = {
   useGlobal: true,
   tasks: { sign: true, read: true, daily: true, promos: true, claim: false, search: true, desktopApp: false },
   // 定期收取积分节奏 —— 必须与 config.js / global-config.js / types 逐字段对齐
-  claimSchedule: { mode: "interval", everyDays: 7, dailyAt: "09:00", threshold: 300 },
+  claimSchedule: { mode: "threshold", everyDays: 7, dailyAt: "09:00", threshold: 300 },
   region: { lock: true, ipProvider: "bing" },
   search: { span: 30, api: "offline" },
   limits: { random: false, read: 6, promos: 0, search: 6, allowExceed: false },
@@ -606,6 +606,17 @@ export function createMockApi(): ElectronApi {
       ];
     },
     getAccountLogDays: async () => ["2026-08-31", "2026-08-30"],
+    // 「报告问题」预览用假数据：让自定义日期选择器能演示「无日志日期变灰」
+    getLogAvailableDays: async () => ["2026-11-06", "2026-11-05", "2026-11-04", "2026-10-31"],
+    exportLogs: async (opts) => ({
+      ok: true,
+      bytes: 0,
+      sha256: "0".repeat(64),
+      files: ["app.log", "manifest.json"],
+      lines: 0,
+      fileName: `ms-rewards-logs-preview-${String(opts?.preset || "today")}.zip`,
+    }),
+    claimNow: async () => ({ ok: true, gained: 0, message: "预览模式：没有待领取的积分（假数据）" }),
     // 日历假数据：造一整月有绿/橙/灰/红四态 + 若干勋章，方便脱机调样式
     getHistory: async (_id, year, month) => {
       const now = new Date();
