@@ -4882,12 +4882,66 @@ const DOC_SECRET_PATTERNS = [
     "utf8"
   );
   checkTrue(
-    "发版收尾：附件可达性必须真解析 HTTP 状态码，Windows 跳过 Schannel 吊销检查",
-    /code >= 200 && code < 400/.test(verifyReleaseSrc) &&
+    "发版收尾：附件可达性必须真解析状态码、只认 2xx，且适配本机 Schannel",
+    /code >= 200 && code < 300/.test(verifyReleaseSrc) &&
+      /parseFinalCode/.test(verifyReleaseSrc) &&
       /%\{http_code\}/.test(verifyReleaseSrc) &&
       /--ssl-no-revoke/.test(verifyReleaseSrc) &&
-      /process\.platform === "win32"/.test(verifyReleaseSrc),
-    "忽略 stdout 只 catch 异常 → 404 也判通过（假守卫）；Schannel 吊销检查失败 → 好包被误判"
+      /process\.platform === "win32"/.test(verifyReleaseSrc) &&
+      /--max-time/.test(verifyReleaseSrc) &&
+      /attempt < 2/.test(verifyReleaseSrc),
+    "忽略 stdout 只 catch 异常 → 404 也判通过（假守卫）；3xx 也放行 → 重定向没跟完却算可下载；" +
+      "Schannel 吊销检查失败 → 好包被误判；代理瞬时抖动 → 单次失败就报错"
+  );
+  checkTrue(
+    "发版收尾：Release 状态要同时检查草稿、预发布与 Latest 端点",
+    /不是草稿/.test(verifyReleaseSrc) &&
+      /不是预发布/.test(verifyReleaseSrc) &&
+      /是 Latest（客户端会收到这个版本）/.test(verifyReleaseSrc) &&
+      /releases\/latest/.test(verifyReleaseSrc),
+    "只查 isDraft 不够：被标 pre-release 时 latest 端点不返回它，客户端收不到更新"
+  );
+  checkTrue(
+    "发版收尾：exe 与 blockmap 两个附件都要存在、可比、可下载",
+    /blockmap 附件存在/.test(verifyReleaseSrc) &&
+      /probeAsset\(blockmapName/.test(verifyReleaseSrc) &&
+      /blockmap 字节数与本地一致/.test(verifyReleaseSrc),
+    "只查 exe → blockmap 漏传时增量更新失效，收尾核对却全绿"
+  );
+  checkTrue(
+    "发版收尾：正文展示的 SHA256 / 字节数必须与签名和本地产物一致",
+    /正文展示的 SHA256 与签名一致/.test(verifyReleaseSrc) &&
+      /正文展示的字节数与本地一致/.test(verifyReleaseSrc) &&
+      /extractBodyHash/.test(verifyReleaseSrc) &&
+      /extractBodyBytes/.test(verifyReleaseSrc),
+    "2026-10-02 事故：exe 覆盖重传但说明还写旧哈希，用户一校验就失败；" +
+      "签名对得上不代表展示给用户的校验表对得上"
+  );
+  checkTrue(
+    "发版收尾：判定抽成可离线断言的纯函数，且 SKIP 不许伪装成通过",
+    /module\.exports = pure/.test(verifyReleaseSrc) &&
+      /require\.main === module/.test(verifyReleaseSrc) &&
+      /ok === null \? "SKIP"/.test(verifyReleaseSrc) &&
+      /不能断定客户端能装/.test(verifyReleaseSrc) &&
+      /hintsFor/.test(verifyReleaseSrc),
+    "判定藏在主流程里就无法做反例；--skip-download 把「没检查」算作通过，又是一个假守卫"
+  );
+  const selftestSrc = fs.readFileSync(
+    path.join(ROOT, "scripts", "verify-release-selftest.js"),
+    "utf8"
+  );
+  const pkgSrcRp = fs.readFileSync(path.join(ROOT, "package.json"), "utf8");
+  checkTrue(
+    "发版收尾核对有离线反例自测：每一项检查都能被坏输入变红",
+    /"verify:release:selftest"/.test(pkgSrcRp) &&
+      /基线：/.test(selftestSrc) &&
+      /Module\._load/.test(selftestSrc) &&
+      /expectFail\(/.test(selftestSrc) &&
+      ["草稿 Release", "被标为预发布", "latest 指向别的版本", "漏传 blockmap",
+        "正文哈希写成旧值", "正文没有签名块", "附件 404", "重定向后成功"].every((c) =>
+        selftestSrc.includes(c)
+      ),
+    "只手工验证一次不算数：新加的检查项若没有反例，可能又是一个 404 也判通过的假守卫"
   );
 }
 

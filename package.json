@@ -21,6 +21,7 @@
     "test": "node scripts/selfcheck.js",
     "verify:pack": "node scripts/verify-pack.js",
     "verify:release": "node scripts/verify-release.js",
+    "verify:release:selftest": "node scripts/verify-release-selftest.js",
     "bump": "node scripts/bump-version.js",
     "clean:assets": "node scripts/clean-assets.js"
   },
