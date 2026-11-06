@@ -121,14 +121,22 @@ function main() {
   if (!skipDownload && exeAsset) {
     const probe = (url) => {
       try {
-        execFileSync(
-          "curl",
-          ["-sSIL", "-o", "/dev/null", "-w", "%{http_code}", url],
-          { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 30000 }
-        );
-        return true;
+        const args = ["-sSIL", "-o", "/dev/null", "-w", "%{http_code}"];
+        // 本机 Schannel 在代理 / TLS 拦截环境下无法完成证书吊销检查，会抛
+        // CRYPT_E_NO_REVOCATION_CHECK（0.16.0 发版实测），但附件其实 200 可达。
+        // 仅 Windows 需要；这里只探测可达性、不验证身份，跳过吊销检查是合理的。
+        if (process.platform === "win32") args.push("--ssl-no-revoke");
+        args.push(url);
+        const out = execFileSync("curl", args, {
+          encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 30000,
+        });
+        // ⚠️ 必须真的解析状态码：旧版忽略 stdout，curl 就算拿到 404 也 return true，
+        //    「附件可下载」这项等于摆设（0.16.0 发版时发现并修复）。
+        // -L 跟随跳转时 %{http_code} 可能输出多次，取最后一次（最终响应）。
+        const code = Number(String(out).trim().split(/\s+/).pop());
+        return { ok: code >= 200 && code < 400, code };
       } catch {
-        return false;
+        return { ok: false, code: 0 };
       }
     };
     // 优先用 asset 的 browser_download_url（gh release view 的 assets 里没有这个字段，
@@ -139,11 +147,13 @@ function main() {
       const detailJson = ghJson(["api", `repos/{owner}/{repo}/releases/tags/${tag}`]);
       const a = (detailJson.assets || []).find((x) => x.name === exeName);
       if (a && a.browser_download_url) {
-        okProbe = probe(a.browser_download_url);
-        detail = okProbe ? "" : "HEAD 请求失败（可能被删或私有化）";
+        const r = probe(a.browser_download_url);
+        okProbe = r.ok;
+        detail = r.ok ? "" : `HEAD 返回 ${r.code || "请求失败"}（附件可能被删或私有化）`;
       } else {
-        okProbe = probe(detailJson.html_url);
-        detail = okProbe ? "" : "Release 页面不可达";
+        const r = probe(detailJson.html_url);
+        okProbe = r.ok;
+        detail = r.ok ? "" : `Release 页面 HEAD 返回 ${r.code || "请求失败"}`;
       }
     } catch (e) {
       detail = String(e.message || "").split("\n")[0];

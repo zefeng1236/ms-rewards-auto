@@ -4873,6 +4873,22 @@ const DOC_SECRET_PATTERNS = [
       ),
     "只靠离线自检 → 漏签名这类问题永远发现不了（0.15.9 实测踩过）"
   );
+
+  // 0.16.0 发版实测：探测函数只 catch curl 异常、不看状态码，404 也会判通过；
+  // 且本机 Schannel 在代理/TLS 拦截下报 CRYPT_E_NO_REVOCATION_CHECK，
+  // 明明 200 可达的好包被误判成「附件不可下载」。
+  const verifyReleaseSrc = fs.readFileSync(
+    path.join(ROOT, "scripts", "verify-release.js"),
+    "utf8"
+  );
+  checkTrue(
+    "发版收尾：附件可达性必须真解析 HTTP 状态码，Windows 跳过 Schannel 吊销检查",
+    /code >= 200 && code < 400/.test(verifyReleaseSrc) &&
+      /%\{http_code\}/.test(verifyReleaseSrc) &&
+      /--ssl-no-revoke/.test(verifyReleaseSrc) &&
+      /process\.platform === "win32"/.test(verifyReleaseSrc),
+    "忽略 stdout 只 catch 异常 → 404 也判通过（假守卫）；Schannel 吊销检查失败 → 好包被误判"
+  );
 }
 
 // —— 「报告问题」与「立即领取」（2026-11-06 用户提的三项需求）——
