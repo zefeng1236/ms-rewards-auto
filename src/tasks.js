@@ -565,6 +565,78 @@ async function readPendingPoints(page) {
 }
 
 /**
+ * 确认按钮的匹配规则 —— 单一真源，主文档 / iframe / 落地页三处共用。
+ *
+ * ⚠️ 2026-11-06 用户实测日志给出了真实按钮文本：
+ *      "2,845\n\n待领取\n\n领取积分"
+ *    旧规则 /^(领取|确认|…)/ 要求**以动作词开头**，这个按钮以数字开头 → 匹配不上。
+ *    日志表现「出现对话框但没找到确认按钮」，随后兜底去点了页面别处的「兑换」，
+ *    积分 2845→2845 纹丝不动。
+ * 现在改成「包含动作词 + 排除干扰项」的分级匹配：
+ *    strong 明确的领取文案（优先） · weak 通用动作词 · deny 同弹窗里的干扰按钮。
+ * 存字符串而不是 RegExp 对象：page.evaluate 的函数体要序列化进浏览器执行，
+ * 外部变量只能经参数传递。
+ */
+const CLAIM_ACTION_RE = {
+  strong: "领取积分|立即领取|确认领取|马上领取|去领取|Claim now|Redeem now",
+  weak: "领取|确认|确定|继续|兑换|Claim|Redeem|OK|Yes",
+  // 「可领取」用于排除整张卡片（文本形如「可领取 2,845 领取」）
+  deny: "关闭|取消|返回|赚取|权益说明|了解更多|稍后|Cancel|Close|No\\b|Back|可领取",
+};
+
+/**
+ * 在【浏览器页面里】找出最像「确认领取」的按钮并打标记，不点击。
+ *
+ * 点击必须由外层用 Playwright locator 真实鼠标点击完成 —— Fluent / React 组件
+ * 对纯 DOM click 可能不响应，这一条已在领取入口上验证过。
+ * 这个函数会被序列化后分别投到主文档、iframe、落地页执行，因此**不能引用任何闭包变量**，
+ * 规则只能从参数 re 传入。
+ *
+ * @returns {{marked:boolean,text:string,hasDialog:boolean,diag:Array}}
+ */
+function findClaimActionInPage(re) {
+  const strong = new RegExp(re.strong, "i");
+  const weak = new RegExp(re.weak, "i");
+  const deny = new RegExp(re.deny, "i");
+  // 同一页可能被多次调用（主文档→落地页），先清掉旧标记，别让 .first() 点到上次的
+  document.querySelectorAll("[data-msr-confirm]").forEach((el) => el.removeAttribute("data-msr-confirm"));
+  const visible = (el) => {
+    const s = getComputedStyle(el);
+    const r = el.getBoundingClientRect();
+    return s.display !== "none" && s.visibility !== "hidden" && r.width > 1 && r.height > 1;
+  };
+  const norm = (el) => (el.innerText || el.getAttribute("aria-label") || "").trim().replace(/\s+/g, " ");
+  const dialogs = Array.from(
+    document.querySelectorAll(
+      "[role='dialog'], [aria-modal='true'], dialog[open], [class*='Dialog'], [class*='Modal']"
+    )
+  ).filter(visible);
+  // 有对话框就只在对话框里找；没有就把整页当一个作用域（落地页形态）
+  const scopes = dialogs.length ? dialogs : [document.body];
+  const diag = [];
+  let best = null;
+  for (const scope of scopes) {
+    const buttons = Array.from(scope.querySelectorAll("button, [role='button'], a[href]")).filter(visible);
+    diag.push({
+      text: (scope.innerText || "").trim().replace(/\s+/g, " ").slice(0, 80),
+      buttons: buttons.map(norm).filter(Boolean).slice(0, 8),
+    });
+    for (const b of buttons) {
+      const t = norm(b);
+      if (!t || deny.test(t)) continue;
+      const level = strong.test(t) ? 0 : weak.test(t) ? 1 : 99;
+      if (level === 99) continue;
+      // 级别优先（strong 一定压过 weak），同级别里文本越短越像按钮本身
+      const score = level * 10000 + t.length;
+      if (!best || score < best.score) best = { el: b, text: t, score };
+    }
+  }
+  if (!best) return { marked: false, text: "", hasDialog: dialogs.length > 0, diag };
+  best.el.setAttribute("data-msr-confirm", "1");
+  return { marked: true, text: best.text.slice(0, 20), hasDialog: dialogs.length > 0, diag };
+}
+
+/**
  * 领取动作本体：打开页面 → 读「可领取」→（可选阈值）→ 精确点击 → 回读验证。
  *
  * 被两个**互相独立**的入口复用，它们只共享「怎么领」，不共享「该不该跑」：
@@ -736,68 +808,38 @@ async function claimOnce(ctx, opts = {}) {
     //   旧代码用 `.find()` 取第一个可见节点就当对话框，结果经常取到一个空壳
     //   （日志表现为「出现对话框但没找到确认按钮：」冒号后一片空白），
     //   然后 `confirmResult.clicked=false` 又让下面的落地页兜底被跳过 → 整个确认环节白跑。
-    // 现在：① 只认真正的对话框语义标记；② 遍历所有候选，优先挑含按钮的；
-    //       ③ 把候选与按钮文本写进返回结构，供日志排查（diag 收集了却不用是浪费）。
+    // 现在：① 只认真正的对话框语义标记；② 遍历所有候选、按「含动作词且排除干扰项」分级打分；
+    //       ③ 匹配规则统一走 findClaimActionInPage（主文档/iframe/落地页共用一份，不许各写一套）；
+    //       ④ 候选与按钮文本写进返回结构供日志排查（diag 收集了却不用是浪费）。
     const confirmResult = await page
-      .evaluate(() => {
-        const visible = (node) => {
-          const style = getComputedStyle(node);
-          const rect = node.getBoundingClientRect();
-          return (
-            style.display !== "none" &&
-            style.visibility !== "hidden" &&
-            rect.width > 1 &&
-            rect.height > 1
-          );
-        };
-        const dialogs = Array.from(
-          document.querySelectorAll(
-            "[role='dialog'], [aria-modal='true'], dialog[open], [class*='Dialog'], [class*='Modal']"
-          )
-        ).filter(visible);
-        if (!dialogs.length) return { dialog: false, clicked: false, text: "", diag: [] };
+      .evaluate(findClaimActionInPage, CLAIM_ACTION_RE)
+      .catch((e) => ({
+        marked: false, text: "", hasDialog: false, diag: [],
+        error: String((e && e.message) || e).slice(0, 80),
+      }));
 
-        const actionRe = /^(领取|确认|确定|继续|立即领取|兑换|Claim|Redeem|OK|Yes)/i;
-        const diag = [];
-        for (const node of dialogs) {
-          const buttons = Array.from(node.querySelectorAll("button, [role='button'], a[href]"))
-            .filter(visible);
-          const texts = buttons
-            .map((b) => (b.innerText || b.getAttribute("aria-label") || "").trim())
-            .filter(Boolean);
-          diag.push({
-            text: (node.innerText || "").trim().replace(/\s+/g, " ").slice(0, 80),
-            buttons: texts.slice(0, 8),
-          });
-          const action = buttons.find((b) => {
-            const t = (b.innerText || b.getAttribute("aria-label") || "").trim();
-            return actionRe.test(t) && !/取消|关闭|返回|Cancel|Close|No\b/i.test(t);
-          });
-          if (action) {
-            action.click();
-            return {
-              dialog: true,
-              clicked: true,
-              text: (action.innerText || "").trim().slice(0, 20),
-              diag,
-            };
-          }
-        }
-        // 有对话框但都没找到可点的按钮 —— 把诊断信息带出去，日志别再只打一个空冒号
-        return {
-          dialog: true,
-          clicked: false,
-          text: diag.map((d) => d.text).filter(Boolean).join(" | ").slice(0, 120),
-          diag,
-        };
-      })
-      .catch((e) => ({ dialog: false, clicked: false, text: "", diag: [], error: String(e && e.message).slice(0, 80) }));
-    if (confirmResult.dialog) {
+    // 真实鼠标点击：Fluent / React 组件对纯 DOM click 可能不响应
+    // （领取入口那条已经踩过，对话框这里旧版仍在用 action.click()）。
+    // 真点失败再退回 DOM click 兜底。
+    let confirmClicked = false;
+    if (confirmResult.marked) {
+      try {
+        await page.locator('[data-msr-confirm="1"]').first().click({ timeout: 8000 });
+        confirmClicked = true;
+      } catch {
+        try {
+          await page.evaluate(() => document.querySelector('[data-msr-confirm="1"]')?.click());
+          confirmClicked = true;
+        } catch {}
+      }
+    }
+    confirmResult.clicked = confirmClicked;
+    if (confirmResult.hasDialog || confirmResult.marked || confirmResult.error) {
       logger.log(
         "🎁",
-        confirmResult.clicked
+        confirmClicked
           ? `已确认对话框按钮「${confirmResult.text}」`
-          : `出现对话框但没找到确认按钮：${confirmResult.text || "（对话框无文本）"}` +
+          : `出现对话框但没找到确认按钮：${confirmResult.error || "（按钮清单见下）"}` +
             `｜候选=${(confirmResult.diag || []).length}` +
             `｜按钮=${JSON.stringify((confirmResult.diag || []).flatMap((d) => d.buttons).slice(0, 10))}`
       );
@@ -813,20 +855,18 @@ async function claimOnce(ctx, opts = {}) {
       for (const frame of page.frames()) {
         if (frame === page.mainFrame()) continue;
         try {
-          const inFrame = await frame.evaluate(() => {
-            const actionRe = /^(领取|确认|确定|继续|立即领取|兑换|Claim|Redeem|OK|Yes)/i;
-            const btns = Array.from(document.querySelectorAll("button, [role='button'], a[href]"));
-            const hit = btns.find((b) => {
-              const t = (b.innerText || b.getAttribute("aria-label") || "").trim();
-              const r = b.getBoundingClientRect();
-              return r.width > 1 && r.height > 1 && actionRe.test(t) && !/取消|关闭|返回|Cancel|Close|No\b/i.test(t);
-            });
-            if (!hit) return null;
-            hit.click();
-            return (hit.innerText || "").trim().slice(0, 20);
-          });
-          if (inFrame) {
-            logger.log("🎁", `已在 iframe 内点击确认按钮「${inFrame}」`);
+          // 与主文档共用同一份匹配规则；命中后同样用真实鼠标点击
+          const inFrame = await frame.evaluate(findClaimActionInPage, CLAIM_ACTION_RE);
+          if (inFrame.marked) {
+            await frame
+              .locator('[data-msr-confirm="1"]')
+              .first()
+              .click({ timeout: 8000 })
+              .catch(async () => {
+                await frame.evaluate(() => document.querySelector('[data-msr-confirm="1"]')?.click());
+              });
+            confirmResult.clicked = true; // 让落地页兜底不再重复点
+            logger.log("🎁", `已在 iframe 内点击确认按钮「${inFrame.text}」`);
             await sleep(3000);
             break;
           }
@@ -849,25 +889,19 @@ async function claimOnce(ctx, opts = {}) {
       !confirmResult.clicked &&
       (!/\/dashboard/i.test(page.url()) || (confirmResult.diag || []).length > 0);
     if (shouldTryLanded) {
-      const landedBtn = await page
-        .evaluate(() => {
-          const cands = Array.from(document.querySelectorAll("button, a[href], [role='button']")).filter((el) => {
-            const t = (el.innerText || "").trim();
-            const r = el.getBoundingClientRect();
-            return r.width > 1 && r.height > 1 && /^(领取|确认|立即领取|兑换|兑换奖励)$/.test(t);
-          });
-          if (!cands.length) return null;
-          cands[0].setAttribute("data-msr-confirm", "1");
-          return (cands[0].innerText || "").trim();
-        })
+      // 规则与主文档同源，但**收紧到 strong**：落地页没有对话框作用域，是在整页找按钮，
+      // 若放开 weak 里的「兑换」，会命中导航栏的兑换入口 —— 2026-11-06 实测就是
+      // 日志里的「已在落地页点击「兑换」」，点完积分 2845→2845 纹丝不动。
+      const landed = await page
+        .evaluate(findClaimActionInPage, { ...CLAIM_ACTION_RE, weak: CLAIM_ACTION_RE.strong })
         .catch(() => null);
-      if (landedBtn) {
+      if (landed && landed.marked) {
         await page
           .locator('[data-msr-confirm="1"]')
           .first()
           .click({ timeout: 8000 })
           .catch(() => {});
-        logger.log("🎁", `已在落地页点击「${landedBtn}」`);
+        logger.log("🎁", `已在落地页点击「${landed.text}」`);
         await sleep(3000);
       } else {
         // 别写死「跳转到」：条件已放开，可能仍停在 dashboard（对话框内嵌在页面里）
@@ -914,21 +948,54 @@ async function claimOnce(ctx, opts = {}) {
  *
  * @returns {{ok:boolean, gained:number, message:string, error?:string}}
  */
+/**
+ * 「账户详情页 → 🎁 立即领取」的执行体。
+ *
+ * ⚠️ 手动入口**不经过 runner**，所以它必须自己做 runner 替它做的两件事：
+ *   ① logger.setContext(id, name)：logger 是全局单例，只有 currentAccount 非空时
+ *      write() 才会往账号环形缓冲 / 账号历史文件里塞条目。不设的话日志只落 app.log、
+ *      没有 [账号名] 标签，账户详情页按 id 取日志拿到空数组（用户实测「没有日志」）。
+ *   ② 结果推送：runner 只在整轮任务结束时 notify.sendSummary()，手动领取绕过了它，
+ *      不主动推就永远收不到消息（用户实测「也不推送」）。
+ *   两者都要在 finally 里收口，异常路径同样有日志、有推送。
+ */
 async function taskClaimNow(ctx) {
-  const r = await claimOnce(ctx, { threshold: 0 });
-  if (r.kind === "claimed") {
-    logger.success(`🎁 手动领取成功：${r.before} → ${r.after}（+${r.delta} 分）`);
-    return { ok: true, gained: r.delta, message: `已领取 ${r.delta} 分（${r.before} → ${r.after}）` };
+  logger.setContext(ctx.id, ctx.name);
+  let result;
+  try {
+    const r = await claimOnce(ctx, { threshold: 0 });
+    if (r.kind === "claimed") {
+      logger.success(`🎁 手动领取成功：${r.before} → ${r.after}（+${r.delta} 分）`);
+      result = { ok: true, gained: r.delta, message: `已领取 ${r.delta} 分（${r.before} → ${r.after}）` };
+    } else if (r.kind === "none") {
+      logger.info("🎁 手动检查：当前没有待领取的积分");
+      result = { ok: true, gained: 0, message: "当前没有待领取的积分" };
+    } else {
+      const reason = r.kind === "stalled"
+        ? `点击后未生效（${r.before ?? "?"}→${r.after ?? "?"}）`
+        : String(r.error || "未知原因").slice(0, 120);
+      logger.warn(`🎁 手动领取未成功：${reason}`);
+      result = { ok: false, gained: 0, message: `领取未成功：${reason}`, error: reason };
+    }
+  } catch (e) {
+    const msg = String((e && e.message) || e).slice(0, 160);
+    logger.warn(`🎁 手动领取异常：${msg}`);
+    result = { ok: false, gained: 0, message: `领取失败：${msg}`, error: msg };
   }
-  if (r.kind === "none") {
-    logger.info("🎁 手动检查：当前没有待领取的积分");
-    return { ok: true, gained: 0, message: "当前没有待领取的积分" };
+
+  // 无论成功 / 无可领 / 失败都推一条：用户是主动点的，需要看到结果。
+  // 版式仍交给 notify.sendText → withAccountHeader 统一拼装（本项目唯一拼装点）。
+  // 推送失败只记日志，绝不能把已经领到积分的结果改成失败。
+  try {
+    const body = result.ok
+      ? result.message
+      : `领取未成功：${result.error || result.message}`;
+    await notify.sendText(ctx, "🎁 立即领取结果", body);
+  } catch (e) {
+    logger.warn(`立即领取结果推送失败（不影响领取）：${String((e && e.message) || e).slice(0, 120)}`);
   }
-  const reason = r.kind === "stalled"
-    ? `点击后未生效（${r.before ?? "?"}→${r.after ?? "?"}）`
-    : String(r.error || "未知原因").slice(0, 120);
-  logger.warn(`🎁 手动领取未成功：${reason}`);
-  return { ok: false, gained: 0, message: `领取未成功：${reason}`, error: reason };
+  logger.clearContext();
+  return result;
 }
 
 /**
@@ -1574,4 +1641,7 @@ module.exports = {
   searchProgressSnapshot,
   reportActivityFallback,
   fetchRequestToken,
+  // 确认按钮匹配：导出供门禁/打桩断言驱动（函数体可序列化后投进真实页面执行）
+  findClaimActionInPage,
+  CLAIM_ACTION_RE,
 };

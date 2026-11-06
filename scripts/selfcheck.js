@@ -347,14 +347,62 @@ checkTrue(
 );
 checkTrue(
   "对话框候选要全部遍历、带回按钮清单，日志不许只打一个空冒号",
-  /for \(const node of dialogs\)/.test(tasksSource) &&
+  /for \(const scope of scopes\)/.test(tasksSource) &&
     /diag\.push\(/.test(tasksSource) &&
     /按钮=\$\{JSON\.stringify/.test(tasksSource),
   "只 find 第一个对话框 + 空文本日志 → 下次出问题还是没法定位"
 );
+
+// —— 手动领取入口：不经 runner，日志归属与结果推送都得自己补（2026-11-06 用户实测）——
+{
+  const iNow = tasksSource.indexOf("async function taskClaimNow");
+  const jNow = iNow >= 0 ? tasksSource.indexOf("\n/**", iNow) : -1;
+  const nowBody = iNow >= 0 ? tasksSource.slice(iNow, jNow > iNow ? jNow : iNow + 3000) : "";
+  checkTrue(
+    "手动领取必须自己设账号日志上下文（不经 runner，否则详情页日志面板全空）",
+    /logger\.setContext\(ctx\.id, ctx\.name\)/.test(nowBody) &&
+      /logger\.clearContext\(\)/.test(nowBody) &&
+      nowBody.indexOf("logger.setContext") < nowBody.indexOf("claimOnce") &&
+      nowBody.lastIndexOf("logger.clearContext") > nowBody.lastIndexOf("notify.sendText"),
+    "logger 是全局单例：currentAccount 为空时日志只落 app.log、不进账号缓冲/历史 → 用户看到「没有日志」"
+  );
+  checkTrue(
+    "手动领取结果必须推送（统一出口），且推送失败不影响领取结果",
+    /notify\.sendText\(ctx, "🎁 立即领取结果"/.test(nowBody) &&
+      /立即领取结果推送失败/.test(nowBody) &&
+      // 统一出口：分支里不许各自 return，否则某个结果会绕过推送和 clearContext
+      (nowBody.match(/\breturn\b/g) || []).length === 1,
+    "汇总推送只在 runner 末尾，手动入口不主动推就永远收不到消息 → 用户看到「也不推送」"
+  );
+}
+// —— 确认按钮匹配：2026-11-06 日志给出真实文案「2,845 待领取 领取积分」——
+checkTrue(
+  "确认按钮匹配规则单一真源：主文档 / iframe / 落地页共用 findClaimActionInPage",
+  (tasksSource.match(/evaluate\(findClaimActionInPage, CLAIM_ACTION_RE\)/g) || []).length === 2 &&
+    /evaluate\(findClaimActionInPage, \{ \.\.\.CLAIM_ACTION_RE, weak: CLAIM_ACTION_RE\.strong \}\)/.test(tasksSource),
+  "三处各写一套正则 → 改一处漏两处，页面换文案又抓瞎"
+);
+checkTrue(
+  "确认按钮支持「以数字开头」的真实文案（实测 2,845 待领取 领取积分）",
+  /strong:\s*"[^"]*领取积分/.test(tasksSource) &&
+    /const level = strong\.test\(t\) \? 0 : weak\.test\(t\) \? 1 : 99/.test(tasksSource) &&
+    /deny\.test\(t\)/.test(tasksSource),
+  "旧规则 ^(领取|…) 在真实按钮清单上 0 命中 → 日志「没找到确认按钮」，兜底误点「兑换」"
+);
+checkTrue(
+  "确认按钮用真实鼠标点击（React/Fluent 不响应纯 DOM click）",
+  (tasksSource.match(/locator\('\[data-msr-confirm="1"\]'\)/g) || []).length >= 3 &&
+    /setAttribute\("data-msr-confirm", "1"\)/.test(tasksSource),
+  "主文档/iframe/落地页都要真点；DOM click 表现为「点了但没有任何网络请求」"
+);
+checkTrue(
+  "落地页兜底规则收紧到 strong，避免点到导航栏「兑换」",
+  /weak: CLAIM_ACTION_RE\.strong/.test(tasksSource),
+  "2026-11-06 实测：日志「已在落地页点击「兑换」」，积分 2845→2845 没变"
+);
 checkTrue(
   "确认按钮匹配含英文（Rewards 兑换弹窗可能是 Claim/Redeem）",
-  /Claim\|Redeem\|OK\|Yes/.test(tasksSource),
+  /Claim\|Redeem\|OK\|Yes/.test(tasksSource) || /Claim\|Redeem\|Claim now/.test(tasksSource),
   "只认中文前缀 → 英文弹窗一律判「没找到确认按钮」"
 );
 checkTrue(
