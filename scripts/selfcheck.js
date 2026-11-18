@@ -8689,6 +8689,45 @@ console.log("\n【0.15.9】桌面应用专属任务（外部进程驱动）");
       /renderBroken: renderFails >= 2/.test(deskCode),
     "只记数不决策 → 每项都白重启一轮"
   );
+  // —— 2026-11-18 真机两次实证（调试冒烟 + 用户 0.16.1 运行日志）——
+  // 主页面崩了但调试端口还开着：CDP 里只剩 rewardsrecovery.localhost/recovery.html
+  // 与 about:blank。旧逻辑只重连 CDP，干等 3×45s 后整轮失败，还误报「今天没任务」。
+  checkTrue(
+    "desktop-app：识别崩溃恢复页并重启自愈，不是干等主窗口",
+    deskCode.includes("const CRASH_RECOVERY_RE") &&
+      deskCode.includes("rewardsrecovery") &&
+      deskCode.includes("return { crashed: true };") &&
+      deskCode.includes("if (acquired && acquired.crashed)") &&
+      deskCode.includes("crashRestarts++") &&
+      deskCode.includes("if (crashRestarts > 1)"),
+    "稳态崩溃等再久也不会长出主窗口；但也不能无限重启（会反复杀用户正开着的应用）"
+  );
+  {
+    // 判定顺序是真机踩出来的：重启后 dashboard 已恢复，但旧 recovery 页仍残留在
+    // CDP 列表里（5 个页面同时含两者）。先判 recovery 会把可用实例误判成「仍崩」。
+    const a = deskCode.indexOf("async function waitForMainWindow");
+    const b = deskCode.indexOf("async function detectSignIn");
+    const wfm = a >= 0 && b > a ? deskCode.slice(a, b) : "";
+    checkTrue(
+      "desktop-app：主窗口判定先于崩溃恢复页判定（残留 recovery 不得误判）",
+      wfm.includes("return { page, login: false }") &&
+        wfm.indexOf("return { crashed: true }") > wfm.indexOf("return { page, login: false }"),
+      "顺序反了 → 重启自愈成功后仍被残留恢复页判成崩溃，整轮白做（2026-11-18 真机实证）"
+    );
+  }
+  checkTrue(
+    "desktop-app：整轮没拿到扫描快照时报 retry，不得误报 done / 今天没任务",
+    deskCode.includes("if (dryRun || scan === null)") &&
+      deskCode.includes('reason: "桌面应用未就绪"'),
+    "崩溃零产出若返回 done：①汇总说成「今天没有可做的桌面任务」误导用户；②熔断把 done 当成功，对这种故障永不触发"
+  );
+  checkTrue(
+    "崩溃自愈与零产出误报有离线用例锁死",
+    testDesktopSrc.includes("crashRecovery") &&
+      testDesktopSrc.includes("crashAlways") &&
+      testDesktopSrc.includes("整轮没跑起来时不返回 done"),
+    "真机才暴露的故障必须有离线回归，否则下次改动又会退回「干等 + 误报」"
+  );
   checkTrue(
     "桌面任务离线打桩测试已固化（npm run test:desktop，且覆盖关键路径）",
     pkgJson.scripts["test:desktop"] === "node scripts/test-desktop-app.js" &&

@@ -119,6 +119,18 @@ const MAX_ITEMS_PER_RUN = 10;
  */
 const LOGIN_URL_RE = /login\.(live|microsoft|microsoftonline)\.com/i;
 
+/**
+ * Rewards 应用自己的「崩溃恢复页」。
+ *
+ * WebView2 主页面崩掉后，应用会显示 rewardsrecovery.localhost/recovery.html，
+ * 但**进程和调试端口都还活着**。这种「稳态崩溃」与启动期竞态完全不同：
+ * 启动期再等几秒主窗口就会出来，崩溃态等再久也不会长出主窗口。
+ * 2026-11-18 真机两次实证（调试冒烟 + 用户 0.16.1 运行日志）：
+ * 旧逻辑只重连 CDP，干等 3×45s 后整轮失败，还误报成「今天没有可做的桌面任务」。
+ * 识别到它就必须重启实例，而不是继续等。
+ */
+const CRASH_RECOVERY_RE = /rewardsrecovery\.localhost/i;
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** execFile 的 Promise 包装：失败也返回字符串，交由调用方判空（探测类操作不该抛） */
@@ -425,6 +437,24 @@ async function waitForMainWindow(browser, onLog = () => {}, timeoutMs = 45000) {
     } catch (e) {
       // 页面在启动期被销毁是正常现象，下一轮重新枚举即可
       last = String((e && e.message) || e).slice(0, 80);
+    }
+
+    // 主窗口确实拿不到时，才把「应用自己的恢复页」当稳态崩溃信号。
+    // ⚠️ 顺序不能反（2026-11-18 真机实证）：重启后主页面可能已经恢复成
+    //    rewards.bing.com/dashboard，但旧的 recovery 页仍残留在 CDP 列表里
+    //    （当时 5 个页面同时含 dashboard 与 recovery）。先判 recovery 会把
+    //    已经可用的实例误判成「仍崩」而放弃，自愈就白做了。
+    //    启动期不会出现恢复页，所以这里也不会把 11-07 修好的竞态改回反复重启。
+    let allPages = [];
+    try {
+      const ctxs = browser.contexts();
+      allPages = (ctxs && ctxs.length && ctxs[0].pages()) || [];
+    } catch {
+      allPages = [];
+    }
+    if (allPages.some((p) => CRASH_RECOVERY_RE.test(String(p.url())))) {
+      onLog("检测到 Rewards 应用崩溃恢复页：主页面已崩，需重启实例");
+      return { crashed: true };
     }
     await sleep(1200);
   }
@@ -818,6 +848,7 @@ async function runDesktopApp(ctx, opts = {}) {
   let restarts = 0; // 已重启次数（0 = 复用现有实例，还没重启过）
   let navFails = 0; // 连续「应用未就绪」次数
   let pageFails = 0; // 连续「页面连上就死」次数（重启竞态），别无限重连
+  let crashRestarts = 0; // 因「崩溃恢复页」重启的次数（上限 1：反复崩就放弃，别一直杀用户的应用）
   let scan = null; // 最后一次扫描快照（dryRun / 异常时回传）
 
   // 安全上限：宁可少做几项，也不能因为某项一直失败而无限重启
@@ -861,6 +892,18 @@ async function runDesktopApp(ctx, opts = {}) {
       //    waitForMainWindow 会重新枚举页面直到主窗口出现；拿不到也**不要重启应用**，
       //    否则把刚起来的实例杀掉，又撞一遍启动期竞态（2026-11-07 真机连败 3 次）。
       const acquired = await waitForMainWindow(browser, onLog);
+      if (acquired && acquired.crashed) {
+        // 稳态崩溃（主页面崩了、端口还开着）：重启一次往往就好。
+        // 重启后仍停在恢复页说明应用/WebView2 本身坏了，别再无限重启 ——
+        // 那会反复杀掉用户正开着的应用。结束本轮，交给熔断按 retry 计数。
+        crashRestarts++;
+        if (crashRestarts > 1) {
+          onLog("Rewards 应用重启后仍停在崩溃恢复页，结束本轮");
+          break;
+        }
+        restarts++;
+        continue;
+      }
       if (!acquired) {
         pageFails++;
         if (pageFails >= 3) {
@@ -1034,9 +1077,13 @@ async function runDesktopApp(ctx, opts = {}) {
     }
   }
 
-  if (dryRun) {
-    // 走到这里说明第一轮就没拿到扫描结果（应用未就绪）
-    return { status: "retry", reason: "桌面应用未就绪", quests: scan || [], todo: 0, manual: 0 };
+  // 整轮从未拿到有效扫描快照（scan === null）= 应用根本没跑起来：崩溃恢复页、
+  // 主窗口拿不到、导航失败都属此类。必须报 retry，不能落到下面的 done 分支 ——
+  // 否则 ① 汇总会误报「今天没有可做的桌面任务」；② 熔断把 done 当成功，
+  // 对这种故障永远不触发（2026-11-18 用户 0.16.1 真机日志实证：干等 141s 后整轮失败）。
+  // dryRun 成功扫描时已在循环内提前返回「扫描模式」，走到这里同样是没跑起来。
+  if (dryRun || scan === null) {
+    return { status: "retry", reason: "桌面应用未就绪", quests: scan || [], todo: 0, manual: acc.manual };
   }
 
   // 每项 10 分是这类 punchcard 的固定值（weekly 70 分 = 7 项 × 10）。

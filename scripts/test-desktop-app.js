@@ -139,6 +139,21 @@ function makePage(sc) {
       return { first: () => card, count: card.count, click: card.click };
     },
   };
+  // 崩溃恢复页场景（2026-11-18 真机两次实证）：主页面没了，
+  // CDP 里只剩应用自己的 recovery 页 + about:blank，但调试端口还开着。
+  const recoveryPage = {
+    _url: "http://rewardsrecovery.localhost/recovery.html",
+    url() { return this._url; },
+    evaluate: async () => { throw new Error("Target page closed"); },
+    close: async () => {},
+  };
+  const blankPage = {
+    _url: "about:blank",
+    url() { return this._url; },
+    evaluate: async () => ({ ready: true, url: "about:blank" }),
+    close: async () => {},
+  };
+  sc.recoveryPage = recoveryPage;
   sc.ctx = {
     pages: () => (sc.clicks && !sc.sameWindowNav ? [page, popup] : [page]),
     newCDPSession: async () => ({
@@ -148,7 +163,19 @@ function makePage(sc) {
   };
   sc.page = page;
   sc.popup = popup;
-  sc.browser = { contexts: () => [{ pages: () => [page] }], close: async () => {} };
+  sc.browser = {
+    contexts: () => [{
+      // crashRecovery 且尚未重启恢复时，模拟「主页面已崩、只剩恢复页」；
+      // 重启恢复后**仍残留旧 recovery 页**（真机 2026-11-18：5 个页面里
+      // 同时有 rewards.bing.com/dashboard 与 recovery），用来锁死判定顺序。
+      pages: () => {
+        if (sc.crashRecovery && !sc.recovered) return [recoveryPage, blankPage];
+        if (sc.crashRecovery) return [page, recoveryPage];
+        return [page];
+      },
+    }],
+    close: async () => {},
+  };
   return page;
 }
 
@@ -212,6 +239,8 @@ function stubsFor(sc) {
       sc.spawnArgs = args;
       sc.spawnExe = String(file);
       sc.spawnAfterStale = (sc.portStaleHits || 0) === 0;
+      // 崩溃自愈场景：重启后应用恢复正常；crashAlways 则一直崩，用于验证不会无限重启
+      if (sc.crashRecovery && !sc.crashAlways) sc.recovered = true;
       // spawn 之后端口就绪，避免 ensureStarted 的等待循环空转
       sc.portReady = true;
       sc.justStopped = false;
@@ -537,6 +566,52 @@ async function main() {
     const skipFile = path.join(sc.dir, "desktop-app-skip.json");
     const j = fs.existsSync(skipFile) ? JSON.parse(fs.readFileSync(skipFile, "utf8")) : { forms: [] };
     assert.ok(!j.forms.includes("ML2Y3S"), `兑换项被误记成冷却期: ${JSON.stringify(j)}`);
+  });
+
+  // ㉕ 崩溃恢复页 → 识别后重启实例自愈（2026-11-18 真机两次实证：干等 3×45s 整轮失败）
+  await test("崩溃恢复页：识别后重启实例自愈，不再干等主窗口", async () => {
+    const sc = scenario({ crashRecovery: true, pids: [4321], forms: ["A1"], gainOnClick: true });
+    const mod = loadWithStubs(DESKTOP_FILE, stubsFor(sc));
+    const r = await mod.runDesktopApp(ctxWith(true), {
+      maxItems: 1,
+      onLog: (m) => sc.logs.push(m),
+      rules: { runtime: { renderWaitMs: 1 } },
+    });
+    assert.equal(r.status, "done", `实际=${JSON.stringify(r)}`);
+    assert.equal(r.gained, 1);
+    assert.ok(sc.logs.some((l) => l.includes("崩溃恢复页")), "没识别到恢复页");
+    assert.ok(sc.calls.some((c) => /taskkill/i.test(c)), "识别到崩溃却没重启实例");
+    assert.ok(!sc.logs.some((l) => l.includes("连续 3 次拿不到主窗口")), "仍在干等主窗口");
+  });
+
+  // ㉖ 重启后仍崩 → 只重启一次就放弃，且报 retry（不能无限杀用户的应用）
+  await test("重启后仍停在恢复页：只重启一次并报 retry", async () => {
+    const sc = scenario({ crashRecovery: true, crashAlways: true, pids: [4321] });
+    const mod = loadWithStubs(DESKTOP_FILE, stubsFor(sc));
+    const r = await mod.runDesktopApp(ctxWith(true), {
+      maxItems: 1,
+      onLog: (m) => sc.logs.push(m),
+      rules: { runtime: { renderWaitMs: 1 } },
+    });
+    assert.equal(r.status, "retry", `崩溃零产出必须报 retry，实际=${JSON.stringify(r)}`);
+    assert.equal(r.reason, "桌面应用未就绪");
+    const kills = sc.calls.filter((c) => /taskkill/i.test(c)).length;
+    assert.equal(kills, 1, `应只重启一次，实际 taskkill ${kills} 次`);
+    assert.ok(sc.logs.some((l) => l.includes("仍停在崩溃恢复页")));
+  });
+
+  // ㉗ 零产出不得误报「今天没有可做的桌面任务」，否则熔断对崩溃永不触发
+  await test("整轮没跑起来时不返回 done，熔断能计入失效", async () => {
+    const sc = scenario({ crashRecovery: true, crashAlways: true, pids: [4321] });
+    const mod = loadWithStubs(DESKTOP_FILE, stubsFor(sc));
+    const r = await mod.runDesktopApp(ctxWith(true), {
+      onLog: () => {},
+      rules: { runtime: { renderWaitMs: 1 } },
+    });
+    assert.notEqual(r.status, "done");
+    assert.notEqual(r.reason, "今天没有可做的桌面任务");
+    const circuit = require(path.join(ROOT, "src", "desktop-circuit.js"));
+    assert.equal(circuit.isFailure(r), true, "熔断没把这种故障当失效");
   });
 
   console.log(lines.join("\n"));
