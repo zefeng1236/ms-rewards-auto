@@ -314,6 +314,9 @@ function extractVerificationToken(html) {
  * ⚠️ 取不到 token 不代表出错：真正干活的是 reportActivityFallback 里的
  * quiz 专报（②，无需 token）。所以这里只记 info，不再用 WARN 制造「出错了」
  * 的错觉 —— 早期版本用 WARN，用户每次都看到一条吓人的告警却毫无影响。
+ * 2026-11-18 进一步把「未取到…」改成「旧版通道跳过…无需处理」：
+ * 0.16.1 真机日志里用户仍把「未取到」读成故障来问，说明文案得自己把结论说清，
+ * 不能只靠级别（INFO）和括号里的解释。
  *
  * @returns {Promise<string>} 取不到返回空串
  */
@@ -333,7 +336,7 @@ async function fetchRequestToken(ctx) {
     }
   }
   logger.info(
-    `未取到 RequestVerificationToken（HTTP ${lastStatus || "?"}，跳过 api/reportactivity 上报；quiz 专报不受影响）`
+    `旧版上报通道跳过（页面未提供 token，HTTP ${lastStatus || "?"}）—— 计分由 Server Action / quiz 专报负责，无需处理`
   );
   return "";
 }

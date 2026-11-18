@@ -1876,6 +1876,13 @@ checkTrue(
   "RequestVerificationToken 从 rewards 首页提取",
   /RequestVerificationToken\(\.\*\?\)value="\(\.\*\?\)"/.test(tasksSrc)
 );
+checkTrue(
+  "token 取不到时的日志自己说明「无需处理」，不退回故障措辞",
+  tasksSrc.includes("旧版上报通道跳过（页面未提供 token") &&
+    tasksSrc.includes("计分由 Server Action / quiz 专报负责，无需处理") &&
+    !tasksSrc.includes("未取到 RequestVerificationToken"),
+  "0.16.1 真机日志里用户把「未取到 RequestVerificationToken」读成故障来问；只把级别降成 INFO 不够，文案必须直给结论"
+);
 
 // 反例守卫：上报方法名 / URL 被改坏时必须变红（防止改成监控 /reportActivity 主路径以外的地方）
 checkTrue(
