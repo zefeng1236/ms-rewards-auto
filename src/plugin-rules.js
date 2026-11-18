@@ -152,6 +152,16 @@ function validate(r) {
       return { ok: false, reason: "runtime.maxItemsPerRun 超出范围" };
     if (r.runtime.restartMaxTimes !== undefined && !validNumber(r.runtime.restartMaxTimes, 0, 5))
       return { ok: false, reason: "runtime.restartMaxTimes 超出范围" };
+    // v2 新增：这些字段必须能在「不重发版本」的前提下远程调整，但同样要卡死范围
+    if (r.runtime.startTimeoutMs !== undefined && !validNumber(r.runtime.startTimeoutMs, 5000, 120000))
+      return { ok: false, reason: "runtime.startTimeoutMs 超出范围" };
+    if (r.runtime.circuitMaxFailures !== undefined && !validNumber(r.runtime.circuitMaxFailures, 1, 10))
+      return { ok: false, reason: "runtime.circuitMaxFailures 超出范围" };
+    if (
+      r.runtime.circuitCountEnvFailures !== undefined &&
+      typeof r.runtime.circuitCountEnvFailures !== "boolean"
+    )
+      return { ok: false, reason: "runtime.circuitCountEnvFailures 必须是布尔" };
   }
 
   return { ok: true };

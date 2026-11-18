@@ -23,6 +23,8 @@
     "test:boost": "node scripts/test-rewards-boost.js",
     "test:next": "node scripts/test-rewards-next.js",
     "test:safety": "node scripts/test-account-safety.js",
+    "test:circuit": "node scripts/test-desktop-circuit.js",
+    "test:rules": "node scripts/test-desktop-rules.js",
     "verify:pack": "node scripts/verify-pack.js",
     "verify:release": "node scripts/verify-release.js",
     "verify:release:selftest": "node scripts/verify-release-selftest.js",

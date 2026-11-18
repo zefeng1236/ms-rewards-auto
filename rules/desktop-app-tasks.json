@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "version": 1,
-  "updatedAt": "2026-11-01",
-  "note": "这是「桌面应用专属任务」插件的远程规则。客户端每天拉取一次，只覆盖同名同类型字段，未知键会被丢弃。改这里不需要发新版本。",
+  "version": 2,
+  "updatedAt": "2026-11-18",
+  "note": "这是「桌面应用专属任务」插件的远程规则。客户端每天拉取一次，只覆盖同名同类型字段，未知键会被丢弃。改这里不需要发新版本。v2：已接线的参数 = runtime.renderWaitMs / startTimeoutMs / maxItemsPerRun / restartMaxTimes / circuitMaxFailures / circuitCountEnvFailures，quest.minRenderChars，card.maxWaitMs，landing.dwellMs / dwellRounds。选择器模板、正则片段、URL 属行为边界，刻意留在代码里，远程不可改。",
   "quest": {
     "includePrefixes": ["WW_pcparent_", "ENWW_pcparent_"],
     "earnUrl": "https://rewards.bing.com/earn",
@@ -37,6 +37,8 @@
     "maxItemsPerRun": 10,
     "startTimeoutMs": 30000,
     "restartOnRenderBroken": true,
-    "restartMaxTimes": 1
+    "restartMaxTimes": 1,
+    "circuitMaxFailures": 3,
+    "circuitCountEnvFailures": true
   }
 }

@@ -36,6 +36,7 @@ const path = require("node:path");
 const { chromium } = require("playwright-core");
 const logger = require("./logger");
 const sp = require("./storage-path");
+const desktopRuntime = require("./desktop-runtime");
 
 /**
  * 当天「点了但没到账」的项（按活动归因码 form 记）。
@@ -214,11 +215,18 @@ async function stop() {
  *   ② 应用在跑但没端口 → 必须重启（纯 spawn 会撞单实例锁，新实例直接把参数丢给旧实例）
  *   ③ 没在跑 → 带环境变量 spawn
  *
- * @param {{ allowRestart?: boolean }} opts allowRestart=false 时，情形②会返回失败而不动用户的应用
+ * @param {{ allowRestart?: boolean, startTimeoutMs?: number }} opts
+ *        allowRestart=false 时，情形②会返回失败而不动用户的应用；
+ *        startTimeoutMs 来自远程规则（已钳制），默认 START_TIMEOUT_MS。
  * @returns {Promise<{ ok: boolean, reason?: string, restarted?: boolean }>}
  */
 async function ensureStarted(opts = {}) {
-  const { allowRestart = true } = opts;
+  const {
+    allowRestart = true,
+    // 单独调用（离线测试 / 调试）用内置常量；正常任务链由 runDesktopApp
+    // 传入 desktop-runtime 解析后的远程规则值，两边默认都是 30s。
+    startTimeoutMs = START_TIMEOUT_MS,
+  } = opts;
   if (await isPortReady()) return { ok: true, restarted: false };
 
   const exePath = await resolveExePath();
@@ -271,7 +279,7 @@ async function ensureStarted(opts = {}) {
   child.on("error", (e) => logger.warn(`桌面应用启动失败: ${e.message}`));
   child.unref();
 
-  const deadline = Date.now() + START_TIMEOUT_MS;
+  const deadline = Date.now() + startTimeoutMs;
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 1500));
     if (await isPortReady()) return { ok: true, restarted };
@@ -554,6 +562,11 @@ async function executeQuest(page, quest, opts = {}) {
     skipForms = new Set(),
     renderWaitMs = RENDER_WAIT_MS,
     onlyForm = null,
+    // v2 远程可调参数（已由 desktop-runtime 钳制，这里再给一份内置默认兜底）
+    minRenderChars = 300,
+    cardMaxWaitMs = 40000,
+    dwellMs = 2500,
+    dwellRounds = 3,
   } = opts;
   // skipForms：今天已点过但没到账的项（冷却期任务），本轮不再浪费时间去点
   // onlyForm：外层已经选定了具体某一项，内层必须照着做，不能自己挑 --
@@ -596,13 +609,13 @@ async function executeQuest(page, quest, opts = {}) {
        * 实测重载/重启应用后可恢复，所以这里重试两次，别一次失败就判死。
        */
       const bodyLen = () => page.evaluate(() => (document.body.innerText || "").length).catch(() => 0);
-      if ((await bodyLen()) < 300) {
+      if ((await bodyLen()) < minRenderChars) {
         let ok = false;
         for (let attempt = 1; attempt <= 2 && !ok; attempt++) {
           onLog(`页面主体未渲染，重载第 ${attempt} 次`);
           await page.reload({ waitUntil: "domcontentloaded", timeout: 90000 }).catch(() => {});
           await page.waitForTimeout(renderWaitMs);
-          ok = (await bodyLen()) >= 300;
+          ok = (await bodyLen()) >= minRenderChars;
         }
         if (!ok) {
           onLog(`跳过（页面渲染失败，非卡片问题）: ${item.aria}`);
@@ -630,8 +643,9 @@ async function executeQuest(page, quest, opts = {}) {
       // 元素"看不见"的真实原因通常是窗口被压成一条（视口 40px），交给上面的
       // ensureViewport 解决，而不是靠选择器过滤。
       const card = page.locator(`a[href*="${form}"]`).first();
+      const cardRounds = Math.max(1, Math.ceil(cardMaxWaitMs / 2000));
       let ready = false;
-      for (let i = 0; i < 20; i++) {
+      for (let i = 0; i < cardRounds; i++) {
         if (await card.count().catch(() => 0)) { ready = true; break; }
         await page.evaluate((y) => window.scrollTo(0, y), i % 2 ? 0 : 320).catch(() => {});
         await page.waitForTimeout(2000);
@@ -683,9 +697,9 @@ async function executeQuest(page, quest, opts = {}) {
         const dirty = /[?&]dmreload=1/.test(landed);
         onLog(`落地${dirty ? "(含 dmreload，多半不计)" : ""}: ${decodeURIComponent(landed).slice(0, 110)}`);
         await popup.bringToFront().catch(() => {});
-        for (let i = 0; i < 3; i++) {
+        for (let i = 0; i < dwellRounds; i++) {
           await popup.mouse.wheel(0, 300).catch(() => {});
-          await popup.waitForTimeout(2500);
+          await popup.waitForTimeout(dwellMs);
         }
         /**
          * ⚠️ 只能关「新开的窗口」。popup === page 说明是**主窗口自己导航过去**的
@@ -765,13 +779,19 @@ async function runDesktopApp(ctx, opts = {}) {
     maxItems = MAX_ITEMS_PER_RUN,
     rules = null,
   } = opts;
-  // 规则可远程热更新（见 src/plugin-rules.js）：这里只取「行为参数」，代码路径不变
-  const runtimeRule = (rules && rules.runtime) || {};
-  const renderWaitMs = Number(runtimeRule.renderWaitMs) || RENDER_WAIT_MS;
-  // runtime.restartMaxTimes 原本只写在规则里没接线：同一项最多给几次机会（默认 1 次重启 → 2 次机会）
-  const restartMaxTimes = Number.isFinite(Number(runtimeRule.restartMaxTimes))
-    ? Math.max(0, Math.min(5, Number(runtimeRule.restartMaxTimes)))
-    : 1;
+  // 规则可远程热更新（见 src/plugin-rules.js）：解析 + 钳制统一走 desktop-runtime，
+  // 熔断侧读的是同一份结果，避免「规则改了 A 处、B 处还在用旧默认值」。
+  const eff = desktopRuntime.effectiveRuntime(rules);
+  const {
+    renderWaitMs,
+    restartMaxTimes,
+    startTimeoutMs,
+    minRenderChars,
+    cardMaxWaitMs,
+    dwellMs,
+    dwellRounds,
+  } = eff;
+  // 同一项最多给几次机会（默认 1 次重启 → 2 次机会）
   const maxAttemptsPerItem = restartMaxTimes + 1;
   const cfg = ctx && ctx.config ? ctx.config.get() : {};
   const tasksCfg = (cfg && cfg.tasks) || {};
@@ -817,7 +837,7 @@ async function runDesktopApp(ctx, opts = {}) {
       await sleep(800);
     }
 
-    const boot = await ensureStarted({ allowRestart: true });
+    const boot = await ensureStarted({ allowRestart: true, startTimeoutMs });
     if (!boot.ok) {
       if (restarts === 0) return { status: "retry", reason: boot.reason || "无法启动桌面应用" };
       onLog(`重启后应用仍未就绪，结束本轮：${boot.reason || "未知原因"}`);
@@ -950,6 +970,10 @@ async function runDesktopApp(ctx, opts = {}) {
         skipForms,
         renderWaitMs,
         onlyForm: form,
+        minRenderChars,
+        cardMaxWaitMs,
+        dwellMs,
+        dwellRounds,
       });
 
       if (r.gained > 0) {

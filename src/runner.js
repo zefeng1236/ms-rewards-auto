@@ -6,6 +6,8 @@ const notify = require("./notify");
 const rewards = require("./rewards");
 const riskSignals = require("./risk-signals");
 const nextActivities = require("./rewards-activities");
+const desktopCircuit = require("./desktop-circuit");
+const desktopRuntime = require("./desktop-runtime");
 const tasks = require("./tasks");
 const plugins = require("./plugins");
 const pluginRules = require("./plugin-rules");
@@ -423,6 +425,26 @@ async function runOnce(ctxRaw, opts = {}) {
     rDesktopApp = { status: "skip", disabled: true };
   }
   result.tasks.desktopApp = rDesktopApp;
+  // 熔断（2026-11-18）：连续多次跑不通就自动关掉执行开关，避免每轮白跑、
+  // 反复重启用户开着的 Rewards 应用。推送失败不能反过来影响熔断本身。
+  try {
+    // 熔断阈值也走同一份远程规则：ensureRules 刚写过当天缓存，这里同步读、不再联网。
+    let circuitOpts = {};
+    try {
+      const dp = plugins.get("desktop-app-tasks");
+      if (dp) circuitOpts = desktopRuntime.circuitOptions(pluginRules.getEffectiveRules(dp));
+    } catch { /* 插件不可用时回退内置默认 3 次 */ }
+    const cb = desktopCircuit.record(ctx, rDesktopApp, circuitOpts);
+    if (cb.tripped && !cb.already) {
+      const msg =
+        `桌面专属任务连续 ${cb.consecutive} 次未跑通（最近原因：${cb.lastReason}），` +
+        `已自动关闭该任务开关。修复后请到「任务全局设置」里重新打开。`;
+      logger.warn(`账户「${ctx.name}」${msg}`);
+      await notify.sendText(ctx, "⚠️ 桌面专属任务已自动停用", msg).catch(() => {});
+    }
+  } catch (e) {
+    logger.warn(`桌面任务熔断检查失败（已放行）: ${String((e && e.message) || e).slice(0, 100)}`);
+  }
   persistSummary();
   cancel.throwIfAborted();
   const rSearch = await tasks.taskSearch(ctx);

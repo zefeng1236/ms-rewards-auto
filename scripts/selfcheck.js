@@ -8886,6 +8886,102 @@ checkTrue(
   "没有回归测试 / 默认改成写操作，都会在无人察觉时把账号暴露在风险里"
 );
 
+/* ============ 桌面任务连续失效熔断（2026-11-18 用户要求） ============ */
+const circuitSrc = fs.readFileSync(path.join(ROOT, "src", "desktop-circuit.js"), "utf8");
+const circuitTestSrc = fs.readFileSync(path.join(ROOT, "scripts", "test-desktop-circuit.js"), "utf8");
+const runnerSrcCb = fs.readFileSync(path.join(ROOT, "src", "runner.js"), "utf8");
+
+checkTrue(
+  "桌面任务连续失效熔断：按账号累计、成功清零、自动关闭开关（含 useGlobal 双写）",
+  /const MAX_CONSECUTIVE_FAILURES = 3;/.test(circuitSrc) &&
+    circuitSrc.includes("gc.set({ tasks: { desktopApp: false } })") &&
+    circuitSrc.includes("ctx.config.set({ tasks: { desktopApp: false } })") &&
+    circuitSrc.includes("ledger.rearmedAt") &&
+    circuitSrc.includes('result.status === "done"') &&
+    /desktopCircuit\.record\(ctx, rDesktopApp, circuitOpts\)/.test(runnerSrcCb) &&
+    runnerSrcCb.includes("desktopRuntime.circuitOptions(") &&
+    runnerSrcCb.includes("桌面专属任务已自动停用"),
+  "只写账户级 config 时 useGlobal=true 会被全局覆盖，等于没关（src/config.js 注释实证）"
+);
+checkTrue(
+  "熔断离线回归入口存在，且失效判定不把 done / disabled 误算成失败",
+  circuitTestSrc.includes("npm run test:circuit") &&
+    require(path.join(ROOT, "package.json")).scripts["test:circuit"] === "node scripts/test-desktop-circuit.js" &&
+    /disabled \/ delayed \/ 扫描模式不算/.test(circuitTestSrc) &&
+    circuitSrc.includes("if (r.disabled || r.delayed) return false;"),
+  "把「今天没任务」「开关没开」误判为失效会平白关掉用户开关"
+);
+
+/* ============ 远程规则参数接线（2026-11-18 方案 A） ============
+ * 教训：规则文件里写了字段 ≠ 代码会用它。曾经「代码写 20、规则写 1」，
+ * 守卫只 grep 代码常量照样全绿（2026-11-07）。所以这里既查「单一真源模块」，
+ * 也查「每个参数确实被消费」，还查「判据类字段没被开放给远程」。
+ */
+{
+  const rtSrc = fs.readFileSync(path.join(ROOT, "src", "desktop-runtime.js"), "utf8");
+  const deskSrcW = fs.readFileSync(path.join(ROOT, "src", "desktop-app.js"), "utf8");
+  const runSrcW = fs.readFileSync(path.join(ROOT, "src", "runner.js"), "utf8");
+  const rulesSrcW = fs.readFileSync(path.join(ROOT, "src", "plugin-rules.js"), "utf8");
+  const testRulesSrc = fs.readFileSync(path.join(ROOT, "scripts", "test-desktop-rules.js"), "utf8");
+  const builtinW = JSON.parse(fs.readFileSync(path.join(ROOT, "plugins", "desktop-app-tasks", "rules.json"), "utf8"));
+  const remoteW = JSON.parse(fs.readFileSync(path.join(ROOT, "rules", "desktop-app-tasks.json"), "utf8"));
+
+  checkTrue(
+    "远程规则参数有单一真源：desktop-runtime 解析并钳制，驱动与熔断共用",
+    /function effectiveRuntime\(rules\)/.test(rtSrc) &&
+      /function circuitOptions\(rules\)/.test(rtSrc) &&
+      /function num\(v, def, min, max\)/.test(rtSrc) &&
+      /desktopRuntime\.effectiveRuntime\(rules\)/.test(deskSrcW) &&
+      /desktopRuntime\.circuitOptions\(/.test(runSrcW),
+    "两处各解析一次 → 远程改了阈值，熔断还在用旧的 3 次，问题极难自查"
+  );
+  checkTrue(
+    "v2 的 7 个参数确实被驱动消费，不是只写进规则文件",
+    deskSrcW.includes("ensureStarted({ allowRestart: true, startTimeoutMs })") &&
+      /cardRounds = Math\.max\(1, Math\.ceil\(cardMaxWaitMs \/ 2000\)\)/.test(deskSrcW) &&
+      deskSrcW.includes("(await bodyLen()) < minRenderChars") &&
+      deskSrcW.includes("i < dwellRounds; i++") &&
+      deskSrcW.includes("popup.waitForTimeout(dwellMs)") &&
+      /minRenderChars,\s*cardMaxWaitMs,\s*dwellMs,\s*dwellRounds,/.test(deskSrcW),
+    "字段写了没接线 = 远程调了没用，等于这块功能根本不存在"
+  );
+  checkTrue(
+    "v2 新字段在内置与远程两份规则里齐全一致，且 validate 卡死范围",
+    builtinW.runtime.circuitMaxFailures === remoteW.runtime.circuitMaxFailures &&
+      builtinW.runtime.circuitCountEnvFailures === remoteW.runtime.circuitCountEnvFailures &&
+      builtinW.runtime.startTimeoutMs === remoteW.runtime.startTimeoutMs &&
+      builtinW.version === remoteW.version &&
+      rulesSrcW.includes("runtime.circuitMaxFailures 超出范围") &&
+      rulesSrcW.includes("runtime.startTimeoutMs 超出范围") &&
+      rulesSrcW.includes("runtime.circuitCountEnvFailures 必须是布尔"),
+    "mergeKnown 只认内置已有键：只改远程那份会被白名单丢弃，等于没改；不校验范围则坏规则能把流程搞成空转"
+  );
+  checkTrue(
+    "熔断阈值与「环境类失效是否计入」可由远程规则调整，且仍受 1~10 钳制",
+    circuitSrc.includes("opts.countEnvFailures === false") &&
+      circuitSrc.includes("Math.min(10, Math.floor(rawMax))") &&
+      /desktopCircuit\.record\(ctx, rDesktopApp, circuitOpts\)/.test(runSrcW),
+    "阈值写死就又得发版；不钳制则远程 0 / 999 会造成「每轮熔断」或「永不熔断」"
+  );
+  checkTrue(
+    "远程规则只能调时长/阈值，判据类字段仍留在代码里当行为边界",
+    deskSrcW.includes('`a[href*="${form}"]`') &&
+      deskSrcW.includes("/[?&]dmreload=1/") &&
+      !deskSrcW.includes("rules.card.selectorTemplate") &&
+      !deskSrcW.includes("rules.landing.rejectPatterns") &&
+      !/\beval\s*\(/.test(rulesSrcW) &&
+      !/new Function\s*\(/.test(rulesSrcW),
+    "GitHub 侧能影响远程规则；让它改「怎么判断计分」比让它改「等多久」危险得多"
+  );
+  checkTrue(
+    "远程规则接线有独立离线回归入口（逐字段验证生效值，非只查字段存在）",
+    require(path.join(ROOT, "package.json")).scripts["test:rules"] === "node scripts/test-desktop-rules.js" &&
+      /effectiveRuntime\(/.test(testRulesSrc) &&
+      /越界\/非法值一律钳制回默认/.test(testRulesSrc),
+    "只断言「字段在文件里」会假绿，必须验证改了值行为真的变"
+  );
+}
+
 /* ============ 汇总 ============ */
 console.log(`\n${"=".repeat(46)}`);
 console.log(`结果: ${pass} 通过 / ${fail} 失败`);
