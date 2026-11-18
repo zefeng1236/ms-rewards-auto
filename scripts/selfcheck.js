@@ -1972,12 +1972,13 @@ checkTrue(
 const aboutSrcCredit = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "views", "About.tsx"), "utf8");
 const cssCredit = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "styles", "global.css"), "utf8");
 
-// 四位作者（第一位为原始作者）：网名 + 主页链接，一个都不能少
+// 五位作者（第一位为原始作者）：网名 + 主页链接，一个都不能少
 const CREDIT_ROWS = [
   ["潘钜森", "https://github.com/geosam/FuckScripts", "https://scriptcat.org/zh-CN/users/27974"],
   ["SDSmalin", "https://scriptcat.org/zh-CN/users/211564"],
   ["DuskLight", "https://scriptcat.org/zh-CN/users/187483"],
   ["withfeel", "https://scriptcat.org/zh-CN/users/207134"],
+  ["怀沙", "https://hs2049.cn/", "https://kdocs.cn/l/cv6w4QJtGEfn/"],
 ];
 for (const [name, ...links] of CREDIT_ROWS) {
   const nameOk = aboutSrcCredit.includes(`name: "${name}"`);
@@ -2002,6 +2003,15 @@ checkTrue(
 checkTrue(
   "致谢卡片有新样式（credit-list / credit-item / credit-avatar）",
   /\.credit-list \{/.test(cssCredit) && /\.credit-item \{/.test(cssCredit) && /\.credit-avatar \{/.test(cssCredit)
+);
+checkTrue(
+  "关于页与第三方声明都保留 MRS助手 作者主页引用（hs2049.cn）",
+  /key:\s*"hs2049"/.test(aboutSrcCredit) &&
+    /name:\s*"怀沙"/.test(aboutSrcCredit) &&
+    aboutSrcCredit.includes("https://hs2049.cn/") &&
+    /\.credit-hs2049 \{/.test(cssCredit) &&
+    fs.readFileSync(noticesPath, "utf8").includes("https://hs2049.cn/"),
+  "用户 2026-11-17 指定：软件内关于要加引用说明 + 作者主页链接，About/THIRD_PARTY_NOTICES 两处都不能少"
 );
 
 // 反例守卫 ⑥：作者被删 / 链接写错时必须变红
@@ -3763,9 +3773,11 @@ checkTrue(
   );
 }
 
-// —— 功能发布闸门：桌面 Rewards 专属任务暂缓上线（2026-11-04 用户要求）——
-// 要求：界面置灰 + 标「测试中」、主进程探测与执行全部拦住、推送汇总不出现该行。
-// 三层缺一层就会出现「界面灰了但后台照跑」这种最难自查的不一致。
+// —— 功能发布闸门：桌面 Rewards 专属任务（2026-11-18 已解除上线）——
+// 闸门保留作紧急回滚开关：关闭时必须做到界面置灰 + 标「测试中」、
+// 主进程探测与执行全部拦住、推送汇总不出现该行。三层缺一层就会出现
+// 「界面灰了但后台照跑」这种最难自查的不一致。
+// 另：Web/Docker 版因平台限制始终不可用，不能因为闸门解除就被误放开。
 {
   const gatesSrc = fs.readFileSync(path.join(ROOT, "src", "feature-gates.js"), "utf8");
   const runnerSrc = fs.readFileSync(path.join(ROOT, "src", "runner.js"), "utf8");
@@ -3779,27 +3791,35 @@ checkTrue(
     path.join(ROOT, "src-renderer", "src", "components", "fields.tsx"),
     "utf8"
   );
+  const webSrcGate = fs.readFileSync(
+    path.join(ROOT, "src-renderer", "src", "api", "web.ts"), "utf8"
+  );
+  const mockSrcGate = fs.readFileSync(
+    path.join(ROOT, "src-renderer", "src", "api", "mock.ts"), "utf8"
+  );
 
   checkTrue(
-    "桌面专属任务当前处于「暂缓上线」状态（单一真源 = feature-gates.js）",
-    /const DESKTOP_APP_DELAYED = true/.test(gatesSrc) && /function desktopAppGate/.test(gatesSrc),
-    "闸门值改回 false 就等于上线了 —— 要上线请连同界面文案一起改，别让它悄悄开着"
+    "桌面专属任务闸门已解除（单一真源 = feature-gates.js，随下一版上线）",
+    /const DESKTOP_APP_DELAYED = false/.test(gatesSrc) &&
+      /function desktopAppGate/.test(gatesSrc) &&
+      /allowed: !DESKTOP_APP_DELAYED/.test(gatesSrc),
+    "2026-11-18 决定上线；闸门被改回 true 属于紧急回滚，必须显式做并同步界面文案"
   );
   checkTrue(
-    "任务执行器与外部驱动都按闸门跳过（老配置 desktopApp=true 也跑不起来）",
+    "任务执行器与外部驱动都按闸门判定（回滚时老配置 desktopApp=true 也跑不起来）",
     /desktopAppGate\(\)\.allowed/.test(runnerSrc) &&
       /desktopAppGate\(\)\.allowed/.test(desktopAppSrc),
     "只看用户开关 → 老用户配置里是 true，界面灰着但任务照跑"
   );
   checkTrue(
-    "探测与推送汇总都遵守闸门（不白跑 PowerShell、不刷「暂缓上线」行）",
+    "探测与推送汇总都遵守闸门（回滚时不白跑 PowerShell、不刷「暂缓上线」行）",
     /desktopAppGate\(\)/.test(mainSrcGate) &&
       /rDesktopApp && rDesktopApp\.delayed/.test(runnerSrc) &&
       /if \(r\.delayed\) return "暂缓上线"/.test(runnerSrc),
     "探测照跑 + 汇总照印 → 每轮推送都在解释一个用户根本用不上的功能"
   );
   checkTrue(
-    "设置页入口置灰并标「测试中 · 延迟上线」（不隐藏入口）",
+    "设置页按闸门状态决定是否置灰并标「测试中 · 延迟上线」（不隐藏入口）",
     /badge=\{key === "desktopApp" && deskDelayed\.delayed \? "测试中 · 延迟上线"/.test(settingsSrc) &&
       /deskDelayed\.delayed\)/.test(settingsSrc) &&
       /badge\?: string/.test(fieldsSrc),
@@ -3814,6 +3834,18 @@ checkTrue(
       // 渲染层不该出现「硬编码 false/true 来判断桌面任务是否开放」
       !/DESKTOP_APP_DELAYED/.test(settingsSrc),
     "两处各写一份 → 改一处漏一处，界面与主进程必然有一天对不上"
+  );
+  checkTrue(
+    "桌面任务上线后 Web/Docker 版仍明确不可用（平台限制，与闸门无关）",
+    /desktopApp: \{ allowed: false/.test(webSrcGate) &&
+      /仅 Windows 桌面版可用/.test(webSrcGate),
+    "容器里没有 MSIX 应用与本机 CDP，误放开会让用户点了没反应、后端还试图启动外部程序"
+  );
+  checkTrue(
+    "dev:web 预览 mock 与桌面主进程口径一致（不再标「暂缓上线」）",
+    /desktopApp: \{ allowed: true, note: "" \}/.test(mockSrcGate) &&
+      !/暂缓上线/.test(mockSrcGate),
+    "预览界面会把一个已上线的功能标成「测试中」，误导排查"
   );
 }
 
@@ -4963,16 +4995,54 @@ const DOC_SECRET_PATTERNS = [
     "utf8"
   );
   const tasksSrcRp = fs.readFileSync(path.join(ROOT, "src", "tasks.js"), "utf8");
+  const sidebarSrcRp = fs.readFileSync(
+    path.join(ROOT, "src-renderer", "src", "components", "Sidebar.tsx"),
+    "utf8"
+  );
+
+  /**
+   * 抽出「IS_WEB ? [...] : [...]」两份清单里各自的 key 顺序。
+   * SOFTWARE_SECTIONS（右栏分区）与 SW_TABS（左侧按钮）是**两份独立清单**，
+   * 2026-11-06 就因为只改了前者忘了后者，页面有分区但侧栏没按钮。
+   * 这里按分支对齐比对，任何一边增删 / 换位都会变红。
+   */
+  const branchKeys = (src, decl) => {
+    const start = src.indexOf(`const ${decl}`);
+    const end = src.indexOf("];", start);
+    if (start < 0 || end < 0) return null;
+    const body = src.slice(start, end);
+    const q = body.indexOf("? [");
+    const colon = body.indexOf("\n  : [", q);
+    if (q < 0 || colon < 0) return null;
+    const keys = (s) => [...s.matchAll(/\{\s*key:\s*"([^"]+)"/g)].map((m) => m[1]);
+    return [keys(body.slice(q, colon)), keys(body.slice(colon))];
+  };
 
   checkTrue(
-    "「报告问题」位于软件设置「更新」分区下面，且加入侧栏分类",
+    "「报告问题」位于软件设置「更新」分区下面，且加入侧栏分类（含 bug 图标）",
     (() => {
       const iUpdate = swViewSrc.indexOf('id="swsec-update"');
       const iReport = swViewSrc.indexOf('id="swsec-report"');
       const labels = (swViewSrc.match(/label: "报告问题"/g) || []).length;
-      return iUpdate >= 0 && iReport > iUpdate && labels === 2;
+      // ⚠️ 原来只数右栏分区清单的 label，侧栏 SW_TABS 漏了照样绿（假守卫）。
+      // 现在必须真的在 Sidebar.tsx 的两个分支里各找到一个带 bug 图标的按钮。
+      const tabs = (sidebarSrcRp.match(/key: "report", label: "报告问题", icon: ICONS\.bug/g) || []).length;
+      const iUpdateTab = sidebarSrcRp.indexOf('key: "update", label: "更新"');
+      const iReportTab = sidebarSrcRp.indexOf('key: "report", label: "报告问题"');
+      return iUpdate >= 0 && iReport > iUpdate && labels === 2 && tabs === 2 &&
+        iUpdateTab >= 0 && iReportTab > iUpdateTab;
     })(),
-    "位置错了 / 侧栏少一项 → 点分类跳不过去（IS_WEB 与桌面两个清单都要加）"
+    "位置错了 / 侧栏少一项 / 图标不是 bug → 点分类跳不过去（IS_WEB 与桌面两个清单都要加）"
+  );
+  checkTrue(
+    "软件设置分区与侧栏 SW_TABS 的 key 顺序逐分支对齐（防「加了分区没加按钮」）",
+    (() => {
+      const sec = branchKeys(swViewSrc, "SOFTWARE_SECTIONS");
+      const tabs = branchKeys(sidebarSrcRp, "SW_TABS");
+      return !!sec && !!tabs && JSON.stringify(sec) === JSON.stringify(tabs) &&
+        sec[0].includes("report") && sec[1].includes("report");
+    })(),
+    "两份清单各写各的 → 2026-11-06 实测：右栏有「报告问题」但左侧没按钮"
   );
   checkTrue(
     "八种时间段预设齐全（今天/24h/48h/72h/本周/本月/所有/自定义）",
@@ -8571,7 +8641,250 @@ console.log("\n【0.15.9】桌面应用专属任务（外部进程驱动）");
     runnerSrc.includes("🖥️ 桌面专属"),
     "完成/跳过/未就绪三种状态要能一眼看到，否则用户以为没跑"
   );
+
+  // —— 2026-11-07 离线打桩测试暴露的真实缺陷 ——
+  // ⚠️ 教训：只 grep 代码里的常量会假绿 —— 代码写 20、规则写 1，实际每轮只做一项，
+  //    旧守卫盯着 MAX_ITEMS_PER_RUN 照样通过。守卫必须查「实际生效值」。
+  const plugSrc = fs.readFileSync(path.join(ROOT, "plugins", "desktop-app-tasks", "index.js"), "utf8");
+  const testDesktopSrc = fs.readFileSync(path.join(ROOT, "scripts", "test-desktop-app.js"), "utf8");
+  checkTrue(
+    "desktop-app：调试端口注入值恰好是 BROWSER_ARG（不能拼成 ----remote-debugging-port）",
+    /WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:\s*BROWSER_ARG\s*\}/.test(deskCode) &&
+      !/WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:\s*`--\$\{BROWSER_ARG\}`/.test(deskCode),
+    "BROWSER_ARG 自带 -- 前缀，再补一次变成 ----remote-debugging-port，CDP 端口起不来"
+  );
+  checkTrue(
+    "desktop-app：CDP 参数走 argv(--edge-webview-switches)+env 双通道",
+    /spawn\(exePath,\s*\[\s*`--edge-webview-switches=\$\{BROWSER_ARG\}`\s*\]/.test(deskCode) &&
+      /WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:\s*BROWSER_ARG\s*\}/.test(deskCode),
+    "2026-11-15 真机：MSIX 不继承 spawn 进程环境块，退回单 env 通道会稳定开不出调试端口"
+  );
+  checkTrue(
+    "desktop-app：内置/远程规则的一轮上限 ≥5，且插件兜底取驱动常量而非写死 1",
+    Number(builtinRules.runtime.maxItemsPerRun) >= 5 &&
+      Number(remoteRules.runtime.maxItemsPerRun) >= 5 &&
+      /desktopApp\.MAX_ITEMS_PER_RUN/.test(plugSrc) &&
+      !/runtime\.maxItemsPerRun \|\| 1/.test(plugSrc) &&
+      /MAX_ITEMS_PER_RUN,/.test(deskCode),
+    "规则把代码里的上限压回 1 → 一轮只做一项，旧守卫只查代码常量照样绿"
+  );
+  checkTrue(
+    "desktop-app：进度解析兼容英文且有兜底，到账判据随 progressKnown 切换",
+    /const PROGRESS_RE\s*=/.test(deskCode) &&
+      /progressKnown: Boolean\(prog\)/.test(deskCode) &&
+      /quest\.progressKnown === false \|\| after\.progressKnown === false/.test(deskCode),
+    "英文 punchcard 解析不出进度 → done=0 → 所有点过的项被当成冷却期拉黑一整天"
+  );
+  checkTrue(
+    "desktop-app：连续渲染失败跨轮累计并放弃该项（renderFails 不是摆设）",
+    /renderFailRounds/.test(deskCode) &&
+      /r\.renderBroken \|\| rf >= 2/.test(deskCode) &&
+      /renderBroken: renderFails >= 2/.test(deskCode),
+    "只记数不决策 → 每项都白重启一轮"
+  );
+  checkTrue(
+    "桌面任务离线打桩测试已固化（npm run test:desktop，且覆盖关键路径）",
+    pkgJson.scripts["test:desktop"] === "node scripts/test-desktop-app.js" &&
+      fs.existsSync(path.join(ROOT, "scripts", "test-desktop-app.js")) &&
+      ["runDesktopApp", "ensureStarted", "readQuest", "maxItems", "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"].every(
+        (k) => testDesktopSrc.includes(k)
+      ),
+    "这条链路要外部应用 + 它自己的登录态，CI 真跑不了；打桩测试没了就没有回归防线"
+  );
+
+  // —— 2026-11-07 真机联调（用户已登录）暴露的启动期竞态 ——
+  checkTrue(
+    "desktop-app：启动期重新枚举页面等主窗口，拿不到也不重启应用",
+    /waitForMainWindow/.test(deskCode) &&
+      /尚未拿到主窗口，重新连接 CDP（不重启应用）/.test(deskCode) &&
+      !/桌面应用页面已失效，重新连接/.test(deskCode),
+    "锁死一个 about:blank 页面等 24s 就重启应用 → 反复撞启动期，真机连败 3 次"
+  );
+  checkTrue(
+    "desktop-app：每轮重启前先等旧调试端口消失（防连到正在退出的实例）",
+    /if \(restarts > 0\) \{[\s\S]{0,400}?for \(let i = 0; i < 12; i\+\+\) \{[\s\S]{0,160}?isPortReady\(\)/.test(deskCode),
+    "stop() 之后 WebView2 子进程会短暂残留端口，只判端口通就会连上僵尸实例"
+  );
+  checkTrue(
+    "desktop-app：日志项号按已处理项数递增（点了没到账不会重复「第 1 项」）",
+    /let handled = 0;/.test(deskCode) &&
+      /handled\+\+;/.test(deskCode) &&
+      /\$\{handled\} 项/.test(deskCode) &&
+      !/\$\{acc\.gained \+ 1\} 项/.test(deskCode),
+    "用 gained 编号 → 第一项点了没到账时 gained 仍是 0，下一项又打印「第 1 项」（真机 11-07 日志实证）"
+  );
+
+  // —— 兑换类「最后领取」跳过（2026-11-12 用户定）——
+  checkTrue(
+    "desktop-app：兑换类「最后领取」由 needsManualClaim 单一判据识别，扫描与执行两层都过滤",
+    /function needsManualClaim\(href\)/.test(deskCode) &&
+      deskCode.includes("MANUAL_CLAIM_RE") &&
+      deskCode.includes("redeem\\/sku") &&
+      (deskCode.match(/!needsManualClaim\(i\.href\)/g) || []).length >= 2 &&
+      /manual: acc\.manual/.test(deskCode),
+    "只挡一层 → 另一条路径仍会去点兑换卡片，白跑一分钟还被误记成冷却期"
+  );
+  checkTrue(
+    "runner：桌面汇总明确写出「N 项需人工领取」（兑换类不静默跳过）",
+    /r\.manual > 0/.test(runnerCode) &&
+      /项需人工领取/.test(runnerSrc) &&
+      /manualTail/.test(runnerCode),
+    "静默跳过会让用户以为程序漏跑了，或每天白等一个永远不会自动完成的奖励"
+  );
 }
+
+/* ============ 2026-11-17 竞品分析第一批增强 ============ */
+const boostRiskSrc = fs.readFileSync(path.join(ROOT, "src", "risk-signals.js"), "utf8");
+const boostQuerySrc = fs.readFileSync(path.join(ROOT, "src", "query-sources.js"), "utf8");
+const boostHumanSrc = fs.readFileSync(path.join(ROOT, "src", "humanize.js"), "utf8");
+const boostTestSrc = fs.readFileSync(path.join(ROOT, "scripts", "test-rewards-boost.js"), "utf8");
+const boostRewardsSrc = fs.readFileSync(path.join(ROOT, "src", "rewards.js"), "utf8");
+const boostRunnerSrc = fs.readFileSync(path.join(ROOT, "src", "runner.js"), "utf8");
+const boostTasksSrc = fs.readFileSync(path.join(ROOT, "src", "tasks.js"), "utf8");
+const boostPkgSrc = fs.readFileSync(path.join(ROOT, "package.json"), "utf8");
+
+checkTrue(
+  "风控信号：只在明确警告时暂停，且复用 earn 页 HTML 在任务链之前拦截",
+  /KNOWN_WARNINGS/.test(boostRiskSrc) &&
+    /if \(!hits\.length\) return \{ pause: false/.test(boostRiskSrc) &&
+    /risk:\s*riskSignals\.parseRiskSignals\(res\.text\)/.test(boostRewardsSrc) &&
+    boostRunnerSrc.indexOf("riskSignals.shouldPauseAccount") >= 0 &&
+    boostRunnerSrc.indexOf("riskSignals.shouldPauseAccount") < boostRunnerSrc.indexOf("// 4. 顺序执行任务") &&
+    /只有高机器人评分/.test(boostTestSrc),
+  "把高分值也当暂停条件会整天误伤账号；解析必须复用已有请求，别为检查风控多加一次网络请求"
+);
+checkTrue(
+  "搜索词：多源降级 + 归一化去重 + 本地词库兜底（不再单源固定词）",
+  /function addSource/.test(boostQuerySrc) &&
+    /function dedupe/.test(boostQuerySrc) &&
+    /LOCAL_TOPICS = \[/.test(boostQuerySrc) &&
+    /querySources\.nextQuery\(queryCache\)/.test(boostTasksSrc) &&
+    !/const keywordCache =/.test(boostTasksSrc) &&
+    /所有热榜源都挂时仍有本地词库兜底/.test(boostTestSrc),
+  "旧实现只盯一个热榜接口，一挂就反复用同一批固定词，搜索行为高度重复"
+);
+checkTrue(
+  "拟人化状态按账号隔离（不重蹈对方全局 last-success.txt 覆辙）",
+  /humanize-\$\{accountKey\(accountId\)\}\.json/.test(boostHumanSrc) &&
+    /if \(!enabled\) return false/.test(boostHumanSrc) &&
+    /humanize\.randomRatio/.test(boostTasksSrc) &&
+    /A 账号成功后，B 账号当天仍必须照跑/.test(boostTestSrc) &&
+    /"test:boost"/.test(boostPkgSrc),
+  "对方用全局单文件判「今天已跑过」，一个批次成功就跳过当天所有账号；我们必须按账号存且默认 fail-open"
+);
+
+/* ============ 2026-11-17 真机抓包后的新版活动层 ============ */
+const rnSrc = fs.readFileSync(path.join(ROOT, "src", "rewards-next.js"), "utf8");
+const raSrc = fs.readFileSync(path.join(ROOT, "src", "rewards-activities.js"), "utf8");
+const totpSrc = fs.readFileSync(path.join(ROOT, "src", "totp.js"), "utf8");
+const nextTestSrc = fs.readFileSync(path.join(ROOT, "scripts", "test-rewards-next.js"), "utf8");
+
+checkTrue(
+  "rewards-next：/api/getuserinfo 数据源 + 动态 actionId 发现 + Next-Action 上报头",
+  rnSrc.includes("/api/getuserinfo") &&
+    /function extractNamedActions/.test(rnSrc) &&
+    /"Next-Action": actionId/.test(rnSrc) &&
+    /"Next-Router-State-Tree": tree/.test(rnSrc) &&
+    /if \(dryRun\) return/.test(rnSrc) &&
+    /RFC 6238 标准向量/.test(nextTestSrc),
+  "actionId 随部署变化，写死 hash 会过期；只认 POST 200 不复核服务器状态等于虚报计分"
+);
+checkTrue(
+  "rewards-activities：默认只读、兑换最后领取跳过、写后复核",
+  /const dryRun = opts\.dryRun !== false/.test(raSrc) &&
+    /function needsManualClaim/.test(raSrc) &&
+    raSrc.includes("redeem\\/sku") &&
+    /const after = await next\.fetchDashboard/.test(raSrc) &&
+    raSrc.includes("isAvailableToday") &&
+    /kind === "punchCard" && !isAvailableToday\(item\)/.test(raSrc) &&
+    /周 punchcard 只保留当天星期那一项/.test(nextTestSrc) &&
+    /默认只读：不下载 chunk、不发 POST/.test(nextTestSrc),
+  "凭空发未验证的 POST 会直接伤账号；兑换类点卡片不计分，必须留给人工"
+);
+checkTrue(
+  "totp：RFC6238 纯 crypto 实现且密钥不落盘",
+  /crypto\.createHmac/.test(totpSrc) &&
+    /TOTP_SELECTORS/.test(totpSrc) &&
+    !/writeFile|writeFileSync/.test(totpSrc) &&
+    /94287082/.test(nextTestSrc),
+  "2FA 密钥属于凭据，模块只读入参、绝不写磁盘"
+);
+checkTrue(
+  "runner：新版活动默认只读盘点，写操作必须显式 runNextActivities",
+  /nextActivities\.runActivities\(ctx, \{ dryRun: opts\.runNextActivities !== true \}\)/.test(boostRunnerSrc),
+  "自动调度每轮都真实上报活动会大幅提高风控暴露面"
+);
+
+/* ============ 账号安全闸门（用户硬约束：别把号搞封） ============ */
+const safetySrc = fs.readFileSync(path.join(ROOT, "src", "account-safety.js"), "utf8");
+const actsSrcSafe = fs.readFileSync(path.join(ROOT, "src", "rewards-activities.js"), "utf8");
+const nextSrcSafe = fs.readFileSync(path.join(ROOT, "src", "rewards-next.js"), "utf8");
+const runnerSrcSafe = fs.readFileSync(path.join(ROOT, "src", "runner.js"), "utf8");
+const safetyTestSrc = fs.readFileSync(path.join(ROOT, "scripts", "test-account-safety.js"), "utf8");
+
+checkTrue(
+  "账号安全闸门：六道闸全部落地（数据源/风控/单轮上限/冷却/开关型/间隔）",
+  // ⚠️ 必须精确匹配带分号的赋值：只写 "DEFAULT_MAX_WRITES = 1" 会被
+  //    "= 10" 的前缀骗过（2026-11-17 反例实测假绿）。
+  /const DEFAULT_MAX_WRITES = 1;/.test(safetySrc) &&
+    /const HARD_MAX_WRITES = 3;/.test(safetySrc) &&
+    safetySrc.includes("riskSignals.shouldPauseAccount") &&
+    safetySrc.includes('d.source !== "getuserinfo"') &&
+    safetySrc.includes("COOLDOWN_MS") &&
+    safetySrc.includes("ACCOUNT_COOLDOWN_MS") &&
+    // 账号级冷却不能只查常量名，要确认条件真的被用作闸门
+    /ledger\.lastWriteAt > 0[\s\S]{0,140}ACCOUNT_COOLDOWN_MS/.test(safetySrc) &&
+    safetySrc.includes("账号级写入冷却中") &&
+    safetySrc.includes("TOGGLE_KINDS") &&
+    safetySrc.includes("nextGapMs"),
+  "别把号搞封是硬约束，任一闸门被删都会让写操作失去保护"
+);
+checkTrue(
+  "活动写路径必须经过安全闸门，且写前落账、失败不重发",
+  actsSrcSafe.includes("safety.planWrites(report.pending, before") &&
+    // 唯一来源：出现两次说明有人把结果丢掉、又偷偷走旧循环
+    (actsSrcSafe.match(/safety\.planWrites\(/g) || []).length === 1 &&
+    actsSrcSafe.includes("if (!plan.allowed.length)") &&
+    actsSrcSafe.includes("plan.allowed.length; i++") &&
+    actsSrcSafe.includes("safety.markWrite(plan.ledger") &&
+    actsSrcSafe.includes("safety.pace(opts)") &&
+    actsSrcSafe.indexOf("safety.markWrite(plan.ledger") < actsSrcSafe.indexOf("next.reportServerAction(ctx"),
+  "退回「直接遍历 pending 连发 10 个 POST」会显著增加封号风险"
+);
+checkTrue(
+  "真实写操作强制浏览器通道：先 GET earn 建立会话再 POST，不裸用 Node fetch",
+  nextSrcSafe.includes("await browserRequest(ctx, { ...requestOpts, warmupUrl:") &&
+    nextSrcSafe.includes("page.request.post(") &&
+    nextSrcSafe.includes("if (isPost && o.warmupUrl)") &&
+    nextSrcSafe.includes("? await injected(requestOpts)"),
+  "裸 Node fetch 跨域重定向会剥 Cookie，且缺浏览器前置请求与请求头（真机 11-17 实证）"
+);
+checkTrue(
+  "actionId 发现：earn 页用真实导航 page.goto、chunk 用浏览器批量 GET",
+  nextSrcSafe.includes("browserPageHtml(ctx, `${REWARDS}/earn`)") &&
+    nextSrcSafe.includes("page.goto(url,") &&
+    nextSrcSafe.includes("page.content()") &&
+    nextSrcSafe.includes("browserFetchBatch(ctx, paths.map((p) => REWARDS + p))") &&
+    nextSrcSafe.includes("const injected = typeof opts.request === \"function\" ? opts.request : null;") &&
+    nextSrcSafe.includes("Date.now() - started > 90000"),
+  "page.request.get 取 /earn 只拿到 2.9KB「需启用 JS」拦截页、chunk 数为 0；直连则是 35KB 登录页，两者都会让写链路空转"
+);
+checkTrue(
+  "活动上报不得把 HTTP 200 说成「已计分」：写后复核 confirmed + 汇总文案如实",
+  actsSrcSafe.includes("report.confirmed = confirmed") &&
+    actsSrcSafe.includes("pendingAfter.length < report.pending.length") &&
+    actsSrcSafe.includes("服务器进度未变化") &&
+    runnerSrcSafe.includes("nr.confirmed ?") &&
+    !runnerSrcSafe.includes("上报成功 ${okCount}"),
+  "真机 11-17：POST 200 但积分与 punchcard 都没变，日志必须标「未确认计分」且停止重试"
+);
+checkTrue(
+  "安全闸门离线回归入口存在，且 runner 默认仍只读",
+  safetyTestSrc.includes("npm run test:safety") &&
+    require(path.join(ROOT, "package.json")).scripts["test:safety"] === "node scripts/test-account-safety.js" &&
+    runnerSrcSafe.includes("dryRun: opts.runNextActivities !== true"),
+  "没有回归测试 / 默认改成写操作，都会在无人察觉时把账号暴露在风险里"
+);
 
 /* ============ 汇总 ============ */
 console.log(`\n${"=".repeat(46)}`);

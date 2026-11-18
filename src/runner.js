@@ -4,6 +4,8 @@ const browser = require("./browser");
 const logger = require("./logger");
 const notify = require("./notify");
 const rewards = require("./rewards");
+const riskSignals = require("./risk-signals");
+const nextActivities = require("./rewards-activities");
 const tasks = require("./tasks");
 const plugins = require("./plugins");
 const pluginRules = require("./plugin-rules");
@@ -176,8 +178,8 @@ async function runDesktopTask(ctx) {
  */
 function formatDesktopLine(r) {
   if (!r) return "未运行";
-  // 暂缓上线（2026-11-04）：老配置里 desktopApp 可能还是 true，但闸门挡住了。
-  // 不能报「未启用」（那是用户的选择）或「未运行」（像故障），要说清是功能还没开放。
+  // 闸门关闭（紧急回滚时）才可能出现：老配置里 desktopApp 可能还是 true。
+  // 不能报「未启用」（那是用户的选择）或「未运行」（像故障），要说清功能没开放。
   if (r.delayed) return "暂缓上线";
   if (r.disabled) return "未启用";
   if (r.notInstalled) return "跳过(未安装 Rewards 应用)";
@@ -185,10 +187,13 @@ function formatDesktopLine(r) {
   if (r.notLoggedIn) return `跳过(Rewards 桌面应用未登录)`;
   if (r.status === "retry") return `未完成(${r.reason || "应用未就绪"})`;
   if (r.status === "error") return `失败(${r.error || "未知错误"})`;
-  if (r.gained > 0) return `完成 ${r.gained} 项 +${r.points || 0} 分`;
+  // 兑换类「最后领取」阶段自动化不计分，必须明确提示需人工去应用里领取，
+  // 否则用户只会看到「今日无可做项」，以为程序漏跑了（2026-11-12 用户定）。
+  const manualTail = r.manual > 0 ? ` ｜ ${r.manual} 项需人工领取` : "";
+  if (r.gained > 0) return `完成 ${r.gained} 项 +${r.points || 0} 分${manualTail}`;
   // 点到了但没到账：必须如实说，不能算成「完成」
-  if (r.clicked > 0) return `已点击 ${r.clicked} 项但未到账`;
-  return r.reason || "今日无可做项";
+  if (r.clicked > 0) return `已点击 ${r.clicked} 项但未到账${manualTail}`;
+  return (r.reason || "今日无可做项") + manualTail;
 }
 
 /**
@@ -276,6 +281,58 @@ async function runOnce(ctxRaw, opts = {}) {
     return result;
   }
 
+  // 3.5 风控信号（2026-11-17）：微软会在 dashboard/earn 下发机器人评分与
+  // userWarnings。命中明确警告时整轮暂停 —— 继续自动化只会加重降权。
+  // 判据保守：解析失败、未知警告、只有高分值都一律放行，绝不误伤账号。
+  try {
+    const snap = await rewards.getRewardsInfo(ctx);
+    const verdict = riskSignals.shouldPauseAccount(snap && snap.risk);
+    if (verdict.pause) {
+      result.ok = false;
+      result.reason = verdict.reason;
+      state.get().lastResult = verdict.reason;
+      state.save();
+      logger.warn(`账户「${ctx.name}」${verdict.reason}`);
+      // 推送失败只 warn，不能反过来影响暂停本身
+      await notify.sendText(ctx, "⚠️ 账号风控提醒", verdict.reason).catch(() => {});
+      return result;
+    }
+    if (snap && snap.risk && snap.risk.observed) {
+      logger.info(`风控观测: 警告=${snap.risk.warnings.join(",") || "无"} | 机器人评分=${snap.risk.botScore ?? "未知"}`);
+    }
+  } catch (e) {
+    logger.warn(`风控信号检查失败（已放行）: ${String((e && e.message) || e).slice(0, 100)}`);
+  }
+  cancel.throwIfAborted();
+
+  // 3.6 新版 Rewards 活动盘点（2026-11-17 真机抓包后的数据层）。
+  // 默认**只读**：拉一次 /api/getuserinfo，列出 punchcard / 连胜保护 / 视觉搜索等待办，
+  // 不向账号发任何 POST。写操作会真实动积分，必须显式传 runNextActivities:true。
+  try {
+    const nr = await nextActivities.runActivities(ctx, { dryRun: opts.runNextActivities !== true });
+    if (nr.ok) {
+      logger.info(
+        `活动盘点(${nr.dryRun ? "只读" : "执行"}): 待办 ${nr.pending.length} 项 [${nextActivities.summarizePending(nr.pending)}]` +
+        ` | punchcard ${nr.punchCardCount} 个 | 连胜保护 ${nr.streakProtection && nr.streakProtection.on ? "已开启" : "未开启"}`
+      );
+      if (!nr.dryRun) {
+        const okCount = nr.executed.filter((e) => e.ok).length;
+        // ⚠️ HTTP 2xx 只代表「请求被接受」，不等于计分。真机 11-17 实证：
+        //    POST 200 但积分与 punchcard 都没变。必须按服务器复核结果说话，且不重试。
+        logger.info(
+          `活动执行: 上报 ${okCount}/${nr.executed.length} 项（HTTP 2xx），` +
+          `服务器${nr.confirmed ? "已确认计分" : "未确认计分（已按冷却停止重试）"}，` +
+          `复核可用积分=${(nr.after && nr.after.availablePoints) ?? "未知"}`
+        );
+      }
+    } else {
+      logger.warn(`活动盘点不可用: ${nr.reason}`);
+    }
+  } catch (e) {
+    logger.warn(`活动盘点失败（不影响主流程）: ${String((e && e.message) || e).slice(0, 100)}`);
+  }
+  cancel.throwIfAborted();
+
   // 4. 顺序执行任务（签入/阅读依赖 access token，无 token 则跳过并提示授权）
   /**
    * 每天首次运行：检查一次「可领取」是否达到阈值（2026-11-04 用户定的默认规则）。
@@ -355,7 +412,7 @@ async function runOnce(ctxRaw, opts = {}) {
   // （程序化导航会被 Bing 附加 dmreload=1，服务端判定为非用户访问）。
   // 所以它独立于其它任务，走外部进程驱动（src/desktop-app.js）。
   let rDesktopApp;
-  // 发布闸门（2026-11-04）：功能暂缓上线 → 直接 skip，连外部程序都不启动。
+  // 发布闸门（2026-11-18 已解除，保留作紧急回滚）：闸门关时直接 skip，连外部程序都不启动。
   // 注意这里判的是「闸门」而不是「用户开关」：老配置里 desktopApp 可能还是 true，
   // 光看开关会照跑，而界面上这个入口已经是灰的。
   if (cfg.tasks.desktopApp && require("./feature-gates").desktopAppGate().allowed) {
@@ -499,7 +556,7 @@ async function runOnce(ctxRaw, opts = {}) {
   // 桌面专属任务：必须把「未启用 / 未安装 / 应用没起来 / 今天没有 / 完成了 N 项」
   // 这五种情况分开说。合并成一句「未运行」会让用户以为程序漏跑。
   //
-  // 2026-11-04：功能暂缓上线期间整行都不输出 —— 这条汇总会推送到群/邮件，
+  // 闸门关闭（紧急回滚）期间整行都不输出 —— 这条汇总会推送到群/邮件，
   // 多一行「暂缓上线」等于每轮都在解释一个用户根本没有的功能。
   if (cfg.tasks.desktopApp && !(rDesktopApp && rDesktopApp.delayed)) {
     lines.push(`🖥️ 桌面专属: ${formatDesktopLine(rDesktopApp)}`);

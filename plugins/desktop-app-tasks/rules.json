@@ -34,7 +34,7 @@
   },
   "runtime": {
     "renderWaitMs": 18000,
-    "maxItemsPerRun": 1,
+    "maxItemsPerRun": 10,
     "startTimeoutMs": 30000,
     "restartOnRenderBroken": true,
     "restartMaxTimes": 1

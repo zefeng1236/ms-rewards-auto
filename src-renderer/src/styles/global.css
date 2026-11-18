@@ -3617,6 +3617,10 @@ html[data-preset="opaque"] .compat-toast {
   color: rgb(15 23 42);
 }
 
+.credit-hs2049 {
+  background: rgb(249 115 22);
+}
+
 .credit-main {
   flex: 1 1 240px;
   min-width: 0;

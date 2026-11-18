@@ -416,10 +416,10 @@ export function createWebApi(): ElectronApi {
     // 桌面版才有「系统钥匙串托管」这回事，Web/Docker 用环境变量或凭据文件
     vaultRefreshKeychain: async () => ({ ok: false, error: "仅桌面版支持系统钥匙串托管" }),
     vaultDiscardKeychain: async () => ({ ok: false, error: "仅桌面版支持系统钥匙串托管" }),
-    // Web 版同样吃发布闸门：桌面应用专属任务在容器里本来就跑不了，
-    // 这里直接报「暂缓上线」，与桌面版口径一致。
+    // 桌面应用专属任务依赖 Windows MSIX 应用 + 本机 CDP，容器里跑不了。
+    // 这是平台限制，与桌面版发布闸门无关（桌面版 2026-11-18 已解除闸门）。
     featureGates: async () => ({
-      desktopApp: { allowed: false, note: "该功能正在测试中，暂缓上线" },
+      desktopApp: { allowed: false, note: "仅 Windows 桌面版可用（需安装微软 Rewards 应用）" },
     }),
     vaultChangePassword: (current, next, hint) => rpc<VaultResult>("vaultChangePassword", current, next, hint),
     vaultRecoveryKey: () => rpc<VaultResult>("vaultRecoveryKey"),

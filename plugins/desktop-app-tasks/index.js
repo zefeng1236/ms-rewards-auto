@@ -23,7 +23,13 @@ module.exports = {
     return desktopApp.runDesktopApp(ctx, {
       ...opts,
       rules,
-      maxItems: opts.maxItems != null ? opts.maxItems : runtime.maxItemsPerRun || 1,
+      // ⚠️ 兜底取驱动里的 MAX_ITEMS_PER_RUN，别写死 1 ——
+      //    规则值为 1 时「一轮做完」会退化成「一轮只做一项」，
+      //    而自检只盯着驱动里的常量，根本发现不了（2026-11-07 打桩测出）。
+      maxItems:
+        opts.maxItems != null
+          ? opts.maxItems
+          : (Number(runtime.maxItemsPerRun) || desktopApp.MAX_ITEMS_PER_RUN),
     });
   },
 };

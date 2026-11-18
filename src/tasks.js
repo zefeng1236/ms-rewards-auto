@@ -6,6 +6,8 @@ const cancel = require("./cancel");
 const browser = require("./browser");
 const { randomUUID, randomUUIDHex, randInt, randArr, getRandomSubstring, getDateSlash, getDayEn, isJSON } = require("./utils");
 const { resolveTaskCount, normalizeLimits } = require("./task-limit");
+const querySources = require("./query-sources");
+const humanize = require("./humanize");
 
 // 使用可被「停止任务」中断的 sleep（中止时立即抛出 AbortError）
 const sleep = cancel.sleep;
@@ -25,42 +27,40 @@ const HOT_APIS = [
   { name: "hot.nntool.cc", url: "https://hotapi.nntool.cc/", hot: ["weibo", "douyin", "baidu", "toutiao", "thepaper", "qq-news", "netease-news", "zhihu"] },
 ];
 
-const keywordCache = { index: 0, list: [] };
+// 多源降级词池（2026-11-17）：旧实现只盯一个热榜接口，接口一挂就反复用
+// 同一批固定词；且缓存是模块级单列表，多账户会互相污染词序。
+// 现在按「首选源 → 其余源 → 本地词库」降级，归一化去重后轮转取词。
+const queryCache = querySources.createCache();
 
 async function getQueryWord(ctx) {
-  const keywords = ["天气预报", "今日新闻", "体育赛事", "股票行情", "电影推荐", "科技资讯", "美食食谱", "旅游攻略", "历史上的今天", "健康常识"];
-  const baseWord = keywords[randInt(0, keywords.length - 1)];
-  const randomSuffix = Math.random().toString(36).slice(2, 6);
-  let sentence = `${baseWord} ${randomSuffix}`;
-
   const mode = ctx.config.get().search.api || "offline";
   if (mode !== "offline") {
-    const apiCfg = HOT_APIS.find((i) => i.name === mode) || HOT_APIS[0];
-    if (keywordCache.index < 1 || keywordCache.list.length < 1) {
-      const hotName = randArr(apiCfg.hot)[0];
+    const preferred = HOT_APIS.find((i) => i.name === mode) || HOT_APIS[0];
+    const ordered = [preferred, ...HOT_APIS.filter((i) => i !== preferred)];
+    for (const api of ordered) {
+      // 已有可用词池就不再打下一个源，避免每搜一次都发一轮网络请求
+      if (querySources.hasPool(queryCache)) break;
+      const hotName = randArr(api.hot)[0];
       try {
-        const { text } = await httpRequest({ url: apiCfg.url + hotName, ctx });
+        const { text } = await httpRequest({ url: api.url + hotName, ctx });
         if (isJSON(text)) {
           const res = JSON.parse(text);
           if (res.code === 200) {
-            keywordCache.index = 1;
-            keywordCache.list = randArr((res.data || []).map((i) => i.title));
-            if (keywordCache.list.length) {
-              return getRandomSubstring(keywordCache.list[0]);
+            const added = querySources.addSource(queryCache, (res.data || []).map((i) => i.title));
+            if (added > 0) {
+              logger.info(`搜索词源 ${api.name}/${hotName}：新增 ${added} 条`);
+              break;
             }
           }
         }
       } catch (e) {
-        logger.warn(`搜索词获取出错！${e.message}`);
+        logger.warn(`搜索词源 ${api.name} 获取失败: ${e.message}`);
       }
-    } else {
-      keywordCache.index++;
-      if (keywordCache.index > keywordCache.list.length - 1) keywordCache.index = 0;
-      return getRandomSubstring(keywordCache.list[keywordCache.index]);
     }
-    logger.warn("搜索词接口异常，已临时使用随机搜索词");
+    if (querySources.hasPool(queryCache)) return querySources.nextQuery(queryCache);
+    logger.warn("搜索词接口均不可用，已使用本地词库兜底");
   }
-  return sentence;
+  return querySources.nextQuery(queryCache);
 }
 
 /* ============ 签入 ============ */
@@ -1532,10 +1532,16 @@ async function taskSearch(ctx) {
   const source = setBase > 0 ? "用户设定" : ctx.force ? "force" : "随机";
   logger.log("🔍", `服务器进度已同步，本轮计划搜索 ${limit} 次（来源 ${source}，剩余 ${remaining} 次，PC:${search.pc.progress}/${search.pc.max} Mobile:${search.m.progress}/${search.m.max}）`);
   let searched = 0;
+  // 拟人化（2026-11-17）：随机开关打开时，每轮的 PC/Mobile 占比不再固定 60%，
+  // 「设备选择概率恒定」本身就是一条能被拟合出来的行为特征。
+  // 默认关闭 → 行为与旧版完全一致；只改变分流比例，不改变次数与得分逻辑。
+  const pcRatio = normalizeLimits(cfg.limits).random
+    ? humanize.randomRatio({ min: 0.5, max: 0.75 })
+    : 0.6;
 
   while (searched < limit && (search.pc.progress < search.pc.max || search.m.progress < search.m.max)) {
     cancel.throwIfAborted();
-    let pcorm = Math.random() > 0.6 ? false : true; // 60% PC
+    let pcorm = Math.random() > pcRatio ? false : true;
     if (search.pc.progress >= search.pc.max) pcorm = false;
     if (search.m.progress >= search.m.max) pcorm = true;
 

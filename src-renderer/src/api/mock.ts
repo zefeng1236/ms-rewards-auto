@@ -452,12 +452,10 @@ export function createMockApi(): ElectronApi {
       installed: false,
       running: false,
       portReady: false,
-      // 与真实主进程一致：桌面专属任务暂缓上线，界面应显示「测试中」而不是「未安装」
-      delayed: true,
-      note: "该功能正在测试中，暂缓上线",
     }),
+    // 与真实主进程一致：2026-11-18 桌面专属任务闸门已解除
     featureGates: async () => ({
-      desktopApp: { allowed: false, note: "该功能正在测试中，暂缓上线" },
+      desktopApp: { allowed: true, note: "" },
     }),
     openDesktopStore: async () => ({ ok: true }),
 

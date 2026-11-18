@@ -17,10 +17,14 @@
  * WebView2）。驱动方式是给它开 DevTools 协议端口，用 CDP 接管。
  *
  * 【为什么由我们启动它，而不是让用户手动开端口】
- * 端口靠环境变量 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` 开启，而该变量只能在
- * 进程创建时注入。实测 `spawn(exe, [], { env })` 可以直接拉起 MSIX 应用并成功
- * 继承变量（2 秒内端口就绪），所以本模块自己启动/接管/断开，不写注册表，
- * 也不要求用户做任何手工配置。端口只在被我们拉起的那个实例上存在。
+ * 端口靠两条启动时注入的通道开启（见 ensureStarted 的双通道注释）：
+ * 宿主 argv `--edge-webview-switches=` 为主，环境变量
+ * `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` 为兼容兜底。两者都只能在进程创建时
+ * 注入，所以本模块自己启动/接管/断开，不写注册表，也不要求用户手工配置；
+ * 端口只在被我们拉起的那个实例上存在。
+ * ⚠️ 2026-11-15：MSIX 打包应用不保证继承 spawn 进程的环境块，只靠环境变量
+ * 会整体失效（连附加的 user-agent 都不进 WebView2 命令行），argv 通道才是
+ * 稳定可靠的主通道，别再退回单通道。
  *
  * ⚠️ 铁律：清理/点击只能走真实点击。任何「直接导航到任务 URL」的写法都会带上
  * `dmreload=1`，看起来一切正常但永远不计分——这是本项目踩过的最贵的坑。
@@ -98,9 +102,13 @@ const START_TIMEOUT_MS = 30000;
  * 单轮最多做几项。
  *
  * 「一轮做完」的代价是每项都要重启一次应用（见 runDesktopApp 注释），
- * 一天通常 1~3 项，20 足够覆盖且不会失控；它同时充当循环上限的一部分。
+ * 一天通常 1~3 项，10 足够覆盖且不会失控；它同时充当循环上限的一部分。
+ *
+ * ⚠️ 插件规则 runtime.maxItemsPerRun 会覆盖这个值（validate 允许 1~10），
+ *    三处必须同量级：曾经代码写 20、规则写 1，自检只查代码常量全绿，
+ *    实际每轮只做一项（2026-11-07 离线打桩测出来的）。
  */
-const MAX_ITEMS_PER_RUN = 20;
+const MAX_ITEMS_PER_RUN = 10;
 
 /**
  * 微软登录域。Rewards 桌面应用未登录时，主窗口会停在这些域上。
@@ -237,8 +245,22 @@ async function ensureStarted(opts = {}) {
     }
   }
 
-  const child = spawn(exePath, [], {
-    env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--${BROWSER_ARG}` },
+  /**
+   * 双通道注入调试参数（2026-11-15 真机实证）。
+   *
+   * ① argv：--edge-webview-switches=<BROWSER_ARG> 是 WebView2 官方支持的宿主进程
+   *    开关，运行时把它的值追加到 browser process 命令行（文档明确：在
+   *    additionalBrowserArguments 之后处理，最后生效）。
+   * ② env：WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS，旧版/非打包应用依赖它。
+   *
+   * 只靠 ② 在 2026-11-15 突然整体失效：MSIX 打包应用没继承 spawn 进程的环境块，
+   * 实测连 --user-agent=MSRDIAG123 都没进 WebView2 命令行，换端口/加参数/换通道
+   * 全试过都不开端口；改用 ① 后 1.5 秒即就绪。两者同值、last-one-wins 无害，
+   * 保留 ② 作兼容兜底。
+   */
+  const child = spawn(exePath, [`--edge-webview-switches=${BROWSER_ARG}`], {
+    // ⚠️ BROWSER_ARG 自带 "--" 前缀，不能再补一次（曾拼成 ----remote-debugging-port=9333）。
+    env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: BROWSER_ARG },
     detached: true,
     stdio: "ignore",
     // ⚠️ 绝对不要加 windowsHide:true（2026-11-01 踩）：
@@ -367,6 +389,42 @@ async function waitPageReady(page, tries = 16) {
 }
 
 /**
+ * 锁定并等待「应用主窗口」可用（启动期竞态专用，2026-11-07 真机实测）。
+ *
+ * 端口就绪比主窗口渲染早十几秒，这段时间 CDP 里只有预创建的 about:blank
+ * 窗口池，页面对象还会被反复销毁重建。旧写法锁死一个 page 对象等 24s，
+ * 等不到就判「页面已失效」→ 重启应用 → 又撞上同一段启动期，
+ * 连续 3 次必然整轮失败（真机 dryRun 87.8s 后返回「桌面应用未就绪」）。
+ *
+ * 所以这里每轮都**重新枚举页面**，直到拿到真正的主窗口；全程不重启应用。
+ * @returns {Promise<{ page: object, login: boolean } | null>}
+ */
+async function waitForMainWindow(browser, onLog = () => {}, timeoutMs = 45000) {
+  const deadline = Date.now() + timeoutMs;
+  let last = "";
+  while (Date.now() < deadline) {
+    let page = null;
+    try {
+      page = await pickMainPage(browser);
+      if (page) {
+        const st = await page.evaluate(() => ({ ready: document.readyState !== "loading", url: location.href }));
+        if (st && LOGIN_URL_RE.test(st.url)) return { page, login: true };
+        if (st && st.ready && st.url.includes("rewards.bing.com")) return { page, login: false };
+        last = `当前页面 ${String(st && st.url).slice(0, 70)}`;
+      } else {
+        last = "CDP 里暂无可用页面";
+      }
+    } catch (e) {
+      // 页面在启动期被销毁是正常现象，下一轮重新枚举即可
+      last = String((e && e.message) || e).slice(0, 80);
+    }
+    await sleep(1200);
+  }
+  onLog(`等待应用主窗口超时: ${last}`);
+  return null;
+}
+
+/**
  * 判定桌面应用是否已登录，并给出**可直接写进通知**的具体信息。
  *
  * 判据（任一成立即判未登录）：
@@ -425,24 +483,40 @@ async function discoverQuests(page) {
   return navigated ? [] : null;
 }
 
-/** 解析单个 punchcard：返回进度与任务项 */
+/**
+ * 进度文本的多语言兜底：中文「2/5 个任务」、英文「2 of 5 tasks」「2/5 tasks」。
+ * 只认带进度语义词的写法，避免把 HTML 里任意 "1/3" 误当成任务进度。
+ */
+const PROGRESS_RE =
+  /(?:^|[^0-9])(\d{1,2})\s*(?:\/|of)\s*(\d{1,2})\s*(?:个任务|项任务|tasks?|missions?)/i;
+
+/**
+ * 解析单个 punchcard：返回进度与任务项。
+ *
+ * ⚠️ 解析不出进度时**绝不能把 done 写成 0**：复查时前后都是 0 → gained 永远 0，
+ *    于是每个点过的任务都被当成「24 小时冷却期」拉黑一整天（2026-11-07 打桩测试发现）。
+ *    兜底用任务项的 isCompleted 计数，并带 progressKnown=false 让上层换判据。
+ */
 async function readQuest(page, questId) {
   const url = `https://rewards.bing.com/earn/quest/${questId}`;
   const raw = await fetchText(page, url);
   const text = decodePayload(raw);
-  const prog = text.match(/>(\d)\/(\d{1,2}) 个任务</);
+  // 中文页面的精确写法优先（实测稳定），其余交给多语言正则
+  const prog = text.match(/>(\d)\/(\d{1,2}) 个任务</) || text.match(PROGRESS_RE);
   const items = [...text.matchAll(ITEM_PATTERN)].map((m) => ({
     aria: m[1],
     href: decodeURIComponent(m[2]),
     completed: m[3] === "true",
     locked: m[4] === "true",
   }));
+  const completedItems = items.filter((i) => i.completed).length;
   return {
     questId,
     url,
-    done: prog ? Number(prog[1]) : 0,
-    total: prog ? Number(prog[2]) : items.length,
+    done: prog ? Number(prog[1]) : completedItems,
+    total: prog ? Number(prog[2]) : Math.max(items.length, completedItems),
     items,
+    progressKnown: Boolean(prog),
   };
 }
 
@@ -450,6 +524,23 @@ async function readQuest(page, questId) {
 function formOf(href) {
   const m = String(href || "").match(/[?&]form=([A-Za-z0-9]+)/);
   return m ? m[1] : "";
+}
+
+/**
+ * punchcard 的「最后领取阶段」= 兑换页里的领奖项。
+ *
+ * 真机连续三天（2026-11-07 / 11-08 / 11-12）实证：`ML2Y3S`
+ * 「领取你的 Super Duolingo 奖励」指向 `rewards.bing.com/redeem/sku/...`，
+ * 自动点击只打开兑换页、进度永远不涨，随后被当成「24 小时冷却期」当天拉黑，
+ * 于是每天白跑一分钟、次日照旧重试。这一步需要在兑换页人工确认，
+ * 自动化做不了 → **直接跳过并在汇总里说清楚**，不点击、不进冷却名单。
+ *
+ * 判据用 URL 而不是中文文案（活动会换语言 / 换措辞，兑换路径不变）。
+ */
+// ⚠️ 末尾不要再写 \/ —— 会和 selfcheck 的 stripJsComments 行注释规则撞车（\// 被当成注释起点）
+const MANUAL_CLAIM_RE = /rewards\.bing\.com\/redeem\/sku/i;
+function needsManualClaim(href) {
+  return MANUAL_CLAIM_RE.test(String(href || ""));
 }
 
 /**
@@ -471,6 +562,8 @@ async function executeQuest(page, quest, opts = {}) {
     (i) =>
       !i.completed &&
       !i.locked &&
+      // 兑换类「最后领取」必须人工确认：这里也要挡住，防止别的调用路径误点
+      !needsManualClaim(i.href) &&
       !skipForms.has(formOf(i.href)) &&
       (!onlyForm || formOf(i.href) === onlyForm)
   );
@@ -478,7 +571,8 @@ async function executeQuest(page, quest, opts = {}) {
 
   const clicked = [];
   // 连续渲染失败计数：应用跑久了会进入「详情页只渲染外壳」的坏状态，
-  // 重载救不回来但重启应用可以。连续 2 次就抛信号，交给上层重启重试。
+  // 重载救不回来但重启应用可以。连续 2 次就返回 renderBroken，
+  // 交给上层直接放弃该项（原来写了抛 RENDER_BROKEN 的分支却从没抛过，是死代码）。
   let renderFails = 0;
   for (const item of todo.slice(0, maxItems)) {
     const form = formOf(item.href);
@@ -603,7 +697,6 @@ async function executeQuest(page, quest, opts = {}) {
       await page.waitForTimeout(VERIFY_WAIT_MS).catch(() => {});
       clicked.push({ aria: item.aria, form });
     } catch (e) {
-      if (e && e.code === "RENDER_BROKEN") throw e; // 交给上层重启重试，不当作单项失败
       onLog(`失败: ${item.aria} — ${String(e.message || e).slice(0, 100)}`);
     }
   }
@@ -615,10 +708,25 @@ async function executeQuest(page, quest, opts = {}) {
   } catch {}
   // gained 才是真正到账的项数（点到了 ≠ 计入了）。
   // 用「完成后数 - 点击前数」算，别用 clicked.length 充数 —— 那会把没到账的也算成得分。
-  const gained = Math.max(0, (after.done || 0) - (quest.done || 0));
+  const byProgress = Math.max(0, (after.done || 0) - (quest.done || 0));
+  // 多语言 / 无进度文本时 done 是兜底值，前后相减不可靠；
+  // 「可做项少了几个」不依赖任何文案，是这种情况下更稳的到账判据。
+  const todoBefore = quest.items.filter((i) => !i.completed).length;
+  const todoAfter = (after.items || []).filter((i) => !i.completed).length;
+  const byItems = Math.max(0, todoBefore - todoAfter);
+  const gained =
+    quest.progressKnown === false || after.progressKnown === false ? byItems : byProgress;
   // 点了但整体没涨 → 这些项大概率在冷却期（或该任务不重复计），交给上层当天拉黑
   const failedForms = gained === 0 && clicked.length > 0 ? clicked.map((c) => c.form) : [];
-  return { done: after.done, total: after.total, gained, clicked, renderFails, failedForms };
+  return {
+    done: after.done,
+    total: after.total,
+    gained,
+    clicked,
+    renderFails,
+    renderBroken: renderFails >= 2,
+    failedForms,
+  };
 }
 
 /**
@@ -660,11 +768,16 @@ async function runDesktopApp(ctx, opts = {}) {
   // 规则可远程热更新（见 src/plugin-rules.js）：这里只取「行为参数」，代码路径不变
   const runtimeRule = (rules && rules.runtime) || {};
   const renderWaitMs = Number(runtimeRule.renderWaitMs) || RENDER_WAIT_MS;
+  // runtime.restartMaxTimes 原本只写在规则里没接线：同一项最多给几次机会（默认 1 次重启 → 2 次机会）
+  const restartMaxTimes = Number.isFinite(Number(runtimeRule.restartMaxTimes))
+    ? Math.max(0, Math.min(5, Number(runtimeRule.restartMaxTimes)))
+    : 1;
+  const maxAttemptsPerItem = restartMaxTimes + 1;
   const cfg = ctx && ctx.config ? ctx.config.get() : {};
   const tasksCfg = (cfg && cfg.tasks) || {};
   if (!tasksCfg.desktopApp) return { status: "skip", disabled: true };
-  // 发布闸门（2026-11-04）：功能暂缓上线。即使老用户的配置里 desktopApp 还是 true，
-  // 这里也必须挡住 —— 否则「界面灰了但任务照跑」，用户看到的和实际发生的不一致。
+  // 发布闸门（2026-11-18 已解除，保留作紧急回滚）：闸门关时即使老用户配置里
+  // desktopApp 还是 true 也必须挡住，否则「界面灰了但任务照跑」。
   if (!require("./feature-gates").desktopAppGate().allowed) {
     return { status: "skip", reason: "功能暂缓上线", delayed: true };
   }
@@ -678,7 +791,10 @@ async function runDesktopApp(ctx, opts = {}) {
   const skipForms = loadSkipToday(); // 今日冷却期任务
   const giveUp = new Set(); // 本轮试过两次仍失败的项，防止死循环
   const attempts = new Map(); // form → 本轮尝试次数
-  const acc = { gained: 0, clicked: 0, done: 0, total: 0, todo: 0 };
+  const renderFailRounds = new Map(); // form → 累计「页面只渲染外壳」的次数
+  const acc = { gained: 0, clicked: 0, done: 0, total: 0, todo: 0, manual: 0 };
+  let handled = 0; // 本轮已处理的项数（含「点了没到账」），用于日志编号
+  let manualLogged = false; // 「需人工领取」提示只打一次，别每轮刷屏
   let restarts = 0; // 已重启次数（0 = 复用现有实例，还没重启过）
   let navFails = 0; // 连续「应用未就绪」次数
   let pageFails = 0; // 连续「页面连上就死」次数（重启竞态），别无限重连
@@ -691,7 +807,14 @@ async function runDesktopApp(ctx, opts = {}) {
     // 第二次及以后都先重启：应用一坏全坏，只有重启能拿到干净实例
     if (restarts > 0) {
       await stop().catch(() => {});
-      await sleep(1500);
+      // ⚠️ 旧实例的 WebView2 子进程会短暂残留调试端口：ensureStarted 只看端口是否通，
+      //    会把「正在退出」的实例当成可用连上去，页面随即被销毁（2026-11-07 真机）。
+      //    先等端口真正消失，再交给 ensureStarted 拉起干净实例。
+      for (let i = 0; i < 12; i++) {
+        if (!(await isPortReady())) break;
+        await sleep(500);
+      }
+      await sleep(800);
     }
 
     const boot = await ensureStarted({ allowRestart: true });
@@ -714,13 +837,22 @@ async function runDesktopApp(ctx, opts = {}) {
     }
 
     try {
-      const page = await pickMainPage(browser);
-      if (!page) {
-        restarts++;
+      // ⚠️ 应用刚启动时主窗口还没渲染出来，CDP 里只有会被反复销毁的 about:blank。
+      //    waitForMainWindow 会重新枚举页面直到主窗口出现；拿不到也**不要重启应用**，
+      //    否则把刚起来的实例杀掉，又撞一遍启动期竞态（2026-11-07 真机连败 3 次）。
+      const acquired = await waitForMainWindow(browser, onLog);
+      if (!acquired) {
+        pageFails++;
+        if (pageFails >= 3) {
+          onLog("桌面应用连续 3 次拿不到主窗口，结束本轮");
+          break;
+        }
+        onLog("尚未拿到主窗口，重新连接 CDP（不重启应用）");
+        await sleep(1500);
         continue;
       }
-      const ready = await waitPageReady(page);
-      if (ready === "login") {
+      const { page, login } = acquired;
+      if (login) {
         // 桌面应用自己没登录 —— 本模块无能为力，直接跳过并带上可读原因，
         // 绝不因此影响本项目其它任务（它们用的是本项目浏览器，与这里无关）。
         const det = await detectSignIn(page);
@@ -730,18 +862,6 @@ async function runDesktopApp(ctx, opts = {}) {
           reason: "Rewards 桌面应用未登录",
           detail: det.detail,
         };
-      }
-      if (ready === false) {
-        // 页面在等待中被销毁：连到了正在退出的实例，重连即可。
-        // 但别无限重连 —— 连续 3 次说明应用本身起不来。
-        pageFails++;
-        if (pageFails >= 3) {
-          onLog("桌面应用连续 3 次连上即失效，结束本轮");
-          break;
-        }
-        onLog("桌面应用页面已失效，重新连接");
-        restarts++;
-        continue;
       }
       pageFails = 0;
 
@@ -786,15 +906,25 @@ async function runDesktopApp(ctx, opts = {}) {
 
       const isTodo = (i) => {
         const f = formOf(i.href);
-        return !i.completed && !i.locked && !skipForms.has(f) && !giveUp.has(f);
+        // 兑换类「最后领取」不计入可做项：点了永远不到账，交给人工
+        return !i.completed && !i.locked && !needsManualClaim(i.href) &&
+          !skipForms.has(f) && !giveUp.has(f);
       };
       // 每轮覆盖（不是累加）：done/total 是「当前总进度」，累加会虚高
       acc.done = all.reduce((n, q) => n + (q.done || 0), 0);
       acc.total = all.reduce((n, q) => n + (q.total || 0), 0);
       acc.todo = all.reduce((n, q) => n + q.items.filter(isTodo).length, 0);
+      acc.manual = all.reduce(
+        (n, q) => n + q.items.filter((i) => !i.completed && needsManualClaim(i.href)).length,
+        0
+      );
+      if (acc.manual > 0 && !manualLogged) {
+        manualLogged = true;
+        onLog(`跳过 ${acc.manual} 项「最后领取」兑换任务：需人工在应用里领取，自动点击不计分`);
+      }
 
       if (dryRun) {
-        return { status: "skip", reason: "扫描模式", quests: all, todo: acc.todo };
+        return { status: "skip", reason: "扫描模式", quests: all, todo: acc.todo, manual: acc.manual };
       }
 
       // 选一项来做：按 quest 顺序，各取第一个可做项
@@ -809,8 +939,10 @@ async function runDesktopApp(ctx, opts = {}) {
       if (!target) break; // 没有可做项了
 
       const form = formOf(target.item.href);
-      // 不写「x/y」进度：y（剩余可做数）每轮都会重算，跳过一项后会出现 [2/1] 这种怪显示
-      onLog(`第 ${acc.gained + 1} 项: ${target.item.aria || form}`);
+      // 不写「x/y」进度：y（剩余可做数）每轮都会重算，跳过一项后会出现 [2/1] 这种怪显示。
+      // 编号也不能用 gained：点了没到账时 gained 不涨，下一项会又显示「第 1 项」（真机 11-07）。
+      handled++;
+      onLog(`第 ${handled} 项: ${target.item.aria || form}`);
 
       const r = await executeQuest(page, target.quest, {
         onLog,
@@ -824,6 +956,18 @@ async function runDesktopApp(ctx, opts = {}) {
         acc.gained += r.gained;
         acc.clicked += (r.clicked || []).length;
         restarts++; // 下一项需要干净实例
+        continue;
+      }
+
+      // 连续「页面只渲染外壳」：不是选择器问题，是应用进了坏状态。
+      // 跨轮累计（单项 executeQuest 一次只做一项，renderBroken 单轮内通常到不了 2），
+      // 到 2 次就放弃该项，别再花两分钟重启一次。
+      const rf = (renderFailRounds.get(form) || 0) + (r.renderFails || 0);
+      if (r.renderFails || r.renderBroken) renderFailRounds.set(form, rf);
+      if (r.renderBroken || rf >= 2) {
+        giveUp.add(form);
+        onLog(`页面连续 ${rf} 次渲染失败，本轮放弃: ${target.item.aria || form}`);
+        restarts++;
         continue;
       }
 
@@ -841,7 +985,7 @@ async function runDesktopApp(ctx, opts = {}) {
       // 压根没点成（渲染失败 / 卡片不存在）：重启后允许再试一次，两次都败就放弃该项
       const n = (attempts.get(form) || 0) + 1;
       attempts.set(form, n);
-      if (n >= 2) {
+      if (n >= maxAttemptsPerItem) {
         giveUp.add(form);
         onLog(`该项尝试 ${n} 次仍未点成，本轮放弃: ${target.item.aria || form}`);
       } else {
@@ -868,7 +1012,7 @@ async function runDesktopApp(ctx, opts = {}) {
 
   if (dryRun) {
     // 走到这里说明第一轮就没拿到扫描结果（应用未就绪）
-    return { status: "retry", reason: "桌面应用未就绪", quests: scan || [], todo: 0 };
+    return { status: "retry", reason: "桌面应用未就绪", quests: scan || [], todo: 0, manual: 0 };
   }
 
   // 每项 10 分是这类 punchcard 的固定值（weekly 70 分 = 7 项 × 10）。
@@ -880,6 +1024,7 @@ async function runDesktopApp(ctx, opts = {}) {
     points: acc.gained * 10,
     gained: acc.gained,
     clicked: acc.clicked,
+    manual: acc.manual,
   };
   if (acc.gained === 0 && acc.clicked === 0) {
     return { ...base, reason: "今天没有可做的桌面任务" };
@@ -895,6 +1040,7 @@ module.exports = {
   CDP_PORT,
   CDP_BASE,
   BROWSER_ARG,
+  MAX_ITEMS_PER_RUN,
   PACKAGE_NAME,
   EXE_NAME,
   // 探测与生命周期
@@ -912,8 +1058,10 @@ module.exports = {
   // 登录态（便于单独验证判定逻辑）
   detectSignIn,
   waitPageReady,
+  waitForMainWindow,
   pickMainPage,
   // 内部工具的导出（便于单独验证解析逻辑）
   decodePayload,
   formOf,
+  needsManualClaim,
 };

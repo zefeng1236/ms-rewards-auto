@@ -1,6 +1,7 @@
 const logger = require("./logger");
 const { httpRequest } = require("./http");
 const ipLookup = require("./ip-lookup");
+const riskSignals = require("./risk-signals");
 
 const UA_PC = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0";
 const UA_MOBILE = "Mozilla/5.0 (Linux; Android 12; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36 EdgA/130.0.0.0";
@@ -414,6 +415,9 @@ async function getRewardsInfo(ctx) {
     todayTotal,
     monthEarn,
     boostActivated: !!pc.boostActivated,
+    // 风控信号：earn 页 RSC 里可能带 serpbotscore / userWarnings。
+    // 复用这次已拉到的 HTML 顺手解析，不为检查风控额外发一次请求（2026-11-17）。
+    risk: riskSignals.parseRiskSignals(res.text),
   };
   logger.info(
     `积分信息: 总积分=${info.balance}, PC搜索=${info.pc.progress}/${info.pc.max}, 移动搜索=${info.m.progress}/${info.m.max}, 今日已得=${info.todayTotal}, 本月累计=${info.monthEarn}${info.boostActivated ? ", 2倍搜索已激活" : ""}`

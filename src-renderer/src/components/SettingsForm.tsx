@@ -174,7 +174,8 @@ export function SettingsForm({
   const patchSchedule = (p: Partial<AppConfig["schedule"]>) =>
     onChange({ schedule: p } as DeepPartial<AppConfig>);
 
-  // 读发布闸门：桌面专属任务暂缓上线时，入口置灰 + 标「测试中」
+  // 读发布闸门：闸门关闭时入口置灰 + 标「测试中」；开启时正常可用。
+  // 2026-11-18 闸门已解除，note 为空，兜底文案也不能再写「暂缓上线」。
   useEffect(() => {
     let alive = true;
     api
@@ -183,7 +184,7 @@ export function SettingsForm({
         if (!alive) return;
         setDeskDelayed({
           delayed: !g?.desktopApp?.allowed,
-          note: g?.desktopApp?.note || "该功能正在测试中，暂缓上线",
+          note: g?.desktopApp?.note || "",
         });
       })
       .catch(() => {});

@@ -166,6 +166,17 @@ const CREDITS: Credit[] = [
     desc: "发布《MS积分商城签到（改进版）-分离获取授权》，「授权与任务分离」的思路被本项目采用",
     links: [{ label: "ScriptCat", href: "https://scriptcat.org/zh-CN/users/207134" }],
   },
+  {
+    key: "hs2049",
+    name: "怀沙",
+    initial: "怀",
+    role: "参考项目",
+    desc: "《微软积分助手》（MRS助手 / microsoft-rewards-script 中文定制版）作者。本软件新版 Rewards 活动层（网页 PunchCards、连胜保护、视觉搜索、Next.js Server Action 上报）的接口形态与实现思路参考自他的定制版",
+    links: [
+      { label: "作者主页", href: "https://hs2049.cn/" },
+      { label: "项目文档", href: "https://kdocs.cn/l/cv6w4QJtGEfn/" },
+    ],
+  },
 ];
 
 /**
@@ -444,8 +455,9 @@ export function About() {
           </div>
 
           <div className="hint" style={{ marginTop: 14 }}>
-            以上脚本均服务于 MS Rewards 场景，版权归各自作者所有。本项目仅在接口调用方式上
-            参考其实现，未包含其源代码。
+            以上脚本均服务于 MS Rewards 场景，版权归各自作者所有。本项目参考其接口调用方式
+            与实现思路并在此基础上独立实现；新版活动层另参考了怀沙定制版的端点与 Server
+            Action 上报格式，在此特别致谢。相关项目均不随本软件分发。
           </div>
         </AppCard>
       </div>
