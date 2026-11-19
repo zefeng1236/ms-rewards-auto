@@ -243,10 +243,40 @@ async function main() {
 
   await test("⑲ runner 在跑桌面任务前先过空闲门禁，延后不算失败", async () => {
     assert.match(runnerSrc, /readUserIdleMinutes\(\)/);
-    assert.match(runnerSrc, /shouldDeferForIdle\(idle, eff\.idleGateMinutes\)/);
+    assert.match(runnerSrc, /shouldDeferForIdle\(idle, idleMinutes\)/);
     assert.match(runnerSrc, /deferred: true/);
     assert.match(runnerSrc, /延后\(用户在使用电脑，空闲时自动跑\)/);
     assert.equal(circuit.isFailure({ status: "skip", deferred: true, reason: "用户正在使用电脑" }), false);
+  });
+
+  await test("⑳ normalizeIdleMinutes 收口 1~60，非法回落 5", async () => {
+    assert.equal(runtime.normalizeIdleMinutes(5), 5);
+    assert.equal(runtime.normalizeIdleMinutes(0), 1);
+    assert.equal(runtime.normalizeIdleMinutes(999), 60);
+    assert.equal(runtime.normalizeIdleMinutes("abc"), 5);
+    assert.equal(runtime.normalizeIdleMinutes(undefined), 5);
+    assert.equal(runtime.normalizeIdleMinutes(7.9), 7);
+  });
+
+  await test("㉑ 桌面运行冷却：标记后冷却期内为真，过期/复位为假", async () => {
+    runtime.resetDesktopCooldown();
+    const t0 = 1_700_000_000_000;
+    assert.equal(runtime.desktopInCooldown(t0), false);
+    runtime.markDesktopRun(t0);
+    assert.equal(runtime.desktopInCooldown(t0 + 60_000), true);
+    assert.equal(runtime.desktopInCooldown(t0 + runtime.DESKTOP_RUN_COOLDOWN_MS + 1), false);
+    runtime.resetDesktopCooldown();
+    assert.equal(runtime.desktopInCooldown(t0 + 60_000), false);
+  });
+
+  await test("㉒ runner 两种模式 + forceDesktop + 执行完 stop() 结束进程", async () => {
+    assert.match(runnerSrc, /dt\.mode === "notify" \? "notify" : "auto"/);
+    assert.match(runnerSrc, /opts\.forceDesktop/);
+    assert.match(runnerSrc, /desktopInCooldown\(Date\.now\(\)\)/);
+    assert.match(runnerSrc, /markDesktopRun\(Date\.now\(\)\)/);
+    assert.match(runnerSrc, /await desktopApp\.stop\(\)/);
+    // notify 模式的延后文案存在
+    assert.match(runnerSrc, /通知授权模式/);
   });
 
   console.log(lines.join("\n"));

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, Menu, Tray, dialog, nativeImage, screen } = require("electron");
+const { app, BrowserWindow, ipcMain, shell, Menu, Tray, dialog, nativeImage, screen, Notification } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
@@ -29,6 +29,8 @@ const ensureDeps = require("./ensure-deps");
 const fpBrowser = require("./fingerprint-browser");
 const windowsHello = require("./windows-hello");
 const desktopApp = require("./desktop-app");
+const desktopRuntime = require("./desktop-runtime");
+const desktopIdle = require("./desktop-idle");
 const appUpdate = require("./app-update");
 const appearance = require("./appearance");
 const uapi = require("./uapi");
@@ -65,6 +67,8 @@ let running = false;
  */
 let taskRunning = false;
 let daemonStop = null;
+/** 桌面任务空闲触发器停止函数（2026-11-19，auto/notify 两方案） */
+let desktopIdleStop = null;
 let tray = null;
 /** 托盘「退出」时置位，允许窗口真正关闭（否则会被 close 拦截到托盘） */
 let forceQuit = false;
@@ -910,6 +914,136 @@ function showWindow() {
 }
 
 /**
+ * 桌面任务空闲触发（2026-11-19 用户要求「别打断工作」，两种方案）。
+ *
+ * 桌面任务驱动的是 Rewards 应用自己的会话、与本项目账户登录态无关，本质是「机器级」，
+ * 所以这里取**第一个开启 desktopApp 的启用账户**作代表：用它的 desktopTask 配置
+ * （mode/idleMinutes），跑一次即可（同一台机器多个账户开着也只跑一次，避免重复弹窗）。
+ *
+ * @returns {{enabled:boolean, mode?:string, idleMinutes?:number, accountId?:string}}
+ */
+function desktopIdleConfig() {
+  let list = [];
+  try {
+    list = accounts.list().filter((a) => a.enabled);
+  } catch {
+    return { enabled: false };
+  }
+  for (const a of list) {
+    try {
+      const cfg = accounts.context(a.id).config.get();
+      if (cfg && cfg.tasks && cfg.tasks.desktopApp) {
+        const dt = cfg.desktopTask || {};
+        return {
+          enabled: true,
+          mode: dt.mode === "notify" ? "notify" : "auto",
+          idleMinutes: desktopRuntime.normalizeIdleMinutes(dt.idleMinutes),
+          accountId: a.id,
+        };
+      }
+    } catch {
+      /* 单账户读配置失败不影响其它账户 */
+    }
+  }
+  return { enabled: false };
+}
+
+/**
+ * 真正执行一次桌面任务（空闲自动 / 通知授权共用）。
+ * forceDesktop 绕过门禁与冷却；runDesktopTask 跑完会 stop() 结束 Rewards 进程。
+ */
+async function executeDesktopIdleRun(authorized) {
+  if (running) return; // 有任务在跑，不插队
+  const info = desktopIdleConfig();
+  if (!info.enabled || !info.accountId) return;
+  let ctx;
+  try {
+    ctx = accounts.context(info.accountId);
+  } catch {
+    return;
+  }
+  setRunning(true);
+  try {
+    logger.info(`桌面任务空闲触发（${authorized ? "通知授权" : "自动"}，账户「${ctx.name}」）`);
+    const r = await runner.runDesktopTask(ctx, { forceDesktop: true });
+    const line = runner.formatDesktopLine(r);
+    logger.info(`桌面任务空闲触发结果: ${line}`);
+    // 执行完给用户一条系统通知（进程已被 runDesktopTask 结束），不用开软件就能看到结果
+    try {
+      if (Notification.isSupported()) {
+        const n = new Notification({ title: "桌面任务已执行", body: `${line}（Rewards 应用已关闭）`, silent: false });
+        n.on("click", () => showWindow());
+        n.show();
+      }
+    } catch {
+      /* 通知失败不影响结果 */
+    }
+  } catch (e) {
+    logger.warn(`桌面任务空闲触发失败: ${String((e && e.message) || e).slice(0, 100)}`);
+  } finally {
+    setRunning(false);
+  }
+}
+
+/** notify 方案：空闲达标时发系统通知，点击 → 打开软件并授权执行。 */
+function sendDesktopIdleNotification() {
+  try {
+    if (!Notification.isSupported()) {
+      logger.warn("系统不支持通知，notify 方案退化为自动执行");
+      void executeDesktopIdleRun(false);
+      return;
+    }
+    const n = new Notification({
+      title: "Rewards 桌面任务待执行",
+      body: "检测到您已离开电脑。点击打开软件并授权执行桌面专属任务（执行完会自动关闭 Rewards 应用）。",
+      silent: false,
+    });
+    n.on("click", () => {
+      showWindow();
+      void executeDesktopIdleRun(true);
+    });
+    n.show();
+    logger.info("桌面任务空闲达标（notify 模式），已发送系统通知等待授权");
+  } catch (e) {
+    logger.warn(`发送桌面任务通知失败: ${String((e && e.message) || e).slice(0, 80)}`);
+  }
+}
+
+/** 启动空闲触发器（幂等：先停后起）。仅桌面版；随 startBackgroundWork 启动。 */
+function startDesktopIdleWatcher() {
+  if (desktopIdleStop) {
+    desktopIdleStop();
+    desktopIdleStop = null;
+  }
+  // Windows 通知需要 AppUserModelID 才能正常显示/点击
+  try {
+    if (process.platform === "win32") app.setAppUserModelId("com.hermlt.msrewards");
+  } catch {
+    /* 忽略 */
+  }
+  const watcher = desktopIdle.createDesktopIdleWatcher({
+    readIdle: () => desktopRuntime.readUserIdleMinutes(),
+    getConfig: () => desktopIdleConfig(),
+    isBusy: () => running,
+  });
+  const timer = setInterval(() => {
+    let d;
+    try {
+      d = watcher.tick();
+    } catch (e) {
+      logger.warn(`桌面空闲触发巡检出错: ${String((e && e.message) || e).slice(0, 80)}`);
+      return;
+    }
+    if (!d || d.action === "none") return;
+    if (d.action === "notify") sendDesktopIdleNotification();
+    else if (d.action === "run") void executeDesktopIdleRun(false);
+  }, 30 * 1000);
+  if (timer.unref) timer.unref();
+  desktopIdleStop = () => clearInterval(timer);
+  logger.info("桌面任务空闲触发器已启动（auto=空闲自动跑 / notify=空闲发通知授权跑）");
+}
+
+/**
  * 启动后台工作：自动运行守护、卡片周期推送、Chromium 缺失时后台安装。
  * 只在首次激活时执行一次（backgroundStarted 守卫），避免重复启动定时器。
  */
@@ -946,6 +1080,10 @@ function startBackgroundWork() {
 
   // 启动账户数据周期推送（卡片自动刷新，无需手动点按钮）
   if (!IS_SMOKE) startAutoPush();
+
+  // 桌面任务空闲触发器（auto / notify 两方案，2026-11-19）。仅桌面版；
+  // 是否真的触发由 desktopIdleConfig 逐次巡检判定（未开启 desktopApp 时不动作）。
+  if (!IS_SMOKE) startDesktopIdleWatcher();
 
   // 启动时自动检测 Chromium，未就绪则后台安装（不阻塞 UI）
   if (!IS_SMOKE && !browser.isChromiumReady()) {
@@ -2775,6 +2913,7 @@ app.whenReady().then(() => {
 
 app.on("window-all-closed", () => {
   if (daemonStop) { daemonStop(); daemonStop = null; }
+  if (desktopIdleStop) { desktopIdleStop(); desktopIdleStop = null; }
   stopAutoPush();
   app.quit();
 });

@@ -129,6 +129,31 @@ function shouldDeferForIdle(idleMinutes, gateMinutes) {
   return Number(idleMinutes) < Number(gateMinutes);
 }
 
+/** 把 desktopTask.idleMinutes 收口成 1~60 的整数；非法回落默认 5（用户要的阈值）。 */
+function normalizeIdleMinutes(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 5;
+  return Math.min(60, Math.max(1, Math.floor(n)));
+}
+
+/**
+ * 桌面任务运行冷却（2026-11-19）。
+ * 空闲触发器与账户定时都可能调 runDesktopTask，用共享冷却防止同一台机器短时间双跑
+ * （每项都会重启 Rewards 应用，双跑既浪费又反复弹窗）。进程内状态，重启即清零。
+ */
+const DESKTOP_RUN_COOLDOWN_MS = 30 * 60 * 1000;
+let lastDesktopRunAt = 0;
+function markDesktopRun(nowMs) {
+  lastDesktopRunAt = Number(nowMs) > 0 ? Number(nowMs) : Date.now();
+}
+function desktopInCooldown(nowMs, cooldownMs = DESKTOP_RUN_COOLDOWN_MS) {
+  const now = Number(nowMs) > 0 ? Number(nowMs) : Date.now();
+  return lastDesktopRunAt > 0 && now - lastDesktopRunAt < cooldownMs;
+}
+function resetDesktopCooldown() {
+  lastDesktopRunAt = 0;
+}
+
 module.exports = {
   DEFAULTS,
   num,
@@ -137,4 +162,9 @@ module.exports = {
   parseUserIdleMinutes,
   readUserIdleMinutes,
   shouldDeferForIdle,
+  normalizeIdleMinutes,
+  DESKTOP_RUN_COOLDOWN_MS,
+  markDesktopRun,
+  desktopInCooldown,
+  resetDesktopCooldown,
 };

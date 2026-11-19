@@ -44,6 +44,15 @@ const GLOBAL_DEFAULTS = {
     // 阈值补领：每天首次运行 / 收工时各读一次「可领取」，≥ 此值就领。0 = 关闭
     threshold: 300,
   },
+  /**
+   * 桌面应用专属任务触发方式（2026-11-19）。⚠️ 必须与 config.js DEFAULTS.desktopTask、
+   * types/index.ts AppConfig.desktopTask、api/mock.ts 逐字段对齐（四处缺一 → 白屏）。
+   * auto=空闲达标自动跑；notify=空闲达标发系统通知、点通知授权跑。执行完都结束 Rewards 进程。
+   */
+  desktopTask: {
+    mode: "auto",   // auto | notify
+    idleMinutes: 5, // 空闲多少分钟后触发（1~60）
+  },
   region: {
     lock: true,
     ipProvider: "bing",

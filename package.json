@@ -25,6 +25,7 @@
     "test:safety": "node scripts/test-account-safety.js",
     "test:circuit": "node scripts/test-desktop-circuit.js",
     "test:rules": "node scripts/test-desktop-rules.js",
+    "test:idle": "node scripts/test-desktop-idle.js",
     "verify:pack": "node scripts/verify-pack.js",
     "verify:release": "node scripts/verify-release.js",
     "verify:release:selftest": "node scripts/verify-release-selftest.js",

@@ -118,6 +118,19 @@ export interface AppConfig {
      */
     threshold: number;
   };
+  /**
+   * 桌面应用专属任务的触发方式（2026-11-19，仅桌面版生效）。
+   *
+   * 独立成段而不并进 tasks.desktopApp（那是 boolean 开关，改对象会破坏存量配置）。
+   * auto = 空闲达标自动执行；notify = 空闲达标发系统通知、点通知授权执行。
+   * 两种模式执行完都会结束 Rewards 进程。
+   */
+  desktopTask: {
+    /** auto = 空闲自动跑；notify = 空闲发通知、点通知授权跑 */
+    mode: "auto" | "notify";
+    /** 键鼠空闲多少分钟后触发（1~60），默认 5 */
+    idleMinutes: number;
+  };
   region: {
     lock: boolean;
     /** 出口 IP / 归属地查询服务 */

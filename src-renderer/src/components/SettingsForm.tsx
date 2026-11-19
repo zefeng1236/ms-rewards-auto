@@ -71,6 +71,12 @@ const CLAIM_MODE_OPTIONS: SelectOption[] = [
   { label: "每天定时（到点就跑一次）", value: "daily" },
 ];
 
+// 桌面任务触发方式（2026-11-19 用户定的两种方案）。仅桌面版生效。
+const DESKTOP_TASK_MODE_OPTIONS: SelectOption[] = [
+  { label: "空闲自动执行（默认）", value: "auto" },
+  { label: "空闲时发通知，点通知授权执行", value: "notify" },
+];
+
 const IP_PROVIDER_OPTIONS: SelectOption[] = [  { label: "Bing 首页判定（默认，与MS Rewards 同源）", value: "bing" },
   { label: "ip.sb（备用，全球 CDN、标准国家码）", value: "ipsb" },
   { label: "太平洋 IP 库（国内）", value: "pconline" },
@@ -212,6 +218,23 @@ export function SettingsForm({
         setDeskMissing(true);
         return; // 开关保持关闭
       }
+      // 检测到已安装 → 二次确认（2026-11-19 用户要求）：这是实验性功能，
+      // 必须明确告知风险（含账号封禁）后才允许开启。取消则开关保持关闭。
+      const ok = await Modal.confirm({
+        title: "开启桌面应用专属任务（实验性功能）",
+        content:
+          "这是实验性功能，将自动驱动微软 Rewards 桌面应用完成「必须在本应用内完成」的活动。\n\n" +
+          "可能的风险：\n" +
+          "· 自动化操作可能违反微软服务条款，存在账号被限制甚至封禁的风险；\n" +
+          "· 运行时会启动 / 重启 Rewards 应用，执行完成后自动关闭该进程；\n" +
+          "· 默认只在您离开电脑（键鼠空闲）时触发，尽量避免打断工作。\n\n" +
+          "请确认您已了解并愿意承担上述风险。确定要开启吗？",
+        okText: "我了解风险，开启",
+        cancelText: "取消",
+        danger: true,
+        locale: "zh-CN",
+      });
+      if (!ok) return; // 用户取消 → 开关保持关闭
       onChange({ tasks: { desktopApp: true } } as DeepPartial<AppConfig>);
     } catch {
       // 探测失败也按未安装处理：至少能让用户看到「去哪装」，比静默失败好
@@ -315,6 +338,15 @@ export function SettingsForm({
     return Math.min(5000, Math.max(0, Math.floor(n)));
   })();
 
+  // 桌面任务触发方式 / 空闲阈值（2026-11-19）。旧配置可能缺 desktopTask 段，逐字段兜底。
+  const desktopTaskMode: "auto" | "notify" = value.desktopTask?.mode === "notify" ? "notify" : "auto";
+  const desktopIdleMinutes = (() => {
+    const raw: unknown = value.desktopTask?.idleMinutes;
+    const n = Number(raw);
+    if (raw === undefined || raw === null || raw === "" || !Number.isFinite(n)) return 5;
+    return Math.min(60, Math.max(1, Math.floor(n)));
+  })();
+
   return (
     <div className="settings-form">
       <Section title="任务开关">
@@ -330,8 +362,15 @@ export function SettingsForm({
                     ? "正在检测 Rewards 桌面应用…"
                     : hint
               }
-              // 暂缓上线时也显示「测试中」徽标（不是隐藏入口 —— 藏起来会让人以为没这功能）
-              badge={key === "desktopApp" && deskDelayed.delayed ? "测试中 · 延迟上线" : undefined}
+              // 桌面任务恒挂徽标：闸门关闭时「测试中 · 延迟上线」，否则「实验性功能」
+              // （2026-11-19 用户要求标注实验性）。不隐藏入口 —— 藏起来会让人以为没这功能。
+              badge={
+                key === "desktopApp"
+                  ? deskDelayed.delayed
+                    ? "测试中 · 延迟上线"
+                    : "实验性功能"
+                  : undefined
+              }
               // 暂缓上线期间一律显示为关闭：哪怕老配置里是 true，实际也不会执行
               // （runner / desktop-app 都按闸门跳过）。显示「开启 + 禁用」会让人以为它还在跑。
               checked={
@@ -343,6 +382,44 @@ export function SettingsForm({
             />
           ))}
         </div>
+
+        {/* —— 桌面任务触发方式（2026-11-19 用户定的两种方案）——
+            仅在「桌面应用专属任务」开启且闸门放开时显示。驱动每做一项就重启一次
+            Rewards 应用、必然弹窗，所以只在键鼠空闲时触发；auto 自动跑、notify 发
+            系统通知点通知授权跑，两者执行完都关闭 Rewards 进程。仅桌面版生效。 */}
+        {!!value.tasks?.desktopApp && !deskDelayed.delayed && (
+          <div className="form-grid" style={{ marginTop: 8 }}>
+            <SelectField
+              label="桌面任务触发方式"
+              hint="空闲自动执行：离开电脑达到时长就自动跑；通知授权：空闲时发系统通知，您点通知打开软件确认后才跑。两者执行完都会自动关闭 Rewards 应用"
+              value={desktopTaskMode}
+              options={DESKTOP_TASK_MODE_OPTIONS}
+              onChange={(v) =>
+                onChange({ desktopTask: { mode: v === "notify" ? "notify" : "auto" } } as DeepPartial<AppConfig>)
+              }
+            />
+            <NumberField
+              label="空闲多少分钟后触发"
+              suffix="分钟"
+              hint="键盘鼠标无操作达到这个时长才触发，避免打断您工作。默认 5，范围 1~60"
+              suffixHint={`当前：离开电脑 ${desktopIdleMinutes} 分钟后触发`}
+              value={desktopIdleMinutes}
+              min={1}
+              max={60}
+              onChange={(v) =>
+                onChange({
+                  desktopTask: {
+                    idleMinutes: (() => {
+                      const n = Number(v);
+                      if (!Number.isFinite(n)) return 5;
+                      return Math.min(60, Math.max(1, Math.floor(n)));
+                    })(),
+                  },
+                } as DeepPartial<AppConfig>)
+              }
+            />
+          </div>
+        )}
 
         {/* —— 收取节奏（2026-11-06 用户定）——
             三种模式互斥，各自只显示自己需要的那个输入框：

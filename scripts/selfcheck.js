@@ -1105,6 +1105,31 @@ checkTrue(
   "默认值漂移 → 「全球配置」与「账户设置」初始状态不同，用户改一个另一个不变"
 );
 checkTrue(
+  "desktopTask 段四处字段一致（config / global-config / types / mock）",
+  /desktopTask: \{/.test(cfgSrcFp2) &&
+    /desktopTask: \{/.test(gcSrcFp2) &&
+    /desktopTask: \{/.test(typesSrcFp2) &&
+    /desktopTask: \{/.test(mockSrcFp2) &&
+    ["mode", "idleMinutes"].every(
+      (f) =>
+        new RegExp(f + ':\\s*').test(cfgSrcFp2) &&
+        new RegExp(f + ':\\s*').test(gcSrcFp2) &&
+        new RegExp(f + '\\??:\\s*').test(typesSrcFp2) &&
+        new RegExp(f + ':\\s*').test(mockSrcFp2)
+    ),
+  "任一处缺字段 → 旧配置读到 undefined，空闲触发器拿到 NaN 分钟 → 永不触发或立刻触发"
+);
+checkTrue(
+  "desktopTask 默认值一致（mode=auto / idleMinutes=5）",
+  /desktopTask:\s*\{[\s\S]{0,200}?mode:\s*"auto"/.test(cfgSrcFp2) &&
+    /desktopTask:\s*\{[\s\S]{0,200}?mode:\s*"auto"/.test(gcSrcFp2) &&
+    /desktopTask:\s*\{[^\n]*mode:\s*"auto"/.test(mockSrcFp2) &&
+    /desktopTask:\s*\{[\s\S]{0,200}?idleMinutes:\s*5/.test(cfgSrcFp2) &&
+    /desktopTask:\s*\{[\s\S]{0,200}?idleMinutes:\s*5/.test(gcSrcFp2) &&
+    /desktopTask:\s*\{[^\n]*idleMinutes:\s*5/.test(mockSrcFp2),
+  "默认值漂移 → 全局与账户初始不一致；idleMinutes 必须是用户要的 5 分钟"
+);
+checkTrue(
   "节流判定是**纯函数**且 now 由调用方注入（不读 new Date()）",
   /function shouldRunClaim\(\{[\s\S]{0,200}?now\s*\}\)/.test(tasksSrcFp2) &&
     /shouldRunClaim\([\s\S]{0,400}?now:\s*Date\.now\(\)/.test(tasksSrcFp2) &&
@@ -3826,8 +3851,9 @@ checkTrue(
     "探测照跑 + 汇总照印 → 每轮推送都在解释一个用户根本用不上的功能"
   );
   checkTrue(
-    "设置页按闸门状态决定是否置灰并标「测试中 · 延迟上线」（不隐藏入口）",
-    /badge=\{key === "desktopApp" && deskDelayed\.delayed \? "测试中 · 延迟上线"/.test(settingsSrc) &&
+    "设置页按闸门状态决定是否置灰并标徽标（不隐藏入口）",
+    // 2026-11-19：闸门关→「测试中 · 延迟上线」，闸门开→「实验性功能」
+    /key === "desktopApp"[\s\S]{0,160}?deskDelayed\.delayed[\s\S]{0,80}?"测试中 · 延迟上线"[\s\S]{0,80}?"实验性功能"/.test(settingsSrc) &&
       /deskDelayed\.delayed\)/.test(settingsSrc) &&
       /badge\?: string/.test(fieldsSrc),
     "隐藏入口 → 用户以为没这功能；不置灰 → 点了没反应更糟"
@@ -8523,7 +8549,7 @@ console.log("\n【0.15.9】桌面应用专属任务（外部进程驱动）");
   );
   checkTrue(
     "runner：桌面任务走独立函数（正常流程调用）",
-    /async function runDesktopTask\(ctx\)/.test(stripJsComments(runnerSrc)) &&
+    /async function runDesktopTask\(ctx, opts = \{\}\)/.test(stripJsComments(runnerSrc)) &&
       /rDesktopApp = await runDesktopTask\(ctx\)/.test(stripJsComments(runnerSrc)),
     "内联会让「失败不影响整轮」的结构消失"
   );
@@ -9054,10 +9080,22 @@ checkTrue(
   checkTrue(
     "空闲门禁真的接在跑桌面任务之前（在用电脑就不启动应用）",
     /readUserIdleMinutes\(\)/.test(runnerIdleSrc) &&
-      /shouldDeferForIdle\(idle, eff\.idleGateMinutes\)/.test(runnerIdleSrc) &&
+      /shouldDeferForIdle\(idle, idleMinutes\)/.test(runnerIdleSrc) &&
       runnerIdleSrc.includes("deferred: true") &&
       runnerIdleSrc.indexOf("shouldDeferForIdle") < runnerIdleSrc.indexOf("plugin.module.run"),
     "门禁必须在 plugin.module.run 之前，否则应用已经弹出来了才判延后，等于没挡"
+  );
+  checkTrue(
+    "桌面任务两种触发模式 + 强制跑 + 冷却 + 执行完结束进程",
+    runnerIdleSrc.includes('dt.mode === "notify" ? "notify" : "auto"') &&
+      runnerIdleSrc.includes("normalizeIdleMinutes(dt.idleMinutes)") &&
+      runnerIdleSrc.includes("opts.forceDesktop") &&
+      runnerIdleSrc.includes("desktopInCooldown(Date.now())") &&
+      runnerIdleSrc.includes("markDesktopRun(Date.now())") &&
+      /require\("\.\/desktop-app"\)/.test(runnerIdleSrc) &&
+      runnerIdleSrc.includes("await desktopApp.stop()") &&
+      runnerIdleSrc.indexOf("await desktopApp.stop()") > runnerIdleSrc.indexOf("plugin.module.run"),
+    "notify 模式不能自动跑；forceDesktop 供通知授权绕过门禁；stop() 必须在跑完之后（用户要求执行完结束进程）"
   );
   checkTrue(
     "延后不算熔断失效，汇总有专门文案",
@@ -9074,6 +9112,84 @@ checkTrue(
       rulesTestIdleSrc.includes("shouldDeferForIdle") &&
       rulesTestIdleSrc.includes("parseUserIdleMinutes"),
     "只改一份会被白名单合并丢弃；不卡范围则远程坏值能把门禁搞成永不跑/永远跑"
+  );
+}
+
+/* ============ 桌面任务空闲触发器接线（2026-11-19 auto/notify 两方案） ============ */
+{
+  const idleModSrc = fs.readFileSync(path.join(ROOT, "src", "desktop-idle.js"), "utf8");
+  const mainIdleSrc = fs.readFileSync(path.join(ROOT, "src", "electron-main.js"), "utf8");
+  const idleTestSrc = fs.readFileSync(path.join(ROOT, "scripts", "test-desktop-idle.js"), "utf8");
+
+  checkTrue(
+    "空闲触发器是纯逻辑状态机（episode 去重 + 恢复操作复位 + 读不到空闲不动作）",
+    /function createDesktopIdleWatcher\(/.test(idleModSrc) &&
+      idleModSrc.includes("episodeHandled = false") &&
+      idleModSrc.includes('cfg.mode === "notify"') &&
+      idleModSrc.includes("idle === null") &&
+      /function authorize\(\)/.test(idleModSrc),
+    "每 30s 巡检不能重复跑/重复弹通知；用户回来要复位；读不到空闲绝不能误触发"
+  );
+  checkTrue(
+    "主进程接好触发器：Notification + forceDesktop 执行 + 代表账户 + 随后台启动",
+    mainIdleSrc.includes("Notification } = require(\"electron\")") &&
+      /function desktopIdleConfig\(\)/.test(mainIdleSrc) &&
+      /function executeDesktopIdleRun\(/.test(mainIdleSrc) &&
+      mainIdleSrc.includes("runner.runDesktopTask(ctx, { forceDesktop: true })") &&
+      /function sendDesktopIdleNotification\(/.test(mainIdleSrc) &&
+      /function startDesktopIdleWatcher\(\)/.test(mainIdleSrc) &&
+      mainIdleSrc.includes("if (!IS_SMOKE) startDesktopIdleWatcher();") &&
+      mainIdleSrc.includes("app.setAppUserModelId"),
+    "notify 方案靠系统通知授权；执行必须 forceDesktop 绕过门禁；Windows 通知需 AppUserModelID"
+  );
+  checkTrue(
+    "通知点击=打开软件+授权执行；执行完发结果通知；退出时清理触发器",
+    mainIdleSrc.includes("n.on(\"click\"") &&
+      mainIdleSrc.includes("showWindow();") &&
+      mainIdleSrc.includes("void executeDesktopIdleRun(true);") &&
+      mainIdleSrc.includes("桌面任务已执行") &&
+      mainIdleSrc.includes("if (desktopIdleStop) { desktopIdleStop(); desktopIdleStop = null; }"),
+    "用户点通知要能授权跑；跑完告知结果（进程已结束）；退出别留定时器"
+  );
+  checkTrue(
+    "空闲触发器有独立离线回归入口（npm run test:idle）",
+    require(path.join(ROOT, "package.json")).scripts["test:idle"] === "node scripts/test-desktop-idle.js" &&
+      idleTestSrc.includes("createDesktopIdleWatcher") &&
+      idleTestSrc.includes("episode") &&
+      idleTestSrc.includes("authorize"),
+    "真机才暴露的触发逻辑必须有离线回归兜底"
+  );
+}
+
+/* ============ 桌面任务 UI：实验性徽标 + 风险二次确认 + 两方案设置（2026-11-19） ============ */
+{
+  const sfSrc = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "components", "SettingsForm.tsx"), "utf8");
+  checkTrue(
+    "桌面任务开关挂「实验性功能」徽标（闸门关闭时仍显示测试中）",
+    sfSrc.includes('"实验性功能"') &&
+      sfSrc.includes('"测试中 · 延迟上线"') &&
+      /key === "desktopApp"[\s\S]{0,120}?实验性功能/.test(sfSrc),
+    "用户要求标注实验性；不标会让用户误以为是稳定功能"
+  );
+  checkTrue(
+    "开启前检测到已安装 → 风险二次确认（明确含账号封禁），取消则不开",
+    sfSrc.includes("await Modal.confirm({") &&
+      sfSrc.includes("存在账号被限制甚至封禁的风险") &&
+      sfSrc.includes("我了解风险，开启") &&
+      sfSrc.indexOf("存在账号被限制甚至封禁的风险") > sfSrc.indexOf("api.detectDesktopApp()") &&
+      /if \(!ok\) return;/.test(sfSrc),
+    "用户要求检测完成后二次确认并告知封禁风险；确认必须在探测之后、onChange 之前"
+  );
+  checkTrue(
+    "桌面任务两方案 + 空闲时长设置项齐全（mode/idleMinutes，默认 5）",
+    sfSrc.includes("DESKTOP_TASK_MODE_OPTIONS") &&
+      sfSrc.includes('value: "notify"') &&
+      sfSrc.includes("desktopTask: { mode:") &&
+      sfSrc.includes("desktopTask: {") &&
+      sfSrc.includes("idleMinutes") &&
+      sfSrc.includes("空闲多少分钟后触发") &&
+      /value\.desktopTask\?\.idleMinutes/.test(sfSrc),
+    "两种触发方式与空闲阈值必须能在设置页改，且旧配置缺字段要兜底不白屏"
   );
 }
 

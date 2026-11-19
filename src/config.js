@@ -52,6 +52,23 @@ const DEFAULTS = {
      */
     threshold: 300,
   },
+  /**
+   * 桌面应用专属任务的触发方式（2026-11-19 用户要求「别打断工作」）。
+   *
+   * ⚠️ 独立成段，不塞进 tasks.desktopApp（那是 boolean 开关，改对象会破坏存量配置，
+   *    同 claimSchedule 的教训）。必须与 global-config.js / types/index.ts / api/mock.ts
+   *    逐字段对齐（四处缺一 → 白屏）。
+   *
+   * 两种模式（仅桌面版生效，Web/Docker 无外部应用与系统通知）：
+   *   auto   —— 检测到键鼠空闲 ≥ idleMinutes 就自动执行，执行完结束 Rewards 进程；
+   *   notify —— 空闲达标时发系统通知，用户点通知打开软件授权后才执行，执行完结束进程。
+   * 之所以按「空闲」触发：驱动每做一项就重启一次应用、必然弹窗抢焦点，只有挑用户
+   * 不在的时候跑才不打断工作（见 desktop-runtime.js 空闲门禁注释）。
+   */
+  desktopTask: {
+    mode: "auto",   // auto | notify
+    idleMinutes: 5, // 空闲多少分钟后触发（1~60），默认 5
+  },
   // 区域设置
   region: {
     lock: true, // 锁定国区（IP 非中国大陆则停止）

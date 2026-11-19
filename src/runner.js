@@ -159,28 +159,57 @@ async function runAccountGuarded(ctx, opts) {
  * 单条任务失败不能拖垮整轮，这里兜住异常并返回可读原因。
  *
  * @param {object} ctx 账户上下文
+ * @param {{ forceDesktop?: boolean }} [opts] forceDesktop=true 绕过门禁/冷却（空闲触发器
+ *        自动跑、或用户点系统通知授权跑时用）；此时不再判空闲，直接执行。
  * @returns {Promise<object>} 结果对象（status / gained / points / reason / notInstalled …）
  */
-async function runDesktopTask(ctx) {
+async function runDesktopTask(ctx, opts = {}) {
   try {
     const plugin = plugins.get("desktop-app-tasks");
     if (!plugin) return { status: "retry", reason: "插件 desktop-app-tasks 不可用" };
     const { rules } = await pluginRules.ensureRules(plugin, { log: (m) => logger.info(m) });
-    // 空闲门禁（2026-11-19 用户要求「别打断工作」）：驱动每做一项就重启一次应用，
-    // 运行期间必然反复弹窗/抢焦点，移窗口/另开桌面都治不了本。只在用户键鼠空闲
-    // ≥ idleGateMinutes 时才跑；读不到空闲时间就放行（fail-open，绝不误延后）。
-    const eff = desktopRuntime.effectiveRuntime(rules);
-    if (eff.idleGateMinutes > 0) {
+
+    // 触发方式（2026-11-19 用户要求「别打断工作」+ 两种方案）：
+    //   auto   —— 键鼠空闲 ≥ idleMinutes 才自动跑；
+    //   notify —— 不自动跑，空闲时由主进程发系统通知，用户点通知授权（forceDesktop）才跑。
+    // 驱动每做一项就重启一次应用、必然弹窗抢焦点，所以只在用户不在时跑。
+    const cfg = ctx && ctx.config ? ctx.config.get() : {};
+    const dt = (cfg && cfg.desktopTask) || {};
+    const mode = dt.mode === "notify" ? "notify" : "auto";
+    const idleMinutes = desktopRuntime.normalizeIdleMinutes(dt.idleMinutes);
+
+    if (!opts.forceDesktop) {
+      // 共享冷却：空闲触发器与账户定时都可能进来，防止同一台机器短时间双跑。
+      if (desktopRuntime.desktopInCooldown(Date.now())) {
+        return { status: "skip", deferred: true, reason: "桌面任务近期已执行（冷却中），稍后再试" };
+      }
+      if (mode === "notify") {
+        return { status: "skip", deferred: true, reason: "通知授权模式：空闲时发系统通知，点通知后才执行" };
+      }
       const idle = desktopRuntime.readUserIdleMinutes();
-      if (desktopRuntime.shouldDeferForIdle(idle, eff.idleGateMinutes)) {
+      if (desktopRuntime.shouldDeferForIdle(idle, idleMinutes)) {
         return {
           status: "skip",
           deferred: true,
-          reason: `用户正在使用电脑（空闲 ${Math.floor(idle)} 分钟 < ${eff.idleGateMinutes} 分钟），桌面任务延后到空闲时自动执行`,
+          reason: `用户正在使用电脑（空闲 ${Math.floor(idle)} 分钟 < ${idleMinutes} 分钟），桌面任务延后到空闲时自动执行`,
         };
       }
     }
-    return await plugin.module.run(ctx, rules, { onLog: (m) => logger.info(m) });
+
+    const result = await plugin.module.run(ctx, rules, { onLog: (m) => logger.info(m) });
+
+    // 用户要求：所有方案执行完都要结束 Rewards 进程。真正跑过（非开关关闭/闸门延后）
+    // 才记冷却并 stop()；stop() 对未运行的应用是空操作，安全。
+    if (result && !result.disabled && !result.delayed) {
+      desktopRuntime.markDesktopRun(Date.now());
+      try {
+        const desktopApp = require("./desktop-app");
+        await desktopApp.stop();
+      } catch (e) {
+        logger.warn(`桌面任务结束后关闭 Rewards 应用失败（不影响结果）: ${String((e && e.message) || e).slice(0, 80)}`);
+      }
+    }
+    return result;
   } catch (e) {
     return { status: "error", error: String((e && e.message) || e).slice(0, 120) };
   }
@@ -1139,6 +1168,8 @@ function startDaemon(opts = {}) {
 
 module.exports = {
   runOnce,
+  // 桌面任务单独导出：主进程空闲触发器（auto / 通知授权）用 forceDesktop 直调
+  runDesktopTask,
   // 汇总文案（单独导出便于验证通知里到底写了什么）
   formatDesktopLine,
   desktopDetailOf,
