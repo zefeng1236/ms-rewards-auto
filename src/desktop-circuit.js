@@ -84,7 +84,7 @@ function writeLedger(ledger, opts = {}) {
 
 function isFailure(r, opts = {}) {
   if (!r || typeof r !== "object") return false;
-  if (r.disabled || r.delayed) return false;
+  if (r.disabled || r.delayed || r.deferred) return false;
   if (r.reason === "扫描模式") return false;
   if (r.status === "done") return false;
   // 环境一直不具备（未安装 / 桌面应用未登录）是否算「脚本失效」可远程配置：
@@ -155,8 +155,8 @@ function record(ctx, result, opts = {}) {
   const nowMs = Number(opts.nowMs) > 0 ? Number(opts.nowMs) : Date.now();
   const ledger = readLedger(accountId, opts);
 
-  // 根本没执行：开关没开 / 闸门关闭 / 调试扫描 → 不动账本
-  if (!result || result.disabled || result.delayed || result.reason === "扫描模式") {
+  // 根本没执行：开关没开 / 闸门关闭 / 调试扫描 / 因用户在使用电脑而延后 → 不动账本
+  if (!result || result.disabled || result.delayed || result.deferred || result.reason === "扫描模式") {
     return { skipped: true, tripped: false };
   }
 

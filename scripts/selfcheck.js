@@ -8954,8 +8954,8 @@ checkTrue(
   circuitTestSrc.includes("npm run test:circuit") &&
     require(path.join(ROOT, "package.json")).scripts["test:circuit"] === "node scripts/test-desktop-circuit.js" &&
     /disabled \/ delayed \/ 扫描模式不算/.test(circuitTestSrc) &&
-    circuitSrc.includes("if (r.disabled || r.delayed) return false;"),
-  "把「今天没任务」「开关没开」误判为失效会平白关掉用户开关"
+    circuitSrc.includes("if (r.disabled || r.delayed || r.deferred) return false;"),
+  "把「今天没任务」「开关没开」「用户在使用电脑而延后」误判为失效会平白关掉用户开关"
 );
 
 /* ============ 远程规则参数接线（2026-11-18 方案 A） ============
@@ -9025,6 +9025,55 @@ checkTrue(
       /effectiveRuntime\(/.test(testRulesSrc) &&
       /越界\/非法值一律钳制回默认/.test(testRulesSrc),
     "只断言「字段在文件里」会假绿，必须验证改了值行为真的变"
+  );
+}
+
+/* ============ 桌面任务空闲门禁（2026-11-19 用户要求「别打断工作」） ============
+ * 驱动每做一项就重启一次应用，运行期间必然反复弹窗/抢焦点，移窗口/另开虚拟桌面
+ * 都治不了本。唯一保证零打断 = 只在用户键鼠空闲 ≥ N 分钟时才跑。这里锁死：
+ * 门禁真的接在跑任务之前、延后不算熔断失效、参数可远程调且两份规则一致。
+ */
+{
+  const rtIdleSrc = fs.readFileSync(path.join(ROOT, "src", "desktop-runtime.js"), "utf8");
+  const runnerIdleSrc = fs.readFileSync(path.join(ROOT, "src", "runner.js"), "utf8");
+  const circuitIdleSrc = fs.readFileSync(path.join(ROOT, "src", "desktop-circuit.js"), "utf8");
+  const builtinIdle = JSON.parse(fs.readFileSync(path.join(ROOT, "plugins", "desktop-app-tasks", "rules.json"), "utf8"));
+  const remoteIdle = JSON.parse(fs.readFileSync(path.join(ROOT, "rules", "desktop-app-tasks.json"), "utf8"));
+  const rulesTestIdleSrc = fs.readFileSync(path.join(ROOT, "scripts", "test-desktop-rules.js"), "utf8");
+
+  checkTrue(
+    "空闲门禁：解析/判定/读取三函数齐全，中文「无」与读不到都正确处理",
+    /function parseUserIdleMinutes\(/.test(rtIdleSrc) &&
+      /function shouldDeferForIdle\(/.test(rtIdleSrc) &&
+      /function readUserIdleMinutes\(/.test(rtIdleSrc) &&
+      rtIdleSrc.includes('new TextDecoder("gbk")') &&
+      rtIdleSrc.includes("无") &&
+      rtIdleSrc.includes("idleMinutes === null"),
+    "中文 locale 空闲列是「无」不是 .；读不到空闲必须放行（fail-open），不能误延后"
+  );
+  checkTrue(
+    "空闲门禁真的接在跑桌面任务之前（在用电脑就不启动应用）",
+    /readUserIdleMinutes\(\)/.test(runnerIdleSrc) &&
+      /shouldDeferForIdle\(idle, eff\.idleGateMinutes\)/.test(runnerIdleSrc) &&
+      runnerIdleSrc.includes("deferred: true") &&
+      runnerIdleSrc.indexOf("shouldDeferForIdle") < runnerIdleSrc.indexOf("plugin.module.run"),
+    "门禁必须在 plugin.module.run 之前，否则应用已经弹出来了才判延后，等于没挡"
+  );
+  checkTrue(
+    "延后不算熔断失效，汇总有专门文案",
+    circuitIdleSrc.includes("if (r.disabled || r.delayed || r.deferred) return false;") &&
+      circuitIdleSrc.includes("result.deferred") &&
+      runnerIdleSrc.includes("延后(用户在使用电脑，空闲时自动跑)"),
+    "把「用户在使用电脑而延后」当失效会平白关掉开关；汇总不说清会被当成漏跑"
+  );
+  checkTrue(
+    "idleGateMinutes 两份规则齐全一致、默认 3、validate 卡范围、有离线用例",
+    builtinIdle.runtime.idleGateMinutes === remoteIdle.runtime.idleGateMinutes &&
+      builtinIdle.runtime.idleGateMinutes === 3 &&
+      /idleGateMinutes 超出范围/.test(fs.readFileSync(path.join(ROOT, "src", "plugin-rules.js"), "utf8")) &&
+      rulesTestIdleSrc.includes("shouldDeferForIdle") &&
+      rulesTestIdleSrc.includes("parseUserIdleMinutes"),
+    "只改一份会被白名单合并丢弃；不卡范围则远程坏值能把门禁搞成永不跑/永远跑"
   );
 }
 

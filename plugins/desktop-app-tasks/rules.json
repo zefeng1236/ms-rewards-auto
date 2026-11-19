@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "version": 2,
-  "updatedAt": "2026-11-18",
-  "note": "这份是内置兜底规则（离线可用）。远程会覆盖同名字段，但只能改数值/列表，不能新增未知键 —— 所以新增参数必须同时写进远程规则，否则会被白名单合并丢弃。v2 与远程规则同步。",
+  "version": 3,
+  "updatedAt": "2026-11-19",
+  "note": "这份是内置兜底规则（离线可用）。远程会覆盖同名字段，但只能改数值/列表，不能新增未知键 —— 所以新增参数必须同时写进远程规则，否则会被白名单合并丢弃。v3 与远程规则同步（新增 runtime.idleGateMinutes 空闲门禁）。",
   "quest": {
     "includePrefixes": ["WW_pcparent_", "ENWW_pcparent_"],
     "earnUrl": "https://rewards.bing.com/earn",
@@ -39,6 +39,7 @@
     "restartOnRenderBroken": true,
     "restartMaxTimes": 1,
     "circuitMaxFailures": 3,
-    "circuitCountEnvFailures": true
+    "circuitCountEnvFailures": true,
+    "idleGateMinutes": 3
   }
 }

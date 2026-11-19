@@ -166,6 +166,20 @@ async function runDesktopTask(ctx) {
     const plugin = plugins.get("desktop-app-tasks");
     if (!plugin) return { status: "retry", reason: "插件 desktop-app-tasks 不可用" };
     const { rules } = await pluginRules.ensureRules(plugin, { log: (m) => logger.info(m) });
+    // 空闲门禁（2026-11-19 用户要求「别打断工作」）：驱动每做一项就重启一次应用，
+    // 运行期间必然反复弹窗/抢焦点，移窗口/另开桌面都治不了本。只在用户键鼠空闲
+    // ≥ idleGateMinutes 时才跑；读不到空闲时间就放行（fail-open，绝不误延后）。
+    const eff = desktopRuntime.effectiveRuntime(rules);
+    if (eff.idleGateMinutes > 0) {
+      const idle = desktopRuntime.readUserIdleMinutes();
+      if (desktopRuntime.shouldDeferForIdle(idle, eff.idleGateMinutes)) {
+        return {
+          status: "skip",
+          deferred: true,
+          reason: `用户正在使用电脑（空闲 ${Math.floor(idle)} 分钟 < ${eff.idleGateMinutes} 分钟），桌面任务延后到空闲时自动执行`,
+        };
+      }
+    }
     return await plugin.module.run(ctx, rules, { onLog: (m) => logger.info(m) });
   } catch (e) {
     return { status: "error", error: String((e && e.message) || e).slice(0, 120) };
@@ -184,6 +198,7 @@ function formatDesktopLine(r) {
   // 不能报「未启用」（那是用户的选择）或「未运行」（像故障），要说清功能没开放。
   if (r.delayed) return "暂缓上线";
   if (r.disabled) return "未启用";
+  if (r.deferred) return "延后(用户在使用电脑，空闲时自动跑)";
   if (r.notInstalled) return "跳过(未安装 Rewards 应用)";
   // 桌面应用自己没登录：与本项目登录态无关，跳过即可，不要当成项目故障
   if (r.notLoggedIn) return `跳过(Rewards 桌面应用未登录)`;

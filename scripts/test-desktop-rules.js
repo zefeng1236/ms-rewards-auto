@@ -203,6 +203,52 @@ async function main() {
     assert.doesNotMatch(deskSrc, /rules\.landing\.rejectPatterns/);
   });
 
+  // —— 空闲门禁（2026-11-19「别打断工作」）——
+  await test("⑮ idleGateMinutes 默认 3、可远程调、越界钳制", async () => {
+    assert.equal(runtime.effectiveRuntime(null).idleGateMinutes, 3);
+    assert.equal(runtime.effectiveRuntime({ runtime: { idleGateMinutes: 10 } }).idleGateMinutes, 10);
+    assert.equal(runtime.effectiveRuntime({ runtime: { idleGateMinutes: 0 } }).idleGateMinutes, 0);
+    assert.equal(runtime.effectiveRuntime({ runtime: { idleGateMinutes: 9999 } }).idleGateMinutes, 3);
+    assert.equal(runtime.effectiveRuntime({ runtime: { idleGateMinutes: -5 } }).idleGateMinutes, 3);
+  });
+
+  await test("⑯ parseUserIdleMinutes 正确解析 query user 空闲列", async () => {
+    const mk = (idle) => ` 用户名 会话名 ID 状态 空闲时间 登录时间\r\n>zefeng console 1 运行中 ${idle} 2026/11/19 上午 6:20\r\n`;
+    assert.equal(runtime.parseUserIdleMinutes(mk(".")), 0);
+    assert.equal(runtime.parseUserIdleMinutes(mk("none")), 0);
+    assert.equal(runtime.parseUserIdleMinutes(mk("无")), 0); // 中文 locale 的「正在使用」
+    assert.equal(runtime.parseUserIdleMinutes(mk("0:05")), 5 / 60);
+    assert.equal(runtime.parseUserIdleMinutes(mk("3:00")), 3);
+    assert.equal(runtime.parseUserIdleMinutes(mk("1:02:03")), 62 + 3 / 60);
+    assert.equal(runtime.parseUserIdleMinutes("没有会话"), null);
+    assert.equal(runtime.parseUserIdleMinutes(""), null);
+  });
+
+  await test("⑰ shouldDeferForIdle：在用→延后，空闲够→跑，读不到→放行，gate=0→关闭", async () => {
+    assert.equal(runtime.shouldDeferForIdle(0, 3), true);      // 正在用
+    assert.equal(runtime.shouldDeferForIdle(2.9, 3), true);    // 空闲不足
+    assert.equal(runtime.shouldDeferForIdle(3, 3), false);     // 刚好达标
+    assert.equal(runtime.shouldDeferForIdle(10, 3), false);    // 空闲够
+    assert.equal(runtime.shouldDeferForIdle(null, 3), false);  // 读不到→放行
+    assert.equal(runtime.shouldDeferForIdle(0, 0), false);     // 门禁关闭
+  });
+
+  await test("⑱ 空闲门禁参数在两份规则齐全一致，validate 卡范围", async () => {
+    assert.equal(builtin.runtime.idleGateMinutes, remote.runtime.idleGateMinutes);
+    assert.equal(pluginRules.validate(builtin).ok, true);
+    assert.equal(pluginRules.validate(remote).ok, true);
+    assert.equal(pluginRules.validate({ ...remote, runtime: { ...remote.runtime, idleGateMinutes: 9999 } }).ok, false);
+    assert.equal(pluginRules.validate({ ...remote, runtime: { ...remote.runtime, idleGateMinutes: "3" } }).ok, false);
+  });
+
+  await test("⑲ runner 在跑桌面任务前先过空闲门禁，延后不算失败", async () => {
+    assert.match(runnerSrc, /readUserIdleMinutes\(\)/);
+    assert.match(runnerSrc, /shouldDeferForIdle\(idle, eff\.idleGateMinutes\)/);
+    assert.match(runnerSrc, /deferred: true/);
+    assert.match(runnerSrc, /延后\(用户在使用电脑，空闲时自动跑\)/);
+    assert.equal(circuit.isFailure({ status: "skip", deferred: true, reason: "用户正在使用电脑" }), false);
+  });
+
   console.log(lines.join("\n"));
   console.log(`\n结果: ${lines.length - failed} 通过 / ${failed} 失败`);
   if (failed) process.exitCode = 1;

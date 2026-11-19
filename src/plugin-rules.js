@@ -162,6 +162,8 @@ function validate(r) {
       typeof r.runtime.circuitCountEnvFailures !== "boolean"
     )
       return { ok: false, reason: "runtime.circuitCountEnvFailures 必须是布尔" };
+    if (r.runtime.idleGateMinutes !== undefined && !validNumber(r.runtime.idleGateMinutes, 0, 120))
+      return { ok: false, reason: "runtime.idleGateMinutes 超出范围" };
   }
 
   return { ok: true };
