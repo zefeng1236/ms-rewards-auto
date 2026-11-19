@@ -3,10 +3,12 @@
  *
  * 【为什么按空闲触发】驱动每做一项就重启一次 Rewards 应用、必然弹窗抢焦点，
  * 最小化会塌视口、另开虚拟桌面会被每次重启拽回来 —— 都治不了本。唯一不打断
- * 工作的办法是挑用户不在的时候跑。两种方案（用户定）：
+ * 工作的办法是挑用户不在的时候跑。三种模式（2026-11-19 用户定，默认先通知）：
+ *   notify ——（默认）空闲达标发系统通知，用户点通知打开软件授权后才执行；
  *   auto   —— 键鼠空闲 ≥ idleMinutes 自动执行；
- *   notify —— 空闲达标发系统通知，用户点通知打开软件授权后才执行。
- * 两种方案执行完都由 runDesktopTask 调 stop() 结束 Rewards 进程。
+ *   manual —— 仅限手动：空闲触发器不触发（本模块只回 none），
+ *              由账户详情「执行桌面任务」按钮手动跑（按账号每天 1 次）。
+ * 三种方案执行完都由 runDesktopTask 调 stop() 结束 Rewards 进程。
  *
  * 【本模块是纯逻辑状态机】依赖注入（readIdle / getConfig / isBusy），不碰 Electron、
  * 不发通知、不跑任务 —— 那些由主进程按 tick() 返回的 action 去做。这样能离线测试。
@@ -19,7 +21,7 @@
 
 /**
  * @param {{ readIdle: () => (number|null), getConfig: () => object, isBusy?: () => boolean }} deps
- *   getConfig 返回 { enabled, mode: "auto"|"notify", idleMinutes }
+ *   getConfig 返回 { enabled, mode: "notify"|"auto"|"manual", idleMinutes }
  */
 function createDesktopIdleWatcher(deps = {}) {
   let episodeHandled = false;
@@ -29,6 +31,12 @@ function createDesktopIdleWatcher(deps = {}) {
     if (!cfg.enabled) {
       episodeHandled = false;
       return { action: "none", reason: "disabled" };
+    }
+    // manual = 仅限手动（2026-11-19 用户定）：空闲触发器完全不动作，
+    // 执行只走账户详情「执行桌面任务」按钮（runDesktopManual，按账号每天 1 次）。
+    if (cfg.mode === "manual") {
+      episodeHandled = false;
+      return { action: "none", reason: "manual" };
     }
     const idle = deps.readIdle ? deps.readIdle() : null;
     if (idle === null || idle === undefined || !Number.isFinite(Number(idle))) {

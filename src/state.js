@@ -35,6 +35,7 @@ const DEFAULT_STATE = {
   searchPoint: 0,              // 搜索任务今日累计得分
   lastClaimDate: 0,            // 上次「领取积分」的日期（YYYYMMDD），用于节流
   lastClaimAt: 0,              // 上次「领取积分」的时间戳（毫秒），daily 模式判「今天这个点还没跑」
+  lastDesktopManualDate: 0,    // 上次「手动执行桌面任务」的日期（YYYYMMDD），仅限手动模式每天 1 次
   pc: { progress: 0, max: 0 },  // PC 搜索进度
   m: { progress: 0, max: 0 },   // 移动搜索进度
   todayPoints: 0,

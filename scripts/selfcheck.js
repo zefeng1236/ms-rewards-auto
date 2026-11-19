@@ -1120,14 +1120,14 @@ checkTrue(
   "任一处缺字段 → 旧配置读到 undefined，空闲触发器拿到 NaN 分钟 → 永不触发或立刻触发"
 );
 checkTrue(
-  "desktopTask 默认值一致（mode=auto / idleMinutes=5）",
-  /desktopTask:\s*\{[\s\S]{0,200}?mode:\s*"auto"/.test(cfgSrcFp2) &&
-    /desktopTask:\s*\{[\s\S]{0,200}?mode:\s*"auto"/.test(gcSrcFp2) &&
-    /desktopTask:\s*\{[^\n]*mode:\s*"auto"/.test(mockSrcFp2) &&
+  "desktopTask 默认值一致（mode=notify 默认先通知 / idleMinutes=5）",
+  /desktopTask:\s*\{[\s\S]{0,200}?mode:\s*"notify"/.test(cfgSrcFp2) &&
+    /desktopTask:\s*\{[\s\S]{0,200}?mode:\s*"notify"/.test(gcSrcFp2) &&
+    /desktopTask:\s*\{[^\n]*mode:\s*"notify"/.test(mockSrcFp2) &&
     /desktopTask:\s*\{[\s\S]{0,200}?idleMinutes:\s*5/.test(cfgSrcFp2) &&
     /desktopTask:\s*\{[\s\S]{0,200}?idleMinutes:\s*5/.test(gcSrcFp2) &&
     /desktopTask:\s*\{[^\n]*idleMinutes:\s*5/.test(mockSrcFp2),
-  "默认值漂移 → 全局与账户初始不一致；idleMinutes 必须是用户要的 5 分钟"
+  "默认值漂移 → 全局与账户初始不一致；默认必须是 notify（用户定「默认先通知」），idleMinutes 必须是 5 分钟"
 );
 checkTrue(
   "节流判定是**纯函数**且 now 由调用方注入（不读 new Date()）",
@@ -9086,16 +9086,42 @@ checkTrue(
     "门禁必须在 plugin.module.run 之前，否则应用已经弹出来了才判延后，等于没挡"
   );
   checkTrue(
-    "桌面任务两种触发模式 + 强制跑 + 冷却 + 执行完结束进程",
-    runnerIdleSrc.includes('dt.mode === "notify" ? "notify" : "auto"') &&
+    "桌面任务三种触发模式 + 强制跑 + 冷却 + 执行完结束进程",
+    runnerIdleSrc.includes('dt.mode === "auto" || dt.mode === "manual" ? dt.mode : "notify"') &&
       runnerIdleSrc.includes("normalizeIdleMinutes(dt.idleMinutes)") &&
       runnerIdleSrc.includes("opts.forceDesktop") &&
       runnerIdleSrc.includes("desktopInCooldown(Date.now())") &&
       runnerIdleSrc.includes("markDesktopRun(Date.now())") &&
+      runnerIdleSrc.includes('modeSkip: "仅限手动"') &&
+      runnerIdleSrc.includes('modeSkip: "通知授权"') &&
       /require\("\.\/desktop-app"\)/.test(runnerIdleSrc) &&
       runnerIdleSrc.includes("await desktopApp.stop()") &&
       runnerIdleSrc.indexOf("await desktopApp.stop()") > runnerIdleSrc.indexOf("plugin.module.run"),
-    "notify 模式不能自动跑；forceDesktop 供通知授权绕过门禁；stop() 必须在跑完之后（用户要求执行完结束进程）"
+    "notify（默认）/auto/manual 三模式都要归一；notify 与 manual 的自动路径不能跑；forceDesktop 供手动/通知授权绕过门禁；stop() 必须在跑完之后（用户要求执行完结束进程）"
+  );
+  checkTrue(
+    "仅限手动模式：runDesktopManual 按账号按天账本（每天 1 次）+ 真跑了才记账",
+    runnerIdleSrc.includes("async function runDesktopManual(ctx)") &&
+      runnerIdleSrc.includes("lastDesktopManualDate") &&
+      /Number\(state\.get\(\)\.lastDesktopManualDate \|\| 0\) === todayNum/.test(runnerIdleSrc) &&
+      runnerIdleSrc.includes("state.get().lastDesktopManualDate = todayNum") &&
+      runnerIdleSrc.includes("todayUsed: true") &&
+      // 记账本必须在结果判据之后（未安装/未登录/跳过不消耗额度）
+      runnerIdleSrc.indexOf("lastDesktopManualDate = todayNum") > runnerIdleSrc.indexOf("runDesktopTask(ctx, { forceDesktop: true })") &&
+      /lastDesktopManualDate:\s*0/.test(fs.readFileSync(path.join(ROOT, "src", "state.js"), "utf8")),
+    "用户定「仅限手动，每天手动执行」：额度按账号按天；真跑了才消耗当日额度，否则装好应用后今天反而不能再跑"
+  );
+  checkTrue(
+    "手动执行桌面任务三端链路齐全（IPC / preload / web-api / web.ts / mock / 类型）",
+    fs.readFileSync(path.join(ROOT, "src", "electron-main.js"), "utf8").includes('ipcMain.handle("account:desktopRunManual"') &&
+      fs.readFileSync(path.join(ROOT, "src", "electron-preload.js"), "utf8").includes("desktopRunManual") &&
+      fs.readFileSync(path.join(ROOT, "src", "web-api.js"), "utf8").includes("desktopRunManual") &&
+      fs.readFileSync(path.join(ROOT, "src-renderer", "src", "api", "web.ts"), "utf8").includes("desktopRunManual") &&
+      fs.readFileSync(path.join(ROOT, "src-renderer", "src", "api", "mock.ts"), "utf8").includes("desktopRunManual") &&
+      fs.readFileSync(path.join(ROOT, "src-renderer", "src", "types", "electron.d.ts"), "utf8").includes("desktopRunManual") &&
+      fs.readFileSync(path.join(ROOT, "src-renderer", "src", "types", "index.ts"), "utf8").includes("DesktopManualResult") &&
+      fs.readFileSync(path.join(ROOT, "src-renderer", "src", "views", "AccountDetail.tsx"), "utf8").includes("onDesktopRunManual"),
+    "缺任一端 → 桌面版能跑但 Web/预览白屏或按钮点了没反应（三端对齐铁律）"
   );
   checkTrue(
     "延后不算熔断失效，汇总有专门文案",
@@ -9126,9 +9152,11 @@ checkTrue(
     /function createDesktopIdleWatcher\(/.test(idleModSrc) &&
       idleModSrc.includes("episodeHandled = false") &&
       idleModSrc.includes('cfg.mode === "notify"') &&
+      idleModSrc.includes('cfg.mode === "manual"') &&
+      idleModSrc.includes('reason: "manual"') &&
       idleModSrc.includes("idle === null") &&
       /function authorize\(\)/.test(idleModSrc),
-    "每 30s 巡检不能重复跑/重复弹通知；用户回来要复位；读不到空闲绝不能误触发"
+    "每 30s 巡检不能重复跑/重复弹通知；用户回来要复位；读不到空闲绝不能误触发；manual 模式触发器必须完全不动作"
   );
   checkTrue(
     "主进程接好触发器：Notification + forceDesktop 执行 + 代表账户 + 随后台启动",
@@ -9181,15 +9209,18 @@ checkTrue(
     "用户要求检测完成后二次确认并告知封禁风险；确认必须在探测之后、onChange 之前"
   );
   checkTrue(
-    "桌面任务两方案 + 空闲时长设置项齐全（mode/idleMinutes，默认 5）",
+    "桌面任务三模式 + 空闲时长设置项齐全（mode/idleMinutes，默认 notify，manual 隐藏空闲时长）",
     sfSrc.includes("DESKTOP_TASK_MODE_OPTIONS") &&
       sfSrc.includes('value: "notify"') &&
-      sfSrc.includes("desktopTask: { mode:") &&
+      sfSrc.includes('value: "manual"') &&
+      sfSrc.includes('label: "仅限手动执行（每天 1 次）"') &&
+      sfSrc.includes('label: "空闲时发通知，点通知授权执行（默认）"') &&
       sfSrc.includes("desktopTask: {") &&
       sfSrc.includes("idleMinutes") &&
       sfSrc.includes("空闲多少分钟后触发") &&
+      /desktopTaskMode !== "manual"/.test(sfSrc) &&
       /value\.desktopTask\?\.idleMinutes/.test(sfSrc),
-    "两种触发方式与空闲阈值必须能在设置页改，且旧配置缺字段要兜底不白屏"
+    "三种触发方式与空闲阈值必须能在设置页改；manual 不看空闲所以要隐藏时长输入；旧配置缺字段要兜底不白屏"
   );
 }
 

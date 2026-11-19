@@ -47,11 +47,12 @@ const GLOBAL_DEFAULTS = {
   /**
    * 桌面应用专属任务触发方式（2026-11-19）。⚠️ 必须与 config.js DEFAULTS.desktopTask、
    * types/index.ts AppConfig.desktopTask、api/mock.ts 逐字段对齐（四处缺一 → 白屏）。
-   * auto=空闲达标自动跑；notify=空闲达标发系统通知、点通知授权跑。执行完都结束 Rewards 进程。
+   * notify=（默认）空闲达标发系统通知、点通知授权跑；auto=空闲达标自动跑；
+   * manual=仅限手动（账户详情点「执行桌面任务」，按账号每天一次）。执行完都结束 Rewards 进程。
    */
   desktopTask: {
-    mode: "auto",   // auto | notify
-    idleMinutes: 5, // 空闲多少分钟后触发（1~60）
+    mode: "notify",   // notify（默认）| auto | manual
+    idleMinutes: 5, // 空闲多少分钟后触发（1~60）；manual 模式不看此项
   },
   region: {
     lock: true,

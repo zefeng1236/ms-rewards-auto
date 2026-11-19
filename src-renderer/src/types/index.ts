@@ -122,13 +122,14 @@ export interface AppConfig {
    * 桌面应用专属任务的触发方式（2026-11-19，仅桌面版生效）。
    *
    * 独立成段而不并进 tasks.desktopApp（那是 boolean 开关，改对象会破坏存量配置）。
-   * auto = 空闲达标自动执行；notify = 空闲达标发系统通知、点通知授权执行。
-   * 两种模式执行完都会结束 Rewards 进程。
+   * notify =（默认）空闲达标发系统通知、点通知授权执行；
+   * auto = 空闲达标自动执行；manual = 仅限手动（账户详情「执行桌面任务」按钮，每天 1 次）。
+   * 三种模式执行完都会结束 Rewards 进程。
    */
   desktopTask: {
-    /** auto = 空闲自动跑；notify = 空闲发通知、点通知授权跑 */
-    mode: "auto" | "notify";
-    /** 键鼠空闲多少分钟后触发（1~60），默认 5 */
+    /** notify（默认）= 空闲发通知、点通知授权跑；auto = 空闲自动跑；manual = 仅限手动 */
+    mode: "notify" | "auto" | "manual";
+    /** 键鼠空闲多少分钟后触发（1~60），默认 5；manual 模式不看此项 */
     idleMinutes: number;
   };
   region: {
@@ -1099,5 +1100,17 @@ export interface ClaimNowResult {
   gained: number;
   /** 给用户看的一句话结论 */
   message: string;
+  error?: string;
+}
+
+/** 手动「执行桌面任务」结果（仅限手动模式，每账号每天 1 次） */
+export interface DesktopManualResult {
+  ok: boolean;
+  /** 是否真驱动了 Rewards 应用（false = 被跳过：额度用过/冷却中/未安装/未登录…） */
+  ran: boolean;
+  /** 给用户看的一句话结论（formatDesktopLine 文案） */
+  message: string;
+  /** true = 今日额度已用过，本次未执行 */
+  todayUsed?: boolean;
   error?: string;
 }

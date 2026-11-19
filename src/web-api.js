@@ -521,6 +521,15 @@ function createApi({ emit }) {
       return tasks.taskClaimNow(accounts.context(id));
     },
 
+    /** 手动执行一次桌面应用专属任务（仅限手动模式，每账号每天 1 次）；Web/Docker 无外部应用，会返回未安装 */
+    desktopRunManual(id) {
+      const vg = core.vaultGuard();
+      if (vg) return { ok: false, ran: false, message: vg.error || "保险库未解锁", error: vg.error };
+      if (core.isRunning()) return { ok: false, ran: false, message: "已有任务正在运行，请稍候", error: "已有任务正在运行" };
+      if (!accounts.get(id)) return { ok: false, ran: false, message: "账户不存在", error: "账户不存在" };
+      return require("./runner").runDesktopManual(accounts.context(id));
+    },
+
     /* ------------------------ 日历 / 签到勋章 ------------------------ */
     /**
      * 某账户的日历快照：月视图 + 连续签到 + 勋章计数 + 汇总。

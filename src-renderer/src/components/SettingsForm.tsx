@@ -71,10 +71,11 @@ const CLAIM_MODE_OPTIONS: SelectOption[] = [
   { label: "每天定时（到点就跑一次）", value: "daily" },
 ];
 
-// 桌面任务触发方式（2026-11-19 用户定的两种方案）。仅桌面版生效。
+// 桌面任务触发方式（2026-11-19 用户定三模式，默认先通知）。仅桌面版生效。
 const DESKTOP_TASK_MODE_OPTIONS: SelectOption[] = [
-  { label: "空闲自动执行（默认）", value: "auto" },
-  { label: "空闲时发通知，点通知授权执行", value: "notify" },
+  { label: "空闲时发通知，点通知授权执行（默认）", value: "notify" },
+  { label: "空闲自动执行", value: "auto" },
+  { label: "仅限手动执行（每天 1 次）", value: "manual" },
 ];
 
 const IP_PROVIDER_OPTIONS: SelectOption[] = [  { label: "Bing 首页判定（默认，与MS Rewards 同源）", value: "bing" },
@@ -339,7 +340,11 @@ export function SettingsForm({
   })();
 
   // 桌面任务触发方式 / 空闲阈值（2026-11-19）。旧配置可能缺 desktopTask 段，逐字段兜底。
-  const desktopTaskMode: "auto" | "notify" = value.desktopTask?.mode === "notify" ? "notify" : "auto";
+  // 默认 notify（用户定「默认先通知」）；显式 auto/manual 原样保留，其余（含非法值）回落 notify。
+  const desktopTaskMode: "auto" | "notify" | "manual" =
+    value.desktopTask?.mode === "auto" || value.desktopTask?.mode === "manual"
+      ? value.desktopTask.mode
+      : "notify";
   const desktopIdleMinutes = (() => {
     const raw: unknown = value.desktopTask?.idleMinutes;
     const n = Number(raw);
@@ -383,41 +388,52 @@ export function SettingsForm({
           ))}
         </div>
 
-        {/* —— 桌面任务触发方式（2026-11-19 用户定的两种方案）——
+        {/* —— 桌面任务触发方式（2026-11-19 用户定三模式，默认先通知）——
             仅在「桌面应用专属任务」开启且闸门放开时显示。驱动每做一项就重启一次
-            Rewards 应用、必然弹窗，所以只在键鼠空闲时触发；auto 自动跑、notify 发
-            系统通知点通知授权跑，两者执行完都关闭 Rewards 进程。仅桌面版生效。 */}
+            Rewards 应用、必然弹窗，所以默认走「先通知」：空闲达标发系统通知、点通知
+            授权后才跑；auto 空闲自动跑；manual 仅限手动（账户详情「执行桌面任务」
+            按钮，每天 1 次）。三种模式执行完都关闭 Rewards 进程。仅桌面版生效。 */}
         {!!value.tasks?.desktopApp && !deskDelayed.delayed && (
           <div className="form-grid" style={{ marginTop: 8 }}>
             <SelectField
               label="桌面任务触发方式"
-              hint="空闲自动执行：离开电脑达到时长就自动跑；通知授权：空闲时发系统通知，您点通知打开软件确认后才跑。两者执行完都会自动关闭 Rewards 应用"
+              hint={
+                desktopTaskMode === "manual"
+                  ? "仅限手动：不自动触发。到账户详情页点「执行桌面任务」按钮手动跑，每账号每天 1 次。执行完会自动关闭 Rewards 应用"
+                  : "通知授权（默认）：空闲时发系统通知，您点通知打开软件确认后才跑；空闲自动执行：离开电脑达到时长就自动跑。两者执行完都会自动关闭 Rewards 应用"
+              }
               value={desktopTaskMode}
               options={DESKTOP_TASK_MODE_OPTIONS}
               onChange={(v) =>
-                onChange({ desktopTask: { mode: v === "notify" ? "notify" : "auto" } } as DeepPartial<AppConfig>)
-              }
-            />
-            <NumberField
-              label="空闲多少分钟后触发"
-              suffix="分钟"
-              hint="键盘鼠标无操作达到这个时长才触发，避免打断您工作。默认 5，范围 1~60"
-              suffixHint={`当前：离开电脑 ${desktopIdleMinutes} 分钟后触发`}
-              value={desktopIdleMinutes}
-              min={1}
-              max={60}
-              onChange={(v) =>
                 onChange({
                   desktopTask: {
-                    idleMinutes: (() => {
-                      const n = Number(v);
-                      if (!Number.isFinite(n)) return 5;
-                      return Math.min(60, Math.max(1, Math.floor(n)));
-                    })(),
+                    mode: v === "auto" || v === "manual" ? v : "notify",
                   },
                 } as DeepPartial<AppConfig>)
               }
             />
+            {desktopTaskMode !== "manual" && (
+              <NumberField
+                label="空闲多少分钟后触发"
+                suffix="分钟"
+                hint="键盘鼠标无操作达到这个时长才触发，避免打断您工作。默认 5，范围 1~60"
+                suffixHint={`当前：离开电脑 ${desktopIdleMinutes} 分钟后触发`}
+                value={desktopIdleMinutes}
+                min={1}
+                max={60}
+                onChange={(v) =>
+                  onChange({
+                    desktopTask: {
+                      idleMinutes: (() => {
+                        const n = Number(v);
+                        if (!Number.isFinite(n)) return 5;
+                        return Math.min(60, Math.max(1, Math.floor(n)));
+                      })(),
+                    },
+                  } as DeepPartial<AppConfig>)
+                }
+              />
+            )}
           </div>
         )}
 

@@ -121,6 +121,8 @@ contextBridge.exposeInMainWorld("api", {
   exportLogs: (opts) => ipcRenderer.invoke("app:exportLogs", opts),
   /** 账户详情页：立即检查并领取待领取积分 */
   claimNow: (id) => ipcRenderer.invoke("account:claimNow", id),
+  /** 账户详情页：手动执行一次桌面应用专属任务（仅限手动模式，每天 1 次） */
+  desktopRunManual: (id) => ipcRenderer.invoke("account:desktopRunManual", id),
   chromiumStatus: () => ipcRenderer.invoke("app:chromiumStatus"),
   installBrowser: () => ipcRenderer.invoke("app:installBrowser"),
   fingerprintStatus: () => ipcRenderer.invoke("app:fingerprintStatus"),

@@ -269,14 +269,28 @@ async function main() {
     assert.equal(runtime.desktopInCooldown(t0 + 60_000), false);
   });
 
-  await test("㉒ runner 两种模式 + forceDesktop + 执行完 stop() 结束进程", async () => {
-    assert.match(runnerSrc, /dt\.mode === "notify" \? "notify" : "auto"/);
+  await test("㉒ runner 三模式 + forceDesktop + 执行完 stop() 结束进程", async () => {
+    assert.match(runnerSrc, /dt\.mode === "auto" \|\| dt\.mode === "manual" \? dt\.mode : "notify"/);
     assert.match(runnerSrc, /opts\.forceDesktop/);
     assert.match(runnerSrc, /desktopInCooldown\(Date\.now\(\)\)/);
     assert.match(runnerSrc, /markDesktopRun\(Date\.now\(\)\)/);
     assert.match(runnerSrc, /await desktopApp\.stop\(\)/);
-    // notify 模式的延后文案存在
+    // notify（默认）与 manual 模式的自动路径跳过文案存在
     assert.match(runnerSrc, /通知授权模式/);
+    assert.match(runnerSrc, /仅限手动模式/);
+  });
+
+  await test("㉓ 仅限手动：runDesktopManual 按账号每天 1 次 + 真跑了才记账本", async () => {
+    assert.match(runnerSrc, /async function runDesktopManual\(ctx\)/);
+    assert.match(runnerSrc, /lastDesktopManualDate/);
+    assert.match(runnerSrc, /今天已手动执行过桌面任务（每天 1 次）/);
+    // 账本写入必须在结果判据之后（未安装/未登录/跳过不消耗额度）
+    const iWrite = runnerSrc.indexOf("lastDesktopManualDate = todayNum");
+    const iRun = runnerSrc.indexOf("runDesktopTask(ctx, { forceDesktop: true })");
+    assert.ok(iWrite > iRun, "账本写入必须在真跑了之后");
+    // state 默认结构含账本字段
+    const stateSrc = fs.readFileSync(path.join(ROOT, "src", "state.js"), "utf8");
+    assert.match(stateSrc, /lastDesktopManualDate:\s*0/);
   });
 
   console.log(lines.join("\n"));

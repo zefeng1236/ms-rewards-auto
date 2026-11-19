@@ -32,7 +32,7 @@ const DEFAULT_CONFIG: AppConfig = {
   // 定期收取积分节奏 —— 必须与 config.js / global-config.js / types 逐字段对齐
   claimSchedule: { mode: "threshold", everyDays: 7, dailyAt: "09:00", threshold: 300 },
   // 桌面任务触发方式 —— 必须与 config.js / global-config.js / types 逐字段对齐
-  desktopTask: { mode: "auto", idleMinutes: 5 },
+  desktopTask: { mode: "notify", idleMinutes: 5 },
   region: { lock: true, ipProvider: "bing" },
   search: { span: 30, api: "offline" },
   limits: { random: false, read: 6, promos: 0, search: 6, allowExceed: false },
@@ -617,6 +617,11 @@ export function createMockApi(): ElectronApi {
       fileName: `ms-rewards-logs-preview-${String(opts?.preset || "today")}.zip`,
     }),
     claimNow: async () => ({ ok: true, gained: 0, message: "预览模式：没有待领取的积分（假数据）" }),
+    desktopRunManual: async () => ({
+      ok: true,
+      ran: true,
+      message: "预览模式：桌面任务不会真的执行（假数据）· 完成 2 项 +10 分",
+    }),
     // 日历假数据：造一整月有绿/橙/灰/红四态 + 若干勋章，方便脱机调样式
     getHistory: async (_id, year, month) => {
       const now = new Date();

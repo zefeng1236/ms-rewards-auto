@@ -936,7 +936,8 @@ function desktopIdleConfig() {
         const dt = cfg.desktopTask || {};
         return {
           enabled: true,
-          mode: dt.mode === "notify" ? "notify" : "auto",
+          // 三模式原样透传（manual 由触发器直接不动作）；非法值回落默认 notify
+          mode: dt.mode === "auto" || dt.mode === "manual" ? dt.mode : "notify",
           idleMinutes: desktopRuntime.normalizeIdleMinutes(dt.idleMinutes),
           accountId: a.id,
         };
@@ -1926,6 +1927,24 @@ function registerIpc() {
       const msg = String((e && e.message) || e).slice(0, 160);
       logger.warn(`手动领取失败: ${msg}`);
       return { ok: false, gained: 0, message: `领取失败：${msg}`, error: msg };
+    }
+  });
+
+  // 手动执行桌面任务（2026-11-19 用户定「仅限手动」模式）：每账号每天 1 次。
+  // 走 runner.runDesktopManual（内部 forceDesktop 直调 + 按账号按天账本），
+  // 结果直接透传给账户详情按钮弹 toast。
+  ipcMain.handle("account:desktopRunManual", async (_e, id) => {
+    const vg = vaultGuard();
+    if (vg) return { ok: false, ran: false, message: vg.error || "保险库未解锁", error: vg.error };
+    if (running) return { ok: false, ran: false, message: "已有任务正在运行，请稍候", error: "已有任务正在运行" };
+    const acc = accounts.get(id);
+    if (!acc) return { ok: false, ran: false, message: "账户不存在", error: "账户不存在" };
+    try {
+      return await runner.runDesktopManual(accounts.context(id));
+    } catch (e) {
+      const msg = String((e && e.message) || e).slice(0, 160);
+      logger.warn(`手动执行桌面任务失败: ${msg}`);
+      return { ok: false, ran: false, message: `执行失败：${msg}`, error: msg };
     }
   });
 

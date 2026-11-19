@@ -169,13 +169,16 @@ async function runDesktopTask(ctx, opts = {}) {
     if (!plugin) return { status: "retry", reason: "插件 desktop-app-tasks 不可用" };
     const { rules } = await pluginRules.ensureRules(plugin, { log: (m) => logger.info(m) });
 
-    // 触发方式（2026-11-19 用户要求「别打断工作」+ 两种方案）：
+    // 触发方式（2026-11-19 用户定三模式，「默认先通知」）：
+    //   notify ——（默认）不自动跑，空闲时由主进程发系统通知，用户点通知授权（forceDesktop）才跑；
     //   auto   —— 键鼠空闲 ≥ idleMinutes 才自动跑；
-    //   notify —— 不自动跑，空闲时由主进程发系统通知，用户点通知授权（forceDesktop）才跑。
-    // 驱动每做一项就重启一次应用、必然弹窗抢焦点，所以只在用户不在时跑。
+    //   manual —— 仅限手动：自动路径（定时/空闲）一律不跑，只有账户详情「执行桌面任务」
+    //             按钮（runDesktopManual，按账号每天 1 次）才执行。
+    // 驱动每做一项就重启一次应用、必然弹窗抢焦点，所以只在用户不在时跑（manual 则只在用户主动点时跑）。
     const cfg = ctx && ctx.config ? ctx.config.get() : {};
     const dt = (cfg && cfg.desktopTask) || {};
-    const mode = dt.mode === "notify" ? "notify" : "auto";
+    // 显式 auto/manual 原样保留；缺失或非法值回落 notify —— 与 config.js DEFAULTS 默认值一致
+    const mode = dt.mode === "auto" || dt.mode === "manual" ? dt.mode : "notify";
     const idleMinutes = desktopRuntime.normalizeIdleMinutes(dt.idleMinutes);
 
     if (!opts.forceDesktop) {
@@ -183,8 +186,24 @@ async function runDesktopTask(ctx, opts = {}) {
       if (desktopRuntime.desktopInCooldown(Date.now())) {
         return { status: "skip", deferred: true, reason: "桌面任务近期已执行（冷却中），稍后再试" };
       }
+      // 仅限手动模式（2026-11-19 用户定）：定时/空闲自动路径一律不跑。
+      // modeSkip = 模式性跳过，汇总文案与「用户在用电脑」的延后区分开；
+      // deferred 让熔断不把它算作失效（模式限制不是脚本失效）。
+      if (mode === "manual") {
+        return {
+          status: "skip",
+          deferred: true,
+          modeSkip: "仅限手动",
+          reason: "仅限手动模式：请点「执行桌面任务」按钮手动运行（每天 1 次）",
+        };
+      }
       if (mode === "notify") {
-        return { status: "skip", deferred: true, reason: "通知授权模式：空闲时发系统通知，点通知后才执行" };
+        return {
+          status: "skip",
+          deferred: true,
+          modeSkip: "通知授权",
+          reason: "通知授权模式：空闲时发系统通知，点通知后才执行",
+        };
       }
       const idle = desktopRuntime.readUserIdleMinutes();
       if (desktopRuntime.shouldDeferForIdle(idle, idleMinutes)) {
@@ -216,6 +235,59 @@ async function runDesktopTask(ctx, opts = {}) {
 }
 
 /**
+ * 「仅限手动」模式的手动执行入口（2026-11-19 用户定：每天手动执行 1 次）。
+ *
+ * 与空闲触发（auto/notify）共用 runDesktopTask(forceDesktop) —— 手动点按钮就是要跑，
+ * 不再判空闲、不看触发模式；但**按账号按天账本**限每天 1 次（state.lastDesktopManualDate）：
+ * 驱动每做一项就重启一次 Rewards 应用，反复手点既打扰又有账号风险（用户要求每天一次）。
+ *
+ * 账本只在「真跑了」之后写（跟 markDesktopRun 同一收口条件）：
+ * 未安装 / 未登录 / 闸门延后 / 模式跳过都不消耗当日额度 —— 否则用户装好应用后
+ * 今天反而不能再手动跑一次。另共享 30 分钟冷却：刚被自动/通知跑过就别立刻再驱动。
+ *
+ * @param {object} ctx 账户上下文
+ * @returns {Promise<{ok:boolean, ran:boolean, message:string, error?:string, todayUsed?:boolean}>}
+ *   ran=true 表示真驱动了应用；todayUsed=true 表示当日额度已用过、本次未执行
+ */
+async function runDesktopManual(ctx) {
+  try {
+    const state = ctx.state;
+    const todayNum = Number(state.getDateNum());
+    if (Number(state.get().lastDesktopManualDate || 0) === todayNum) {
+      return { ok: true, ran: false, todayUsed: true, message: "今天已手动执行过桌面任务（每天 1 次），明天再来" };
+    }
+    if (desktopRuntime.desktopInCooldown(Date.now())) {
+      return { ok: true, ran: false, message: "桌面任务近期已执行（冷却中），稍后再试" };
+    }
+    const result = await runDesktopTask(ctx, { forceDesktop: true });
+    // 只有真跑了才消耗当日额度（同 markDesktopRun 的收口条件，再排除各种跳过）
+    const ran = !!(
+      result &&
+      !result.disabled &&
+      !result.delayed &&
+      !result.deferred &&
+      !result.notInstalled &&
+      !result.notLoggedIn &&
+      !result.manualDaily &&
+      !result.modeSkip
+    );
+    if (ran) {
+      state.get().lastDesktopManualDate = todayNum;
+      state.save();
+    }
+    return {
+      ok: !(result && (result.status === "error" || result.status === "retry")),
+      ran,
+      message: formatDesktopLine(result),
+      ...(result && result.error ? { error: result.error } : {}),
+    };
+  } catch (e) {
+    const msg = String((e && e.message) || e).slice(0, 120);
+    return { ok: false, ran: false, message: `执行失败：${msg}`, error: msg };
+  }
+}
+
+/**
  * 把桌面任务结果转成汇总行文案（正常流程与「未登录」分支共用，保证说法一致）。
  *
  * 必须把「未启用 / 未安装 / 应用没起来 / 点了没到账 / 完成 N 项」分开说，
@@ -227,6 +299,10 @@ function formatDesktopLine(r) {
   // 不能报「未启用」（那是用户的选择）或「未运行」（像故障），要说清功能没开放。
   if (r.delayed) return "暂缓上线";
   if (r.disabled) return "未启用";
+  // 模式性跳过（手动/通知授权）与「用户在用电脑」的延后必须分开说，
+  // 否则 manual 模式每轮汇总都显示「延后(用户在使用电脑…)」，像程序坏了。
+  if (r.manualDaily) return "今日已手动执行过（每天 1 次）";
+  if (r.modeSkip) return `未运行(${r.modeSkip}模式，自动路径不触发)`;
   if (r.deferred) return "延后(用户在使用电脑，空闲时自动跑)";
   if (r.notInstalled) return "跳过(未安装 Rewards 应用)";
   // 桌面应用自己没登录：与本项目登录态无关，跳过即可，不要当成项目故障
@@ -1170,6 +1246,8 @@ module.exports = {
   runOnce,
   // 桌面任务单独导出：主进程空闲触发器（auto / 通知授权）用 forceDesktop 直调
   runDesktopTask,
+  // 仅限手动模式的手动执行（按账号每天 1 次），账户详情「执行桌面任务」按钮走它
+  runDesktopManual,
   // 汇总文案（单独导出便于验证通知里到底写了什么）
   formatDesktopLine,
   desktopDetailOf,

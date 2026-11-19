@@ -482,6 +482,26 @@ export function AccountDetail({
     }
   };
 
+  /**
+   * 手动执行一次桌面应用专属任务（2026-11-19 用户定「仅限手动」模式）。
+   * 每账号每天 1 次（后端按账号按天账本限制）；真跑了会自动关闭 Rewards 应用。
+   */
+  const onDesktopRunManual = async () => {
+    if (!account) return;
+    setBusy("desktopManual");
+    try {
+      const r = await api.desktopRunManual(account.id);
+      if (!r.ok) toast.error(r.error || r.message || "执行失败");
+      else if (r.ran) toast.success(r.message);
+      else toast.info(r.message || "本次未执行");
+      await refreshAccounts();
+    } catch (e) {
+      toast.error(String((e as Error)?.message || e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const onRename = async (name: string) => {
     if (!account) return;
     await api.renameAccount(account.id, name);
@@ -629,6 +649,17 @@ export function AccountDetail({
             >
               {busy === "claimNow" ? "检查中…" : "🎁 立即领取"}
             </GlassButton>
+            {/* 手动执行桌面应用专属任务（2026-11-19「仅限手动」模式）：每账号每天 1 次 */}
+            {!!account.config?.tasks?.desktopApp && (
+              <GlassButton variant="glass" controlSize="small"
+                onClick={() => void onDesktopRunManual()}
+                loading={busy === "desktopManual"}
+                disabled={running}
+                title="立即执行一次桌面应用专属任务（每账号每天 1 次；执行完自动关闭 Rewards 应用）"
+              >
+                {busy === "desktopManual" ? "执行中…" : "🖥 执行桌面任务"}
+              </GlassButton>
+            )}
             {/* 正在跑这个账号：立即运行换成停止此账号；排队中可直接移出队列 */}
             {thisRunning ? (
               <GlassButton variant="destructive" controlSize="small" onClick={() => void onStopThis()} loading={stopping}>

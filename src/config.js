@@ -59,15 +59,18 @@ const DEFAULTS = {
    *    同 claimSchedule 的教训）。必须与 global-config.js / types/index.ts / api/mock.ts
    *    逐字段对齐（四处缺一 → 白屏）。
    *
-   * 两种模式（仅桌面版生效，Web/Docker 无外部应用与系统通知）：
+   * 三种模式（仅桌面版生效，Web/Docker 无外部应用与系统通知）：
+   *   notify ——（默认，2026-11-19 用户定「默认先通知」）空闲达标时发系统通知，
+   *              用户点通知打开软件授权后才执行，执行完结束进程；
    *   auto   —— 检测到键鼠空闲 ≥ idleMinutes 就自动执行，执行完结束 Rewards 进程；
-   *   notify —— 空闲达标时发系统通知，用户点通知打开软件授权后才执行，执行完结束进程。
+   *   manual —— 仅限手动（2026-11-19 用户定）：空闲/通知都不触发，只在账户详情
+   *              点「执行桌面任务」手动跑，按账号每天一次（state.lastDesktopManualDate）。
    * 之所以按「空闲」触发：驱动每做一项就重启一次应用、必然弹窗抢焦点，只有挑用户
    * 不在的时候跑才不打断工作（见 desktop-runtime.js 空闲门禁注释）。
    */
   desktopTask: {
-    mode: "auto",   // auto | notify
-    idleMinutes: 5, // 空闲多少分钟后触发（1~60），默认 5
+    mode: "notify",   // notify（默认）| auto | manual
+    idleMinutes: 5, // 空闲多少分钟后触发（1~60），默认 5；manual 模式不看此项
   },
   // 区域设置
   region: {

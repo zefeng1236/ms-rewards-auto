@@ -17,6 +17,7 @@ import type {
   ClusterRuntimeState,
   DeepPartial,
   ClaimNowResult,
+  DesktopManualResult,
   LogExportOptions,
   LogExportResult,
   DesktopAppInfo,
@@ -204,6 +205,8 @@ export interface ElectronApi {
   exportLogs(opts: LogExportOptions): Promise<LogExportResult>;
   /** 账户详情页：立即检查是否有待领取积分，有就立即领取（不受定时/节流影响） */
   claimNow(id: string): Promise<ClaimNowResult>;
+  /** 账户详情页：手动执行一次桌面应用专属任务（仅限手动模式，每账号每天 1 次） */
+  desktopRunManual(id: string): Promise<DesktopManualResult>;
   chromiumStatus(): Promise<ChromiumStatus>;
   installBrowser(): Promise<InstallBrowserResult>;
 

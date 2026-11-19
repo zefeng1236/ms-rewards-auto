@@ -1,5 +1,5 @@
 /**
- * 桌面任务空闲触发器离线回归（2026-11-19，auto / notify 两方案）。
+ * 桌面任务空闲触发器离线回归（2026-11-19，notify/auto/manual 三模式）。
  * 全程离线：不读真实空闲、不发通知、不跑任务、不碰账号。
  * 用法: npm run test:idle
  */
@@ -26,6 +26,7 @@ function mk(cfg, idle, busy = false) {
 }
 const AUTO = { enabled: true, mode: "auto", idleMinutes: 5 };
 const NOTIFY = { enabled: true, mode: "notify", idleMinutes: 5 };
+const MANUAL = { enabled: true, mode: "manual", idleMinutes: 5 };
 
 async function main() {
   await test("① auto：空闲不足不跑，达标跑一次，episode 内不重复", async () => {
@@ -97,6 +98,22 @@ async function main() {
     runtime.markDesktopRun(Date.now());
     assert.equal(runtime.desktopInCooldown(Date.now()), true);
     runtime.resetDesktopCooldown();
+  });
+
+  await test("⑨ manual（仅限手动）：空闲再多也永不触发，且复位 episode", async () => {
+    const w = mk(MANUAL, 99);
+    assert.equal(w.tick().action, "none");
+    assert.equal(w.tick().reason, "manual");
+    // 用户定「仅限手动」：authorize 也不该被空闲触发器这条链路用到，
+    // 但函数本身保留（notify 点通知用）—— 这里只锁 tick 永不动作。
+    assert.equal(mk(MANUAL, 99, true).tick().action, "none");
+    // 切回 auto 后能正常触发（manual 期间 episode 已复位）
+    let cfg = { ...MANUAL };
+    let idle = 6;
+    const w2 = createDesktopIdleWatcher({ readIdle: () => idle, getConfig: () => cfg, isBusy: () => false });
+    assert.equal(w2.tick().reason, "manual");
+    cfg = { ...AUTO };
+    assert.equal(w2.tick().action, "run");
   });
 
   console.log(lines.join("\n"));

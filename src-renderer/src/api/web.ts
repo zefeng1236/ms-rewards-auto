@@ -17,6 +17,7 @@ import type {
   ClusterRuntimeState,
   DeepPartial,
   ClaimNowResult,
+  DesktopManualResult,
   LogExportOptions,
   LogExportResult,
   DesktopAppInfo,
@@ -479,6 +480,7 @@ export function createWebApi(): ElectronApi {
       }
     },
     claimNow: (id) => rpc<ClaimNowResult>("claimNow", id),
+    desktopRunManual: (id) => rpc<DesktopManualResult>("desktopRunManual", id),
     getHistory: (id, year, month) => rpc<HistorySnapshot>("getHistory", id, year, month),
     chromiumStatus: () => rpc<ChromiumStatus>("chromiumStatus"),
     installBrowser: () => rpc<InstallBrowserResult>("installBrowser"),
