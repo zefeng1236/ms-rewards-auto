@@ -6,6 +6,7 @@ import { passkeyStatus, passkeySupported, passkeyBlockedByIp, registerPasskey } 
 import { VaultRescue } from "./VaultRescue";
 import { SwitchField } from "./fields";
 import { evaluatePassword, STRENGTH_COLORS } from "../utils/passwordStrength";
+import { asciiOnly } from "../utils/asciiInput";
 import type { VaultStatus } from "../types";
 
 /** 恢复密钥 txt 的内容（含用途说明，避免只存一串字符日后不知是什么） */
@@ -455,7 +456,10 @@ export function VaultPanel() {
                 <input
                   type="password"
                   value={pw}
-                  onChange={(e) => setPw(e.target.value)}
+                  onChange={(e) => setPw(asciiOnly(e.target.value))}
+                  onCompositionEnd={(e) => setPw(asciiOnly(e.currentTarget.value))}
+                  lang="en"
+                  spellCheck={false}
                   placeholder={
                     allowWeak ? "至少 6 位，须包含字母与数字" : "至少 8 位，含大小写字母、数字和特殊字符"
                   }
@@ -504,7 +508,10 @@ export function VaultPanel() {
                 <input
                   type="password"
                   value={pw2}
-                  onChange={(e) => setPw2(e.target.value)}
+                  onChange={(e) => setPw2(asciiOnly(e.target.value))}
+                  onCompositionEnd={(e) => setPw2(asciiOnly(e.currentTarget.value))}
+                  lang="en"
+                  spellCheck={false}
                   autoComplete="new-password"
                 />
               </label>
@@ -545,7 +552,10 @@ export function VaultPanel() {
                 <input
                   type="password"
                   value={cur}
-                  onChange={(e) => setCur(e.target.value)}
+                  onChange={(e) => setCur(asciiOnly(e.target.value))}
+                  onCompositionEnd={(e) => setCur(asciiOnly(e.currentTarget.value))}
+                  lang="en"
+                  spellCheck={false}
                   autoComplete="current-password"
                 />
               </label>
@@ -554,7 +564,10 @@ export function VaultPanel() {
                 <input
                   type="password"
                   value={nxt}
-                  onChange={(e) => setNxt(e.target.value)}
+                  onChange={(e) => setNxt(asciiOnly(e.target.value))}
+                  onCompositionEnd={(e) => setNxt(asciiOnly(e.currentTarget.value))}
+                  lang="en"
+                  spellCheck={false}
                   placeholder={
                     allowWeak ? "至少 6 位，须包含字母与数字" : "至少 8 位，含大小写字母、数字和特殊字符"
                   }
@@ -602,7 +615,10 @@ export function VaultPanel() {
                 <input
                   type="password"
                   value={nxt2}
-                  onChange={(e) => setNxt2(e.target.value)}
+                  onChange={(e) => setNxt2(asciiOnly(e.target.value))}
+                  onCompositionEnd={(e) => setNxt2(asciiOnly(e.currentTarget.value))}
+                  lang="en"
+                  spellCheck={false}
                   autoComplete="new-password"
                 />
               </label>

@@ -6,6 +6,7 @@ import { clearSavedRecoveryKey, getSavedRecoveryKey, saveRecoveryKeyToBrowser } 
 import { loginWithPasskey, passkeyStatus, passkeySupported, registerPasskey } from "../api/passkeyClient";
 import { VaultRescue, extractRecoveryKey } from "../components/VaultRescue";
 import { AuthBackground } from "../components/AuthBackground";
+import { asciiOnly } from "../utils/asciiInput";
 import type { VaultStatus } from "../types";
 
 /**
@@ -280,11 +281,21 @@ export function VaultLock({ onUnlocked }: { onUnlocked: () => void }) {
                 <input
                   type="password"
                   value={mode === "pw" ? pw : rk}
-                  onChange={(e) => (mode === "pw" ? setPw(e.target.value) : setRk(e.target.value))}
+                  // 「强制英文」：密码与恢复密钥本就是 ASCII，中文/全角直接剔除（2026-11-20）
+                  onChange={(e) => {
+                    if (mode === "pw") setPw(asciiOnly(e.target.value));
+                    else setRk(asciiOnly(e.target.value));
+                  }}
+                  onCompositionEnd={(e) => {
+                    if (mode === "pw") setPw(asciiOnly(e.currentTarget.value));
+                    else setRk(asciiOnly(e.currentTarget.value));
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === "Enter") void unlockWith(mode === "pw" ? pw : rk, mode === "rk");
                   }}
-                  placeholder={mode === "pw" ? "加密密码" : "粘贴建库时保存的恢复密钥"}
+                  placeholder={mode === "pw" ? "加密密码（仅英文/数字/符号）" : "粘贴建库时保存的恢复密钥"}
+                  lang="en"
+                  spellCheck={false}
                   autoFocus
                 />
                 {mode === "rk" && (

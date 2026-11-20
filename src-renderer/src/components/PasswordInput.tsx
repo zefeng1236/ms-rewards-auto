@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { asciiOnly } from "../utils/asciiInput";
 
 /**
  * 密码输入框：右侧带显隐切换的「小眼睛」。
@@ -18,14 +19,23 @@ export function PasswordInput({
   autoComplete?: string;
 }) {
   const [visible, setVisible] = useState(false);
+  /**
+   * 「强制英文」：onChange + onCompositionEnd 双保险过滤非 ASCII。
+   * 中文输入法合成收尾时浏览器只发 compositionend、未必再发 change，
+   * 所以两处都做一次 asciiOnly：拼音字母属 ASCII 会保留，选字后落地的
+   * 汉字/全角标点被即时剔除，输入框回退到纯英文。
+   */
   return (
     <div className="wz-password-wrap">
       <input
         type={visible ? "text" : "password"}
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => onChange(asciiOnly(e.target.value))}
+        onCompositionEnd={(e) => onChange(asciiOnly(e.currentTarget.value))}
         placeholder={placeholder}
         autoComplete={autoComplete}
+        lang="en"
+        spellCheck={false}
       />
       <button
         type="button"

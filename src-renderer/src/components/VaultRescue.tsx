@@ -5,6 +5,7 @@ import { api, IS_WEB } from "../api/ipc";
 import { clearSavedRecoveryKey } from "../api/web";
 import { PasswordInput } from "./PasswordInput";
 import { evaluatePassword, STRENGTH_COLORS } from "../utils/passwordStrength";
+import { asciiOnly } from "../utils/asciiInput";
 
 /**
  * 「忘记密码」自救面板。
@@ -178,10 +179,15 @@ export function VaultRescue({
                 type="text"
                 value={rk}
                 onChange={(e) => {
-                  setRk(e.target.value);
+                  setRk(asciiOnly(e.target.value));
                   setRkFromFile("");
                 }}
-                placeholder="粘贴建库时保存的 44 位恢复密钥"
+                onCompositionEnd={(e) => {
+                  setRk(asciiOnly(e.currentTarget.value));
+                  setRkFromFile("");
+                }}
+                placeholder="粘贴建库时保存的 44 位恢复密钥（仅英文/数字）"
+                lang="en"
                 spellCheck={false}
               />
             </label>

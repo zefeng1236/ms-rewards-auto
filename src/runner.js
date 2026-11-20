@@ -260,17 +260,13 @@ async function runDesktopManual(ctx) {
       return { ok: true, ran: false, message: "桌面任务近期已执行（冷却中），稍后再试" };
     }
     const result = await runDesktopTask(ctx, { forceDesktop: true });
-    // 只有真跑了才消耗当日额度（同 markDesktopRun 的收口条件，再排除各种跳过）
-    const ran = !!(
-      result &&
-      !result.disabled &&
-      !result.delayed &&
-      !result.deferred &&
-      !result.notInstalled &&
-      !result.notLoggedIn &&
-      !result.manualDaily &&
-      !result.modeSkip
-    );
+    // 只有真跑了才消耗当日额度。
+    // ⚠️ 2026-11-20 真机抓到的 bug：原来用「排除已知跳过字段」的负黑名单，
+    // 但 desktop-app.js 连续未就绪返回的是 {status:"retry", reason:"桌面应用未就绪"}，
+    // 没有 notInstalled 等标记 → 被误判成真跑了、白白消耗当日额度。
+    // 改成正白名单：只有插件明说 status:"done" 才算真跑，其余（retry/skip/error/
+    // 未安装/未登录/冷却/仅限手动…）一律不记账。新增跳过态也不会再漏。
+    const ran = !!(result && result.status === "done");
     if (ran) {
       state.get().lastDesktopManualDate = todayNum;
       state.save();

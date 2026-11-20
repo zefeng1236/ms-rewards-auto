@@ -564,6 +564,78 @@ checkTrue(
 const mainSource = fs.readFileSync(path.join(ROOT, "src", "electron-main.js"), "utf8");
 checkTrue("主进程暴露重置密码与清空数据两个通道", mainSource.includes("\"vault:resetPasswordWithRecovery\"") && mainSource.includes("\"app:wipeAccountData\""));
 
+/* ---- 密码框「强制英文」（2026-11-20 用户提：输密码被中文输入法坑过） ---- */
+const asciiUtilPath = path.join(ROOT, "src-renderer", "src", "utils", "asciiInput.ts");
+checkTrue(
+  "密码框强制英文工具存在且逐字符过滤 ASCII（0x20~0x7E）",
+  fs.existsSync(asciiUtilPath) &&
+    /function asciiOnly\(/.test(fs.readFileSync(asciiUtilPath, "utf8")) &&
+    /code >= 0x20 && code <= 0x7e/.test(fs.readFileSync(asciiUtilPath, "utf8")),
+  "密码/恢复密钥本就是 ASCII；中文/全角/emoji 必须被剔除，否则用户会被输入法坑"
+);
+// 行为等价测试（TS 无法直接 require，用同算法在 JS 里验证真值表）
+const asciiOnlyJs = (v) => {
+  let out = "";
+  for (const ch of v) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code >= 0x20 && code <= 0x7e) out += ch;
+  }
+  return out;
+};
+checkTrue(
+  "asciiOnly 真值表：英文/数字/符号保留，汉字/全角/emoji 剔除",
+  asciiOnlyJs("Abc123!@#") === "Abc123!@#" &&
+    asciiOnlyJs("密码Abc") === "Abc" &&
+    asciiOnlyJs("ＡＢＣ") === "" &&
+    asciiOnlyJs("a中b") === "ab" &&
+    asciiOnlyJs("P@ss😀w0rd") === "P@ssw0rd",
+  "漏过滤任一类 → 输密码仍会被中文输入法污染"
+);
+const pwInputSource = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "components", "PasswordInput.tsx"),
+  "utf8"
+);
+checkTrue(
+  "PasswordInput 接了强制英文（onChange + onCompositionEnd 双保险）",
+  pwInputSource.includes("asciiOnly(e.target.value)") &&
+    pwInputSource.includes("asciiOnly(e.currentTarget.value)") &&
+    /onCompositionEnd/.test(pwInputSource),
+  "合成收尾只发 compositionend 不发 change，缺一处 → 选字后的汉字留进密码"
+);
+// 所有密码裸 input 都要接 asciiOnly（PasswordInput 组件已统一覆盖，这里查剩下的裸框）
+const lockPwSource = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "views", "VaultLock.tsx"),
+  "utf8"
+);
+const vaultPanelSource = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "components", "VaultPanel.tsx"),
+  "utf8"
+);
+const rescuePwSource = fs.readFileSync(
+  path.join(ROOT, "src-renderer", "src", "components", "VaultRescue.tsx"),
+  "utf8"
+);
+checkTrue(
+  "锁屏/安全设置/自救三处的密码与恢复密钥框都接了强制英文",
+  // 语义匹配 setXxx(asciiOnly(...))：只数 asciiOnly( 会假绿（调了却把结果丢了）。
+  // VaultLock 密码+恢复密钥双分支，VaultPanel 5 框，Rescue 恢复密钥 1 框。
+  /setPw\(asciiOnly\(e\.target\.value\)\)/.test(lockPwSource) &&
+    /setRk\(asciiOnly\(e\.target\.value\)\)/.test(lockPwSource) &&
+    /setPw\(asciiOnly\(e\.currentTarget\.value\)\)/.test(lockPwSource) &&
+    /setRk\(asciiOnly\(e\.currentTarget\.value\)\)/.test(lockPwSource) &&
+    (vaultPanelSource.match(/set\w+\(asciiOnly\(e\.(current)?[Tt]arget\.value\)\)/g) || []).length === 10 &&
+    /setRk\(asciiOnly\(e\.target\.value\)\)/.test(rescuePwSource) &&
+    /setRk\(asciiOnly\(e\.currentTarget\.value\)\)/.test(rescuePwSource) &&
+    lockPwSource.includes("lang=\"en\"") &&
+    vaultPanelSource.includes("lang=\"en\""),
+  "漏掉任一处、或 asciiOnly 结果没写回 state → 用户仍会被中文输入法坑（要的是所有密码框）"
+);
+checkTrue(
+  "密码提示字段没有被误过滤（明文提示允许中文）",
+  !/setHint\(asciiOnly/.test(rescuePwSource) && !/value=\{asciiOnly\(.*hint/.test(vaultPanelSource),
+  "密码提示是给自己看的明文，允许中文；误过滤会破坏用户意图"
+);
+
 /* ============ 10. 设置页布局守卫（窗口缩放） ============ */
 console.log("\n【10】设置页布局守卫（窗口缩放）");
 const cssSource = fs.readFileSync(
@@ -9106,6 +9178,9 @@ checkTrue(
       /Number\(state\.get\(\)\.lastDesktopManualDate \|\| 0\) === todayNum/.test(runnerIdleSrc) &&
       runnerIdleSrc.includes("state.get().lastDesktopManualDate = todayNum") &&
       runnerIdleSrc.includes("todayUsed: true") &&
+      // ⚠️ 真机抓到的 bug（2026-11-20）：负黑名单漏掉 {status:"retry", reason:"应用未就绪"}，
+      // 没装应用也记账。必须是正白名单：只有 status:"done" 才算真跑。
+      /const ran = !!\(\s*result && result\.status === "done"\s*\);/.test(runnerIdleSrc) &&
       // 记账本必须在结果判据之后（未安装/未登录/跳过不消耗额度）
       runnerIdleSrc.indexOf("lastDesktopManualDate = todayNum") > runnerIdleSrc.indexOf("runDesktopTask(ctx, { forceDesktop: true })") &&
       /lastDesktopManualDate:\s*0/.test(fs.readFileSync(path.join(ROOT, "src", "state.js"), "utf8")),
