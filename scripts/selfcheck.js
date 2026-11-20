@@ -8812,6 +8812,20 @@ console.log("\n【0.15.9】桌面应用专属任务（外部进程驱动）");
         wfm.indexOf("return { crashed: true }") > wfm.indexOf("return { page, login: false }"),
       "顺序反了 → 重启自愈成功后仍被残留恢复页判成崩溃，整轮白做（2026-11-18 真机实证）"
     );
+    checkTrue(
+      "desktop-app：启动期看到恢复页不立刻判崩溃，给主页面宽限窗口再定论",
+      // 2026-11-20 真机：应用刚 spawn 时 recovery.html 先渲染，dashboard 要 4~6 秒才出来；
+      // 原逻辑一看到 recovery 就判 crashed → 重启 → 又抢跑 → 整轮永远跑不起来。
+      wfm.includes("recoverySeenAt") &&
+        // 必须记录「首次看到恢复页的时间」，只判变量名会假绿（赋 0 也能匹配）
+        /recoverySeenAt = Date\.now\(\)/.test(wfm) &&
+        /RECOVERY_GRACE_MS/.test(wfm) &&
+        /Date\.now\(\) - recoverySeenAt >= RECOVERY_GRACE_MS/.test(wfm) &&
+        // 宽限期必须可注入（测试能设小值），不能硬编码死等
+        /graceMs/.test(wfm) &&
+        deskCode.includes("recoveryGraceMs"),
+      "一看到恢复页就判崩溃 → 被启动竞态误杀、反复重启；宽限期写死又会拖慢真实崩溃的判定与测试"
+    );
   }
   checkTrue(
     "desktop-app：整轮没拿到扫描快照 / 异常中断时报 retry，不得误报 done",
@@ -9092,6 +9106,14 @@ checkTrue(
       /desktopRuntime\.effectiveRuntime\(rules\)/.test(deskSrcW) &&
       /desktopRuntime\.circuitOptions\(/.test(runSrcW),
     "两处各解析一次 → 远程改了阈值，熔断还在用旧的 3 次，问题极难自查"
+  );
+  checkTrue(
+    "desktop-runtime：recoveryGraceMs 有默认值、钳制、且驱动真正消费",
+    /recoveryGraceMs:\s*18000/.test(rtSrc) &&
+      /recoveryGraceMs:\s*num\(rt\.recoveryGraceMs/.test(rtSrc) &&
+      /recoveryGraceMs,\s*\n\s*\} = eff/.test(deskSrcW) &&
+      /waitForMainWindow\(browser, onLog, 45000, recoveryGraceMs\)/.test(deskSrcW),
+    "宽限期不参数化 → 测试要死等 18s；驱动不消费 → 远程/测试改了没用，白改"
   );
   checkTrue(
     "v2 的 7 个参数确实被驱动消费，不是只写进规则文件",

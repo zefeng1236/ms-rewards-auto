@@ -419,9 +419,18 @@ async function waitPageReady(page, tries = 16) {
  * 所以这里每轮都**重新枚举页面**，直到拿到真正的主窗口；全程不重启应用。
  * @returns {Promise<{ page: object, login: boolean } | null>}
  */
-async function waitForMainWindow(browser, onLog = () => {}, timeoutMs = 45000) {
+async function waitForMainWindow(browser, onLog = () => {}, timeoutMs = 45000, graceMs = 18000) {
   const deadline = Date.now() + timeoutMs;
   let last = "";
+  /**
+   * 「恢复页宽限」：应用刚启动时，recovery.html 是先渲染的静态壳，
+   * dashboard 还要 4~6 秒才加载出来（真机 2026-11-20 实测：6 秒后 dashboard 已在列表中，
+   * 但 recovery 页仍残留在 CDP 页面列表里）。原逻辑一看到 recovery 就判 crashed，
+   * 导致「应用其实没坏、只是被抢跑」被误杀 → 重启 → 又抢跑 → 反复，整轮永远跑不起来。
+   * 现在第一次看到 recovery 只记时间，给主页面一个宽限窗口；窗口内出现 dashboard 就正常返回。
+   */
+  let recoverySeenAt = 0;
+  const RECOVERY_GRACE_MS = graceMs;
   while (Date.now() < deadline) {
     let page = null;
     try {
@@ -453,8 +462,18 @@ async function waitForMainWindow(browser, onLog = () => {}, timeoutMs = 45000) {
       allPages = [];
     }
     if (allPages.some((p) => CRASH_RECOVERY_RE.test(String(p.url())))) {
-      onLog("检测到 Rewards 应用崩溃恢复页：主页面已崩，需重启实例");
-      return { crashed: true };
+      // 有恢复页 ≠ 主页面已崩：它可能只是启动期先渲染的壳，dashboard 还在路上。
+      // 先记首次发现时间，宽限窗口内继续等；窗口期满仍拿不到主页面才判稳态崩溃。
+      if (!recoverySeenAt) {
+        recoverySeenAt = Date.now();
+        last = "发现恢复页，等待主页面加载";
+      } else if (Date.now() - recoverySeenAt >= RECOVERY_GRACE_MS) {
+        onLog("检测到 Rewards 应用崩溃恢复页：主页面已崩，需重启实例");
+        return { crashed: true };
+      }
+    } else if (recoverySeenAt && !allPages.some((p) => CRASH_RECOVERY_RE.test(String(p.url())))) {
+      // 恢复页消失（应用自己恢复了）：重置宽限，交给后续轮次继续等 dashboard。
+      recoverySeenAt = 0;
     }
     await sleep(1200);
   }
@@ -820,6 +839,7 @@ async function runDesktopApp(ctx, opts = {}) {
     cardMaxWaitMs,
     dwellMs,
     dwellRounds,
+    recoveryGraceMs,
   } = eff;
   // 同一项最多给几次机会（默认 1 次重启 → 2 次机会）
   const maxAttemptsPerItem = restartMaxTimes + 1;
@@ -896,7 +916,7 @@ async function runDesktopApp(ctx, opts = {}) {
       // ⚠️ 应用刚启动时主窗口还没渲染出来，CDP 里只有会被反复销毁的 about:blank。
       //    waitForMainWindow 会重新枚举页面直到主窗口出现；拿不到也**不要重启应用**，
       //    否则把刚起来的实例杀掉，又撞一遍启动期竞态（2026-11-07 真机连败 3 次）。
-      const acquired = await waitForMainWindow(browser, onLog);
+      const acquired = await waitForMainWindow(browser, onLog, 45000, recoveryGraceMs);
       if (acquired && acquired.crashed) {
         // 稳态崩溃（主页面崩了、端口还开着）：重启一次往往就好。
         // 重启后仍停在恢复页说明应用/WebView2 本身坏了，别再无限重启 ——

@@ -28,6 +28,8 @@ const DEFAULTS = {
   dwellMs: 2500,
   dwellRounds: 3,
   idleGateMinutes: 3,
+  /** 启动期看到恢复页后，再给主页面多久加载（超过才判稳态崩溃）。默认 18s */
+  recoveryGraceMs: 18000,
 };
 
 /** 数值钳制：非有限数 / 越界 → 默认值 */
@@ -56,6 +58,7 @@ function effectiveRuntime(rules) {
     dwellMs: num(landing.dwellMs, DEFAULTS.dwellMs, 0, 30000),
     dwellRounds: Math.floor(num(landing.dwellRounds, DEFAULTS.dwellRounds, 0, 20)),
     idleGateMinutes: num(rt.idleGateMinutes, DEFAULTS.idleGateMinutes, 0, 120),
+    recoveryGraceMs: num(rt.recoveryGraceMs, DEFAULTS.recoveryGraceMs, 0, 60000),
   };
 }
 

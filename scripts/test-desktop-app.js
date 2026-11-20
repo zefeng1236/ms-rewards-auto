@@ -174,6 +174,15 @@ function makePage(sc) {
       // 重启恢复后**仍残留旧 recovery 页**（真机 2026-11-18：5 个页面里
       // 同时有 rewards.bing.com/dashboard 与 recovery），用来锁死判定顺序。
       pages: () => {
+        // bootGraceMs：模拟「应用刚启动，恢复页先渲染、dashboard 还在加载」。
+        // 前 N 毫秒内枚举只返回恢复页，之后 dashboard 出现 —— 真机 2026-11-20。
+        // 用时间窗而非调用次数：pages() 每轮被调用 2 次（pickMainPage + allPages），
+        // 按次数会在第一轮就被消耗完，根本走不到宽限分支。
+        if (Number.isFinite(sc.bootGraceMs)) {
+          if (!sc.graceUntil) sc.graceUntil = Date.now() + sc.bootGraceMs;
+          if (Date.now() < sc.graceUntil) return [recoveryPage, blankPage];
+          return [page, recoveryPage];
+        }
         const crashMode = sc.crashRecovery || Number.isFinite(sc.crashAfterRounds) || Number.isFinite(sc.crashAfterItems);
         if (crashMode && !sc.recovered) return [recoveryPage, blankPage];
         if (crashMode) return [page, recoveryPage];
@@ -381,7 +390,7 @@ async function main() {
     const r = await mod.runDesktopApp(ctxWith(true), {
       dryRun: true,
       onLog: () => {},
-      rules: { runtime: { renderWaitMs: 1 } },
+      rules: { runtime: { renderWaitMs: 1, recoveryGraceMs: 1 } },
     });
     assert.equal(r.status, "skip", `实际=${JSON.stringify(r)} logs=${JSON.stringify(sc.logs)}`);
     assert.equal(r.todo, 1, `实际=${JSON.stringify(r)} logs=${JSON.stringify(sc.logs)}`);
@@ -395,7 +404,7 @@ async function main() {
     const r = await mod.runDesktopApp(ctxWith(true), {
       dryRun: true,
       onLog: (m) => sc.logs.push(m),
-      rules: { runtime: { renderWaitMs: 1 } },
+      rules: { runtime: { renderWaitMs: 1, recoveryGraceMs: 1 } },
     });
     assert.equal(r.status, "skip", `实际=${JSON.stringify(r)} logs=${JSON.stringify(sc.logs)}`);
     assert.equal(r.todo, 1);
@@ -409,7 +418,7 @@ async function main() {
     const r = await mod.runDesktopApp(ctxWith(true), {
       maxItems: 2,
       onLog: () => {},
-      rules: { runtime: { renderWaitMs: 1 } },
+      rules: { runtime: { renderWaitMs: 1, recoveryGraceMs: 1 } },
     });
     assert.equal(r.gained, 2, `实际=${JSON.stringify(r)}`);
     assert.equal(sc.spawnAfterStale, true, "端口还在残留时就 spawn 了");
@@ -422,7 +431,7 @@ async function main() {
     const r = await mod.runDesktopApp(ctxWith(true), {
       maxItems: 1,
       onLog: (m) => sc.logs.push(m),
-      rules: { runtime: { renderWaitMs: 1 } },
+      rules: { runtime: { renderWaitMs: 1, recoveryGraceMs: 1 } },
     });
     assert.equal(r.gained, 1, `实际=${JSON.stringify(r)} logs=${JSON.stringify(sc.logs)}`);
     assert.equal(r.clicked, 1);
@@ -435,7 +444,7 @@ async function main() {
     const r = await mod.runDesktopApp(ctxWith(true), {
       maxItems: 1,
       onLog: (m) => sc.logs.push(m),
-      rules: { runtime: { renderWaitMs: 1 } },
+      rules: { runtime: { renderWaitMs: 1, recoveryGraceMs: 1 } },
     });
     assert.equal(r.gained, 1, `实际=${JSON.stringify(r)} logs=${JSON.stringify(sc.logs)}`);
     assert.equal(r.points, 10);
@@ -451,7 +460,7 @@ async function main() {
     const r = await mod.runDesktopApp(ctxWith(true), {
       maxItems: 1,
       onLog: (m) => sc.logs.push(m),
-      rules: { runtime: { renderWaitMs: 1 } },
+      rules: { runtime: { renderWaitMs: 1, recoveryGraceMs: 1 } },
     });
     assert.equal(r.gained, 0);
     assert.equal(r.clicked, 1);
@@ -468,7 +477,7 @@ async function main() {
     await mod.runDesktopApp(ctxWith(true), {
       maxItems: 2,
       onLog: (m) => sc.logs.push(m),
-      rules: { runtime: { renderWaitMs: 1 } },
+      rules: { runtime: { renderWaitMs: 1, recoveryGraceMs: 1 } },
     });
     const nums = sc.logs
       .filter((l) => /^第 \d+ 项:/.test(l))
@@ -483,7 +492,7 @@ async function main() {
     await mod.runDesktopApp(ctxWith(true), {
       maxItems: 1,
       onLog: () => {},
-      rules: { runtime: { renderWaitMs: 1 } },
+      rules: { runtime: { renderWaitMs: 1, recoveryGraceMs: 1 } },
     });
     assert.equal(sc.pageClosed || 0, 0, "兑换类任务会把主窗口杀掉");
   });
@@ -495,7 +504,7 @@ async function main() {
     const r = await mod.runDesktopApp(ctxWith(true), {
       maxItems: 1,
       onLog: (m) => sc.logs.push(m),
-      rules: { runtime: { renderWaitMs: 1 } },
+      rules: { runtime: { renderWaitMs: 1, recoveryGraceMs: 1 } },
     });
     assert.equal(r.status, "done");
     assert.ok(sc.logs.some((l) => l.includes("页面主体未渲染")), "没记录渲染失败");
@@ -529,7 +538,7 @@ async function main() {
     const r = await mod.runDesktopApp(ctxWith(true), {
       maxItems: 3,
       onLog: () => {},
-      rules: { runtime: { renderWaitMs: 1 } },
+      rules: { runtime: { renderWaitMs: 1, recoveryGraceMs: 1 } },
     });
     assert.equal(r.gained, 3);
     assert.equal(r.points, 30);
@@ -549,7 +558,7 @@ async function main() {
     const r = await mod.runDesktopApp(ctxWith(true), {
       dryRun: true,
       onLog: (m) => sc.logs.push(m),
-      rules: { runtime: { renderWaitMs: 1 } },
+      rules: { runtime: { renderWaitMs: 1, recoveryGraceMs: 1 } },
     });
     assert.equal(r.todo, 0);
     assert.equal(r.manual, 1, `实际=${JSON.stringify(r)}`);
@@ -561,7 +570,7 @@ async function main() {
     const r = await mod.runDesktopApp(ctxWith(true), {
       maxItems: 1,
       onLog: (m) => sc.logs.push(m),
-      rules: { runtime: { renderWaitMs: 1 } },
+      rules: { runtime: { renderWaitMs: 1, recoveryGraceMs: 1 } },
     });
     assert.equal(sc.clicks || 0, 0, "兑换项被点了");
     assert.equal(r.clicked, 0);
@@ -575,7 +584,7 @@ async function main() {
     await mod.runDesktopApp(ctxWith(true), {
       maxItems: 2,
       onLog: (m) => sc.logs.push(m),
-      rules: { runtime: { renderWaitMs: 1 } },
+      rules: { runtime: { renderWaitMs: 1, recoveryGraceMs: 1 } },
     });
     assert.equal(sc.clicks, 1, `实际点击 ${sc.clicks} 次`);
     const skipFile = path.join(sc.dir, "desktop-app-skip.json");
@@ -590,7 +599,7 @@ async function main() {
     const r = await mod.runDesktopApp(ctxWith(true), {
       maxItems: 1,
       onLog: (m) => sc.logs.push(m),
-      rules: { runtime: { renderWaitMs: 1 } },
+      rules: { runtime: { renderWaitMs: 1, recoveryGraceMs: 1 } },
     });
     assert.equal(r.status, "done", `实际=${JSON.stringify(r)}`);
     assert.equal(r.gained, 1);
@@ -606,7 +615,7 @@ async function main() {
     const r = await mod.runDesktopApp(ctxWith(true), {
       maxItems: 1,
       onLog: (m) => sc.logs.push(m),
-      rules: { runtime: { renderWaitMs: 1 } },
+      rules: { runtime: { renderWaitMs: 1, recoveryGraceMs: 1 } },
     });
     assert.equal(r.status, "retry", `崩溃零产出必须报 retry，实际=${JSON.stringify(r)}`);
     assert.equal(r.reason, "桌面应用未就绪");
@@ -621,7 +630,7 @@ async function main() {
     const mod = loadWithStubs(DESKTOP_FILE, stubsFor(sc));
     const r = await mod.runDesktopApp(ctxWith(true), {
       onLog: () => {},
-      rules: { runtime: { renderWaitMs: 1 } },
+      rules: { runtime: { renderWaitMs: 1, recoveryGraceMs: 1 } },
     });
     assert.notEqual(r.status, "done");
     assert.notEqual(r.reason, "今天没有可做的桌面任务");
@@ -643,7 +652,7 @@ async function main() {
     const r = await mod.runDesktopApp(ctxWith(true), {
       maxItems: 3,
       onLog: (m) => sc.logs.push(m),
-      rules: { runtime: { renderWaitMs: 1 } },
+      rules: { runtime: { renderWaitMs: 1, recoveryGraceMs: 1 } },
     });
     assert.equal(r.status, "retry", `扫描后崩溃必须报 retry，实际=${JSON.stringify(r)}`);
     assert.ok(
@@ -652,6 +661,28 @@ async function main() {
     );
     const circuit = require(path.join(ROOT, "src", "desktop-circuit.js"));
     assert.equal(circuit.isFailure(r), true, "扫描后崩溃也要计入熔断失效");
+  });
+
+  // ㉙ 启动期恢复页短暂出现、dashboard 随后加载 → 宽限期内容忍，不当崩溃误杀
+  // 真机 2026-11-20：应用刚 spawn 时 recovery.html 先渲染，dashboard 要 4~6 秒才出来；
+  // 旧逻辑一看到 recovery 就判 crashed → 重启 → 又抢跑 → 整轮永远跑不起来。
+  await test("启动期恢复页先出现、主页面随后就绪：宽限内容忍，不误判崩溃", async () => {
+    // 恢复页持续 1.5s（小于 grace 5s），之后 dashboard 就绪
+    const sc = scenario({ bootGraceMs: 1500, forms: ["A1"], gainOnClick: true, pids: [4321] });
+    const mod = loadWithStubs(DESKTOP_FILE, stubsFor(sc));
+    const r = await mod.runDesktopApp(ctxWith(true), {
+      maxItems: 1,
+      onLog: (m) => sc.logs.push(m),
+      rules: { runtime: { renderWaitMs: 1, recoveryGraceMs: 5000 } },
+    });
+    assert.notEqual(r.status, "retry", `宽限内容忍后不该报 retry，实际=${JSON.stringify(r)}`);
+    assert.equal(r.gained, 1, "宽限内 dashboard 就绪后应正常完成一项");
+    assert.ok(
+      !sc.logs.some((l) => l.includes("主页面已崩")),
+      "宽限期内不该判崩溃"
+    );
+    const kills = sc.calls.filter((c) => /taskkill/i.test(c)).length;
+    assert.equal(kills, 0, `恢复页短暂出现不该触发重启，实际 taskkill ${kills} 次`);
   });
 
   console.log(lines.join("\n"));
