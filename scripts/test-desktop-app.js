@@ -132,6 +132,11 @@ function makePage(sc) {
         click: async () => {
           sc.clicks = (sc.clicks || 0) + 1;
           if (sc.gainOnClick) sc.completed = (sc.completed || 0) + 1;
+          // crashAfterItems：点完第 N 项后主页面崩到恢复页（不再恢复），
+          // 模拟真机「已扫描并点了部分项，随后崩溃」——旧逻辑此时 scan 有值会落 done。
+          if (Number.isFinite(sc.crashAfterItems) && sc.clicks >= sc.crashAfterItems) {
+            sc.recovered = false;
+          }
           if (sc.sameWindowNav) this._url = "https://rewards.bing.com/redeem/sku/abc";
           else popup._url = `https://cn.bing.com/?form=${(sc.forms || ["ML2Y3O"])[0]}`;
         },
@@ -169,8 +174,9 @@ function makePage(sc) {
       // 重启恢复后**仍残留旧 recovery 页**（真机 2026-11-18：5 个页面里
       // 同时有 rewards.bing.com/dashboard 与 recovery），用来锁死判定顺序。
       pages: () => {
-        if (sc.crashRecovery && !sc.recovered) return [recoveryPage, blankPage];
-        if (sc.crashRecovery) return [page, recoveryPage];
+        const crashMode = sc.crashRecovery || Number.isFinite(sc.crashAfterRounds) || Number.isFinite(sc.crashAfterItems);
+        if (crashMode && !sc.recovered) return [recoveryPage, blankPage];
+        if (crashMode) return [page, recoveryPage];
         return [page];
       },
     }],
@@ -217,6 +223,8 @@ function scenario(overrides = {}) {
     },
     overrides
   );
+  // crashAfterRounds / crashAfterItems：首轮正常（recovered=true），到阈值后才崩
+  if (Number.isFinite(sc.crashAfterRounds) || Number.isFinite(sc.crashAfterItems)) sc.recovered = true;
   makePage(sc);
   return sc;
 }
@@ -241,6 +249,13 @@ function stubsFor(sc) {
       sc.spawnAfterStale = (sc.portStaleHits || 0) === 0;
       // 崩溃自愈场景：重启后应用恢复正常；crashAlways 则一直崩，用于验证不会无限重启
       if (sc.crashRecovery && !sc.crashAlways) sc.recovered = true;
+      // crashAfterRounds：第 N 次 spawn 之后主页面变恢复页（并保持崩）—— 模拟
+      // 「先成功扫描并点了部分项，随后应用崩到恢复页」的真机 2026-11-20 场景。
+      // 初始 recovered=true 让第一轮正常跑；超过阈值后置 false 不再恢复。
+      if (Number.isFinite(sc.crashAfterRounds)) {
+        sc.spawnCount = (sc.spawnCount || 0) + 1;
+        if (sc.spawnCount > sc.crashAfterRounds) sc.recovered = false;
+      }
       // spawn 之后端口就绪，避免 ensureStarted 的等待循环空转
       sc.portReady = true;
       sc.justStopped = false;
@@ -612,6 +627,31 @@ async function main() {
     assert.notEqual(r.reason, "今天没有可做的桌面任务");
     const circuit = require(path.join(ROOT, "src", "desktop-circuit.js"));
     assert.equal(circuit.isFailure(r), true, "熔断没把这种故障当失效");
+  });
+
+  // ㉘ 中途崩溃（已扫描/点过项）也必须报 retry，不能落 done 消耗手动额度
+  // 真机 2026-11-20：点了第 1 项后应用崩到恢复页，scan 已有值 → 旧逻辑落 done、
+  // 账本被写、熔断不计失败。这条锁死「异常 break 置 aborted → retry」。
+  await test("扫描后中途崩溃也报 retry，不误报 done 消耗账本", async () => {
+    const sc = scenario({
+      crashAfterItems: 1, // 点完第 1 项就崩到第 2 轮，此时 scan 已有值（真机路径）
+      forms: ["A1", "B2", "C3"],
+      gainOnClick: true,
+      pids: [4321],
+    });
+    const mod = loadWithStubs(DESKTOP_FILE, stubsFor(sc));
+    const r = await mod.runDesktopApp(ctxWith(true), {
+      maxItems: 3,
+      onLog: (m) => sc.logs.push(m),
+      rules: { runtime: { renderWaitMs: 1 } },
+    });
+    assert.equal(r.status, "retry", `扫描后崩溃必须报 retry，实际=${JSON.stringify(r)}`);
+    assert.ok(
+      sc.logs.some((l) => l.includes("崩溃恢复页")),
+      "应走到崩溃恢复页分支"
+    );
+    const circuit = require(path.join(ROOT, "src", "desktop-circuit.js"));
+    assert.equal(circuit.isFailure(r), true, "扫描后崩溃也要计入熔断失效");
   });
 
   console.log(lines.join("\n"));

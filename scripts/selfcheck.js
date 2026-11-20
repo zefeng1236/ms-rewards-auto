@@ -8814,17 +8814,31 @@ console.log("\n【0.15.9】桌面应用专属任务（外部进程驱动）");
     );
   }
   checkTrue(
-    "desktop-app：整轮没拿到扫描快照时报 retry，不得误报 done / 今天没任务",
-    deskCode.includes("if (dryRun || scan === null)") &&
+    "desktop-app：整轮没拿到扫描快照 / 异常中断时报 retry，不得误报 done",
+    deskCode.includes("if (dryRun || scan === null || aborted)") &&
       deskCode.includes('reason: "桌面应用未就绪"'),
     "崩溃零产出若返回 done：①汇总说成「今天没有可做的桌面任务」误导用户；②熔断把 done 当成功，对这种故障永不触发"
+  );
+  checkTrue(
+    "desktop-app：中途崩溃（已扫描/点过部分项）也要报 retry，不许落 done 消耗账本",
+    // 2026-11-20 真机：点了第 1 项后应用崩到恢复页，重启仍崩 → break 时 scan 已有值，
+    // 旧逻辑落到 done、账本被写、熔断不计失败。异常 break 必须置 aborted。
+    /let aborted = false/.test(deskCode) &&
+      (deskCode.match(/aborted = true;/g) || []).length >= 6 &&
+      /if \(dryRun \|\| scan === null \|\| aborted\)/.test(deskCode) &&
+      // aborted 判断必须在 done 分支之前
+      deskCode.indexOf("|| aborted)") < deskCode.indexOf('status: "done"'),
+    "异常 break 不置 aborted → 崩溃后仍报 done，手动额度被白白消耗、熔断永不触发"
   );
   checkTrue(
     "崩溃自愈与零产出误报有离线用例锁死",
     testDesktopSrc.includes("crashRecovery") &&
       testDesktopSrc.includes("crashAlways") &&
-      testDesktopSrc.includes("整轮没跑起来时不返回 done"),
-    "真机才暴露的故障必须有离线回归，否则下次改动又会退回「干等 + 误报」"
+      testDesktopSrc.includes("整轮没跑起来时不返回 done") &&
+      // 2026-11-20 真机：扫描后点了部分项再崩，scan 已有值也会误落 done
+      testDesktopSrc.includes("crashAfterItems") &&
+      testDesktopSrc.includes("扫描后中途崩溃也报 retry"),
+    "真机才暴露的故障必须有离线回归，否则下次改动又会退回「干等 + 误报 / 崩溃也记账」"
   );
   checkTrue(
     "桌面任务离线打桩测试已固化（npm run test:desktop，且覆盖关键路径）",

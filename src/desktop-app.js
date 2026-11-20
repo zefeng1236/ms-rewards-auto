@@ -849,6 +849,9 @@ async function runDesktopApp(ctx, opts = {}) {
   let navFails = 0; // 连续「应用未就绪」次数
   let pageFails = 0; // 连续「页面连上就死」次数（重启竞态），别无限重连
   let crashRestarts = 0; // 因「崩溃恢复页」重启的次数（上限 1：反复崩就放弃，别一直杀用户的应用）
+  let aborted = false;   // 本轮是否「异常中断」（非正常做完）。2026-11-20 真机踩：
+                          // 点了第 1 项后应用崩溃恢复页，break 出来时 scan 已有值 →
+                          // 落到 done 分支、账本被消耗、熔断也不计失败。异常 break 必须报 retry。
   let scan = null; // 最后一次扫描快照（dryRun / 异常时回传）
 
   // 安全上限：宁可少做几项，也不能因为某项一直失败而无限重启
@@ -872,6 +875,7 @@ async function runDesktopApp(ctx, opts = {}) {
     if (!boot.ok) {
       if (restarts === 0) return { status: "retry", reason: boot.reason || "无法启动桌面应用" };
       onLog(`重启后应用仍未就绪，结束本轮：${boot.reason || "未知原因"}`);
+      aborted = true;
       break;
     }
     if (boot.restarted) onLog("已重启桌面应用以开启调试端口");
@@ -884,6 +888,7 @@ async function runDesktopApp(ctx, opts = {}) {
         return { status: "retry", reason: `无法接管桌面应用: ${String(e.message || e).slice(0, 80)}` };
       }
       onLog(`重启后无法接管，结束本轮: ${String(e.message || e).slice(0, 60)}`);
+      aborted = true;
       break;
     }
 
@@ -899,6 +904,7 @@ async function runDesktopApp(ctx, opts = {}) {
         crashRestarts++;
         if (crashRestarts > 1) {
           onLog("Rewards 应用重启后仍停在崩溃恢复页，结束本轮");
+          aborted = true;
           break;
         }
         restarts++;
@@ -908,6 +914,7 @@ async function runDesktopApp(ctx, opts = {}) {
         pageFails++;
         if (pageFails >= 3) {
           onLog("桌面应用连续 3 次拿不到主窗口，结束本轮");
+          aborted = true;
           break;
         }
         onLog("尚未拿到主窗口，重新连接 CDP（不重启应用）");
@@ -935,6 +942,7 @@ async function runDesktopApp(ctx, opts = {}) {
         navFails++;
         if (navFails >= 2) {
           onLog("桌面应用连续未就绪，结束本轮");
+          aborted = true;
           break;
         }
         onLog("桌面应用未就绪，重启后重试");
@@ -1069,6 +1077,7 @@ async function runDesktopApp(ctx, opts = {}) {
       onLog(`本轮异常: ${String((e && e.message) || e).slice(0, 100)}`);
       if (pageFails >= 3) {
         onLog("连续异常 3 次，结束本轮");
+        aborted = true;
         break;
       }
       restarts++;
@@ -1082,8 +1091,11 @@ async function runDesktopApp(ctx, opts = {}) {
   // 否则 ① 汇总会误报「今天没有可做的桌面任务」；② 熔断把 done 当成功，
   // 对这种故障永远不触发（2026-11-18 用户 0.16.1 真机日志实证：干等 141s 后整轮失败）。
   // dryRun 成功扫描时已在循环内提前返回「扫描模式」，走到这里同样是没跑起来。
-  if (dryRun || scan === null) {
-    return { status: "retry", reason: "桌面应用未就绪", quests: scan || [], todo: 0, manual: acc.manual };
+  // aborted：本轮是异常中断（崩溃恢复页 / 重启失败 / 连不上 / 连续未就绪 / 连续异常），
+  // 哪怕扫描已成功、点了部分项，也不能报 done —— 否则账本被消耗、熔断不计失败。
+  // dryRun / 从未拿到扫描快照同理（见上）。
+  if (dryRun || scan === null || aborted) {
+    return { status: "retry", reason: "桌面应用未就绪", quests: scan || [], todo: acc.todo, manual: acc.manual };
   }
 
   // 每项 10 分是这类 punchcard 的固定值（weekly 70 分 = 7 项 × 10）。
