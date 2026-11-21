@@ -105,8 +105,34 @@ function parseUserIdleMinutes(out) {
   return c === null ? a + b / 60 : a * 60 + b + c / 60;
 }
 
-/** 读当前会话空闲分钟数。query.exe 退出码可能非 0 但 stdout 可用；失败返回 null（放行）。 */
+/**
+ * 空闲时间读取器的注入点（2026-11-21 真机实证的修复）。
+ *
+ * ⚠️ 为什么需要注入：原实现 spawn `query.exe user` 解析「空闲时间」列，但这台机器上
+ * 该列**恒为「无」**——哪怕系统真正空闲 7 分钟（GetLastInputInfo 实测 442781ms），
+ * query 仍返回「无」→ 解析成 0 → notify / auto 模式永远不达标、任务延后门禁永远生效，
+ * 等于整个空闲触发功能失效，只有手动按钮能用。
+ *
+ * Electron 主进程自带 `powerMonitor.getSystemIdleTime()`（底层就是 GetLastInputInfo），
+ * 可靠且无需额外进程。故启动时注入它；query.exe 保留作非 Electron 环境兜底与离线测试。
+ *
+ * @param {null | (() => number|null)} fn 返回空闲分钟数；传 null 恢复默认实现
+ */
+let idleReaderOverride = null;
+function setIdleReader(fn) {
+  idleReaderOverride = typeof fn === "function" ? fn : null;
+}
+
+/** 读当前会话空闲分钟数。优先用注入实现（Electron powerMonitor），兜底 query.exe；失败返回 null（放行）。 */
 function readUserIdleMinutes() {
+  if (idleReaderOverride) {
+    try {
+      const v = idleReaderOverride();
+      if (v !== null && v !== undefined && Number.isFinite(Number(v))) return Number(v);
+    } catch {
+      /* 注入实现失败 → 落到 query.exe 兜底 */
+    }
+  }
   try {
     const { spawnSync } = require("node:child_process");
     const r = spawnSync("query.exe", ["user"], { timeout: 5000, windowsHide: true });
@@ -163,6 +189,7 @@ module.exports = {
   effectiveRuntime,
   circuitOptions,
   parseUserIdleMinutes,
+  setIdleReader,
   readUserIdleMinutes,
   shouldDeferForIdle,
   normalizeIdleMinutes,

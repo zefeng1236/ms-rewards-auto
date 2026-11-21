@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, Menu, Tray, dialog, nativeImage, screen, Notification } = require("electron");
+const { app, BrowserWindow, ipcMain, shell, Menu, Tray, dialog, nativeImage, screen, Notification, powerMonitor } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
@@ -2858,6 +2858,21 @@ app.whenReady().then(() => {
   } catch (e) {
     // 理论上不会失败；真失败也要继续启动，不能因为沙箱开不起来就不让用户用软件
     console.error("enableSandbox 失败：", e && e.message ? e.message : e);
+  }
+
+  /**
+   * 空闲时间改由 powerMonitor 提供（2026-11-21 真机实证的修复）。
+   *
+   * 原实现 spawn `query.exe user` 解析「空闲时间」列，但本机该列**恒为「无」**：
+   * GetLastInputInfo 实测系统已空闲 442781ms（≈7.4 分钟），query 仍报「无」= 0，
+   * 导致 notify / auto 模式永不达标、任务延后门禁永远生效——空闲触发功能整体失效。
+   * powerMonitor.getSystemIdleTime() 返回秒（底层同一份 GetLastInputInfo），可靠。
+   * 必须放在 whenReady 内：该 API 在 app ready 之前不可用。
+   */
+  try {
+    desktopRuntime.setIdleReader(() => Math.floor(powerMonitor.getSystemIdleTime() / 60));
+  } catch (e) {
+    console.warn("powerMonitor 空闲时间注入失败，回落 query.exe：", e && e.message ? e.message : e);
   }
 
   // 彻底移除 File/Edit/View/Window/Help 菜单栏。

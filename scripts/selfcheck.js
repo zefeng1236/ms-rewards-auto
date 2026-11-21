@@ -9185,6 +9185,24 @@ checkTrue(
       rtIdleSrc.includes("idleMinutes === null"),
     "中文 locale 空闲列是「无」不是 .；读不到空闲必须放行（fail-open），不能误延后"
   );
+  {
+    // 2026-11-21 真机实证：本机 query.exe 的「空闲时间」列恒为「无」，
+    // 系统实际空闲 7.4 分钟（GetLastInputInfo 实测），query 仍报 0 →
+    // notify/auto 永不触发。故必须支持注入 powerMonitor（可靠源）。
+    const mainIdleSrc2 = fs.readFileSync(path.join(ROOT, "src", "electron-main.js"), "utf8");
+    checkTrue(
+      "空闲时间支持注入可靠实现（powerMonitor），query.exe 仅作兜底",
+      /function setIdleReader\(fn\)/.test(rtIdleSrc) &&
+        rtIdleSrc.includes("idleReaderOverride") &&
+        // 注入实现优先，且失败/非法值要落到 query 兜底（不能直接返回 0 卡死门禁）
+        /if \(idleReaderOverride\)[\s\S]{0,260}?Number\.isFinite\(Number\(v\)\)\) return Number\(v\)/.test(rtIdleSrc) &&
+        mainIdleSrc2.includes("powerMonitor.getSystemIdleTime()") &&
+        /desktopRuntime\.setIdleReader\(/.test(mainIdleSrc2) &&
+        // 必须在 whenReady 内注入（API 在 ready 前不可用）
+        mainIdleSrc2.indexOf("app.whenReady") < mainIdleSrc2.indexOf("desktopRuntime.setIdleReader("),
+      "query.exe 在部分机器上恒报「无」→ 空闲功能整体失效；powerMonitor 注入是唯一可靠源，提前调用会拿不到值"
+    );
+  }
   checkTrue(
     "空闲门禁真的接在跑桌面任务之前（在用电脑就不启动应用）",
     /readUserIdleMinutes\(\)/.test(runnerIdleSrc) &&
@@ -9271,7 +9289,8 @@ checkTrue(
   );
   checkTrue(
     "主进程接好触发器：Notification + forceDesktop 执行 + 代表账户 + 随后台启动",
-    mainIdleSrc.includes("Notification } = require(\"electron\")") &&
+    // 不依赖解构参数顺序（曾因加 powerMonitor 破坏精确串而假红）
+    /const \{[^}]*\bNotification\b[^}]*\}\s*=\s*require\("electron"\)/.test(mainIdleSrc) &&
       /function desktopIdleConfig\(\)/.test(mainIdleSrc) &&
       /function executeDesktopIdleRun\(/.test(mainIdleSrc) &&
       mainIdleSrc.includes("runner.runDesktopTask(ctx, { forceDesktop: true })") &&
