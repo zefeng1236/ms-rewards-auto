@@ -9303,6 +9303,35 @@ checkTrue(
     "notify 方案靠系统通知授权；执行必须 forceDesktop 绕过门禁；AUMID 只能在打包版设置（否则 dev 模式生成 Electron.lnk 劫持点击）"
   );
   checkTrue(
+    "通知点击授权不依赖 toast 回调（Windows 走 COM 激活会以 exit 9 杀掉新进程）",
+    (() => {
+      const toastSrc = fs.readFileSync(path.join(ROOT, "src", "toast-activation.js"), "utf8");
+      const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
+      const siBlock = mainIdleSrc.slice(
+        mainIdleSrc.indexOf('app.on("second-instance"'),
+        mainIdleSrc.indexOf('app.on("second-instance"') + 1600
+      );
+      return (
+        /function isToastActivationArgv\(/.test(toastSrc) &&
+        /function shouldAuthorizeFromSecondInstance\(/.test(toastSrc) &&
+        /PENDING_WINDOW_MS/.test(toastSrc) &&
+        /toastactivated/i.test(toastSrc) &&
+        /embedding/i.test(toastSrc) &&
+        // 第二实例：按「激活参数 + 待授权时间窗」授权并真的执行
+        /shouldAuthorizeFromSecondInstance\(\s*argv/.test(siBlock) &&
+        /desktopNotifyPendingAt = 0;/.test(siBlock) &&
+        siBlock.indexOf("executeDesktopIdleRun(true)") > siBlock.indexOf("shouldAuthorizeFromSecondInstance") &&
+        // 发通知处记时间 / 执行入口清空
+        /\.show\(\);[\s\S]{0,400}?desktopNotifyPendingAt = Date\.now\(\);/.test(mainIdleSrc) &&
+        /async function executeDesktopIdleRun\([\s\S]{0,200}?desktopNotifyPendingAt = 0;/.test(mainIdleSrc) &&
+        // 冷启动激活
+        /isToastActivationArgv\(process\.argv\)[\s\S]{0,200}?executeDesktopIdleRun\(true\)/.test(mainIdleSrc) &&
+        !!(pkg.scripts && pkg.scripts["test:toast"])
+      );
+    })(),
+    "Chromium 对 -Embedding 直接 exit 9，toast 的 click 回调收不到；只认 argv 就会「点通知毫无反应」，必须靠待授权时间窗兜底（2026-11-21 真机实证）"
+  );
+  checkTrue(
     "通知点击=打开软件+授权执行；执行完发结果通知；退出时清理触发器",
     mainIdleSrc.includes("n.on(\"click\"") &&
       mainIdleSrc.includes("showWindow();") &&

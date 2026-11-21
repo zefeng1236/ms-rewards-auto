@@ -31,6 +31,7 @@ const windowsHello = require("./windows-hello");
 const desktopApp = require("./desktop-app");
 const desktopRuntime = require("./desktop-runtime");
 const desktopIdle = require("./desktop-idle");
+const toastActivation = require("./toast-activation");
 const appUpdate = require("./app-update");
 const appearance = require("./appearance");
 const uapi = require("./uapi");
@@ -69,6 +70,13 @@ let taskRunning = false;
 let daemonStop = null;
 /** 桌面任务空闲触发器停止函数（2026-11-19，auto/notify 两方案） */
 let desktopIdleStop = null;
+/**
+ * 最近一次发出「待授权」桌面任务通知的时间戳（2026-11-21）。
+ * 用途见 toast-activation.shouldAuthorizeFromSecondInstance：Windows 点通知走 COM 激活，
+ * 新进程带 `-Embedding` 会被 Chromium 直接致命退出（exit 9），那之后就没法感知点击；
+ * 于是只要这条通知还在有效期内，用户把应用唤回前台就当作「授权执行」。
+ */
+let desktopNotifyPendingAt = 0;
 let tray = null;
 /** 托盘「退出」时置位，允许窗口真正关闭（否则会被 close 拦截到托盘） */
 let forceQuit = false;
@@ -83,10 +91,29 @@ if (!IS_SMOKE) {
   if (!gotLock) {
     app.quit();
   } else {
-    app.on("second-instance", () => {
+    app.on("second-instance", (_event, argv) => {
       // 第二实例尝试启动：把已在托盘驻留的主窗口唤到前台
       forceQuit = false;
       activateApp(false);
+      /**
+       * 用户点了通知 / 双击图标把应用唤回来 → 若有待授权的桌面任务通知，视为「授权执行」。
+       *
+       * 为什么不能只认 toast 的 click 回调（2026-11-21 真机实证）：
+       * Windows 点击通知走 COM 激活，把 exe 以 `-Embedding` 拉起；而 Chromium 对未知
+       * 单横线开关**直接致命退出（exit 9）**，新进程连 JS 都跑不到 → 转发链路根本走不到。
+       * 所以退一步用「待授权时间窗」判定，见 toast-activation.js。
+       */
+      if (
+        toastActivation.shouldAuthorizeFromSecondInstance(
+          argv,
+          desktopNotifyPendingAt,
+          Date.now()
+        )
+      ) {
+        logger.info("检测到用户唤回应用（桌面任务待授权），按用户授权执行");
+        desktopNotifyPendingAt = 0;
+        void executeDesktopIdleRun(true);
+      }
     });
   }
 }
@@ -955,6 +982,7 @@ function desktopIdleConfig() {
  */
 async function executeDesktopIdleRun(authorized) {
   if (running) return; // 有任务在跑，不插队
+  desktopNotifyPendingAt = 0; // 授权已兑现，待授权窗口随任务一起失效
   const info = desktopIdleConfig();
   if (!info.enabled || !info.accountId) return;
   let ctx;
@@ -996,14 +1024,20 @@ function sendDesktopIdleNotification() {
     }
     const n = new Notification({
       title: "Rewards 桌面任务待执行",
-      body: "检测到您已离开电脑。点击打开软件并授权执行桌面专属任务（执行完会自动关闭 Rewards 应用）。",
+      // 文案同时给两条路：点通知（系统能送到就跑）／直接打开软件（Windows 走 COM 激活时
+      // 会把新进程以 exit 9 杀掉，点通知可能毫无反应，见 toast-activation.js）
+      body: "检测到您已离开电脑。点这条通知或直接打开软件即可授权执行桌面专属任务（执行完会自动关闭 Rewards 应用）。",
       silent: false,
     });
     n.on("click", () => {
       showWindow();
+      desktopNotifyPendingAt = 0;
       void executeDesktopIdleRun(true);
     });
     n.show();
+    // 记下「待授权」时间：Windows 走 COM 激活会杀掉新进程（exit 9），click 回调多数
+    // 场合收不到，用户的「授权」只能靠「唤回应用」这个动作来判定（见 second-instance）。
+    desktopNotifyPendingAt = Date.now();
     logger.info("桌面任务空闲达标（notify 模式），已发送系统通知等待授权");
   } catch (e) {
     logger.warn(`发送桌面任务通知失败: ${String((e && e.message) || e).slice(0, 80)}`);
@@ -1095,6 +1129,17 @@ function startBackgroundWork() {
   // 桌面任务空闲触发器（auto / notify 两方案，2026-11-19）。仅桌面版；
   // 是否真的触发由 desktopIdleConfig 逐次巡检判定（未开启 desktopApp 时不动作）。
   if (!IS_SMOKE) startDesktopIdleWatcher();
+
+  /**
+   * 冷启动的通知激活（2026-11-21）：应用本来没在跑时，用户点通知会直接把应用起来并带
+   * `-Embedding` / `-ToastActivated`。这种情况下没有「第二实例」可转发，必须自己执行，
+   * 否则用户点了通知只会看到主界面、任务不动。
+   * 延迟 3 秒：等保险库/账户上下文就绪（executeDesktopIdleRun 内部读不到账户会直接返回）。
+   */
+  if (!IS_SMOKE && toastActivation.isToastActivationArgv(process.argv)) {
+    logger.info("检测到通知激活（冷启动），按用户授权执行桌面任务");
+    setTimeout(() => void executeDesktopIdleRun(true), 3000);
+  }
 
   // 启动时自动检测 Chromium，未就绪则后台安装（不阻塞 UI）
   if (!IS_SMOKE && !browser.isChromiumReady()) {
