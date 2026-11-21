@@ -31,6 +31,8 @@ desktop.ini
 # ============ 打包产物 ============
 # dist/ 是 electron-builder 的输出目录（安装包 77M，走 GitHub Release 分发）
 dist/
+# dist-test/：真机验证用的临时构建输出（不覆盖已发布的 dist，也不入库）
+dist-test/
 
 # git bundle：服务器不能访问 github，靠 bundle 增量同步代码。
 # 属一次性中转文件，每版一个，不该入库。

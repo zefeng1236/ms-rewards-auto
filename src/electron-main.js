@@ -1016,9 +1016,19 @@ function startDesktopIdleWatcher() {
     desktopIdleStop();
     desktopIdleStop = null;
   }
-  // Windows 通知需要 AppUserModelID 才能正常显示/点击
+  /**
+   * Windows 通知需要 AppUserModelID 才能正常显示/点击。
+   *
+   * ⚠️ 仅在打包版设置（2026-11-21 真机踩到）：源码模式（app.isPackaged=false）调用后，
+   * Electron 会在「开始菜单\程序」下自动创建 **Electron.lnk**，其 AppUserModelID
+   * 就是 com.hermlt.msrewards。之后即便装了正式版，Windows 点击通知也会优先匹配
+   * 这个用户级 Electron.lnk → 拉起 dev 的 electron.exe（显示 Electron 默认欢迎页），
+   * 真正的应用收不到 click 回调。开发模式的通知本就不用于最终验收，故跳过设置。
+   */
   try {
-    if (process.platform === "win32") app.setAppUserModelId("com.hermlt.msrewards");
+    if (process.platform === "win32" && app.isPackaged) {
+      app.setAppUserModelId("com.hermlt.msrewards");
+    }
   } catch {
     /* 忽略 */
   }

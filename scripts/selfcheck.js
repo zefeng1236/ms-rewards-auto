@@ -9297,8 +9297,10 @@ checkTrue(
       /function sendDesktopIdleNotification\(/.test(mainIdleSrc) &&
       /function startDesktopIdleWatcher\(\)/.test(mainIdleSrc) &&
       mainIdleSrc.includes("if (!IS_SMOKE) startDesktopIdleWatcher();") &&
-      mainIdleSrc.includes("app.setAppUserModelId"),
-    "notify 方案靠系统通知授权；执行必须 forceDesktop 绕过门禁；Windows 通知需 AppUserModelID"
+      // ⚠️ 2026-11-21 真机：源码模式设 AUMID 会在开始菜单生成 Electron.lnk，
+      // 劫持正式版的通知点击（拉起 dev electron.exe）。必须限定打包版。
+      /app\.isPackaged\)\s*\{[\s\S]{0,60}?app\.setAppUserModelId\("com\.hermlt\.msrewards"\)/.test(mainIdleSrc),
+    "notify 方案靠系统通知授权；执行必须 forceDesktop 绕过门禁；AUMID 只能在打包版设置（否则 dev 模式生成 Electron.lnk 劫持点击）"
   );
   checkTrue(
     "通知点击=打开软件+授权执行；执行完发结果通知；退出时清理触发器",
