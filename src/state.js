@@ -36,6 +36,15 @@ const DEFAULT_STATE = {
   lastClaimDate: 0,            // 上次「领取积分」的日期（YYYYMMDD），用于节流
   lastClaimAt: 0,              // 上次「领取积分」的时间戳（毫秒），daily 模式判「今天这个点还没跑」
   lastDesktopManualDate: 0,    // 上次「手动执行桌面任务」的日期（YYYYMMDD），仅限手动模式每天 1 次
+  // 月度额度耗尽后的每日保活账本（2026-11-24）：当天随机 10~20 次搜索/阅读的目标与已完成数。
+  // 放进 state 而不是内存：应用重启/任务中断后目标不重掷，也不会又从头跑一遍。
+  keepAlive: {
+    date: 0,          // 账本所属日期 YYYYMMDD，跨天自动重置
+    searchTarget: 0,  // 当天搜索保活目标（10~20）
+    readTarget: 0,    // 当天阅读保活目标（10~20）
+    searchDone: 0,
+    readDone: 0,
+  },
   pc: { progress: 0, max: 0 },  // PC 搜索进度
   m: { progress: 0, max: 0 },   // 移动搜索进度
   todayPoints: 0,
@@ -93,6 +102,9 @@ function createState(dir) {
       cache = { ...JSON.parse(JSON.stringify(DEFAULT_STATE)), ...raw };
       cache.cookies = Array.isArray(raw.cookies) ? raw.cookies : [];
       cache.tasksDone = { ...DEFAULT_STATE.tasksDone, ...(raw.tasksDone || {}) };
+      // 浅合并只会整体替换对象：旧 state.json 里缺某个子字段（或部分写入）时
+      // 会拿到 undefined，保活目标被当成脏值反复重掷。这里逐字段补齐。
+      cache.keepAlive = { ...DEFAULT_STATE.keepAlive, ...(raw.keepAlive || {}) };
       applySecrets(raw);
     } catch {
       cache = JSON.parse(JSON.stringify(DEFAULT_STATE));

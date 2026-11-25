@@ -71,6 +71,9 @@ const DEFAULTS = {
   desktopTask: {
     mode: "notify",   // notify（默认）| auto | manual
     idleMinutes: 5, // 空闲多少分钟后触发（1~60），默认 5；manual 模式不看此项
+    // 1 小时内多次「无响应弹窗」→ 触发限流时改为自动执行一次（默认关闭 = 只停止弹窗）
+    // 2026-11-22 用户定，仅 notify 模式有意义；⚠️ 四处对齐见 global-config.js
+    missAutoRun: false,
   },
   // 区域设置
   region: {

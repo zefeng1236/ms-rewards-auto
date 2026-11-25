@@ -1182,7 +1182,7 @@ checkTrue(
     /desktopTask: \{/.test(gcSrcFp2) &&
     /desktopTask: \{/.test(typesSrcFp2) &&
     /desktopTask: \{/.test(mockSrcFp2) &&
-    ["mode", "idleMinutes"].every(
+    ["mode", "idleMinutes", "missAutoRun"].every(
       (f) =>
         new RegExp(f + ':\\s*').test(cfgSrcFp2) &&
         new RegExp(f + ':\\s*').test(gcSrcFp2) &&
@@ -1192,14 +1192,17 @@ checkTrue(
   "任一处缺字段 → 旧配置读到 undefined，空闲触发器拿到 NaN 分钟 → 永不触发或立刻触发"
 );
 checkTrue(
-  "desktopTask 默认值一致（mode=notify 默认先通知 / idleMinutes=5）",
+  "desktopTask 默认值一致（notify / 5 分钟 / 多次无响应自动运行默认关闭）",
   /desktopTask:\s*\{[\s\S]{0,200}?mode:\s*"notify"/.test(cfgSrcFp2) &&
     /desktopTask:\s*\{[\s\S]{0,200}?mode:\s*"notify"/.test(gcSrcFp2) &&
     /desktopTask:\s*\{[^\n]*mode:\s*"notify"/.test(mockSrcFp2) &&
     /desktopTask:\s*\{[\s\S]{0,200}?idleMinutes:\s*5/.test(cfgSrcFp2) &&
     /desktopTask:\s*\{[\s\S]{0,200}?idleMinutes:\s*5/.test(gcSrcFp2) &&
-    /desktopTask:\s*\{[^\n]*idleMinutes:\s*5/.test(mockSrcFp2),
-  "默认值漂移 → 全局与账户初始不一致；默认必须是 notify（用户定「默认先通知」），idleMinutes 必须是 5 分钟"
+    /desktopTask:\s*\{[^\n]*idleMinutes:\s*5/.test(mockSrcFp2) &&
+    /missAutoRun:\s*false/.test(cfgSrcFp2) &&
+    /missAutoRun:\s*false/.test(gcSrcFp2) &&
+    /desktopTask:\s*\{[^\n]*missAutoRun:\s*false/.test(mockSrcFp2),
+  "默认值漂移 → 全局与账户初始不一致；默认必须 notify / 5 分钟，且「1小时内多次未响应弹窗自动运行」必须默认关闭（用户明确要求）"
 );
 checkTrue(
   "节流判定是**纯函数**且 now 由调用方注入（不读 new Date()）",
@@ -9382,6 +9385,325 @@ checkTrue(
       /desktopTaskMode !== "manual"/.test(sfSrc) &&
       /value\.desktopTask\?\.idleMinutes/.test(sfSrc),
     "三种触发方式与空闲阈值必须能在设置页改；manual 不看空闲所以要隐藏时长输入；旧配置缺字段要兜底不白屏"
+  );
+}
+
+/* ============ 弹窗智能抑制：无响应限流 + 全屏/视频/勿扰场景（2026-11-22） ============ */
+{
+  const guardSrc = fs.readFileSync(path.join(ROOT, "src", "desktop-notify-guard.js"), "utf8");
+  const presenceSrc = fs.readFileSync(path.join(ROOT, "src", "desktop-presence.js"), "utf8");
+  const mainGuard = fs.readFileSync(path.join(ROOT, "src", "electron-main.js"), "utf8");
+  const sfGuard = fs.readFileSync(path.join(ROOT, "src-renderer", "src", "components", "SettingsForm.tsx"), "utf8");
+  const guardTest = fs.readFileSync(path.join(ROOT, "scripts", "test-desktop-notify-guard.js"), "utf8");
+  const presenceTest = fs.readFileSync(path.join(ROOT, "scripts", "test-desktop-presence.js"), "utf8");
+  const pkgGuard = require(path.join(ROOT, "package.json"));
+
+  checkTrue(
+    "无响应弹窗限流常量锁死（30min 待授权 / 1h 窗口 / 超过 3 次 / 停弹 2h）+ 纯逻辑 now 注入",
+    /const PENDING_WINDOW_MS = 30 \* 60 \* 1000;/.test(guardSrc) &&
+      /const MISS_WINDOW_MS = 60 \* 60 \* 1000;/.test(guardSrc) &&
+      /const MISS_LIMIT = 3;/.test(guardSrc) &&
+      /const SUPPRESS_MS = 2 \* 60 \* 60 \* 1000;/.test(guardSrc) &&
+      /function decide\(now, autoRunOnMiss\)/.test(guardSrc) &&
+      /function settle\(now\)/.test(guardSrc) &&
+      /s\.misses\.length > MISS_LIMIT/.test(guardSrc) &&
+      // 跨天清连续计数，但抑制期是绝对时间戳必须保留（否则零点/重启绕过限流）
+      guardSrc.includes("跨天") &&
+      guardSrc.includes("suppressUntil: s.suppressUntil") &&
+      !/require\("(fs|electron)"\)/.test(guardSrc),
+    "用户定「当日 1 小时内连续超过 3 次无响应 → 2 小时停止弹窗」；状态机不许碰磁盘/Electron（离线可测），跨天不得清掉抑制期"
+  );
+  checkTrue(
+    "主进程把「场景抑制 + 无响应限流」接在发通知之前，授权中断连续计数，状态落盘",
+    /async function sendDesktopIdleNotification\(/.test(mainGuard) &&
+      mainGuard.includes("await desktopPresence.readPresence()") &&
+      mainGuard.includes("desktopPresence.evaluatePresence(snap)") &&
+      mainGuard.includes("desktopNotifyGuardState.decide(Date.now()") &&
+      mainGuard.includes("desktopIdleConfig().missAutoRun === true") &&
+      mainGuard.includes('decision.action === "auto-run"') &&
+      mainGuard.includes('decision.action === "suppress"') &&
+      mainGuard.includes("desktopNotifyGuardState.noteShown(Date.now())") &&
+      mainGuard.includes("desktopNotifyGuardState.noteResponded(Date.now())") &&
+      mainGuard.includes("desktopNotifyGuardState.settle(Date.now())") &&
+      /function saveDesktopNotifyGuard\(\)/.test(mainGuard) &&
+      mainGuard.includes("sp.resolve(DESKTOP_NOTIFY_GUARD_FILE)") &&
+      mainGuard.includes("missAutoRun: dt.missAutoRun === true") &&
+      (() => {
+        const start = mainGuard.indexOf("async function sendDesktopIdleNotification");
+        const show = mainGuard.indexOf("n.show();", start);
+        return (
+          start > 0 && show > start &&
+          mainGuard.indexOf("desktopPresence.evaluatePresence(snap)", start) < show &&
+          mainGuard.indexOf("desktopNotifyGuardState.decide(Date.now()", start) < show
+        );
+      })(),
+    "两道判定必须在真正弹出通知之前；状态要落盘（否则重启绕过 2 小时抑制）；用户点通知授权要清连续计数；开关要逐次读配置"
+  );
+  checkTrue(
+    "场景抑制三路齐全 + 动态壁纸豁免：视频解码必须归因到前台 / 系统勿扰 / 全屏且 CPU 或 GPU 任一高（OR）",
+    /const THRESHOLDS = \{[\s\S]{0,400}?CPU_HIGH_PCT: 60/.test(presenceSrc) &&
+      /DND_QUNS: \[2, 3, 4, 6\]/.test(presenceSrc) &&
+      // ⚠️ 2026-11-22 用户追问「动态壁纸」：只看 videoActive 会被视频壁纸永久误抑制
+      presenceSrc.includes("snapshot.videoUserFacing === true") &&
+      presenceSrc.includes("videoWallpaperOnly === true") &&
+      presenceSrc.includes('WALLPAPER_PROC_RE = "wallpaper|lively|rainmeter|deskscape|dreamscene|webwallpaper"') &&
+      presenceSrc.includes("GetWindowThreadProcessId") &&
+      presenceSrc.includes("IsWall) { continue }") &&
+      presenceSrc.includes("$procId = [int]$Matches[1]") &&
+      presenceSrc.includes("wallpaperGpu") &&
+      /cpu >= Number\(t\.CPU_HIGH_PCT\)/.test(presenceSrc) &&
+      /gpu >= Number\(t\.GPU_HIGH_PCT\)/.test(presenceSrc) &&
+      presenceSrc.includes("snapshot.fullscreen === true") &&
+      // 2026-11-22 用户改判：CPU/GPU 之间是「或」，满足其一即抑制（退回 AND 必须变红）
+      presenceSrc.includes("(cpuHigh || gpuHigh)") &&
+      /if \(!snapshot \|\| snapshot\.ok !== true\)/.test(presenceSrc) &&
+      /suppress: false, reason: "probe-unavailable"/.test(presenceSrc) &&
+      // WMI 英文类名跨语言稳定；Get-Counter 的计数器名在中文系统会本地化而失败
+      presenceSrc.includes("Win32_PerfFormattedData_GPUPerformanceCounters_GPUEngine") &&
+      presenceSrc.includes("Win32_Processor") &&
+      presenceSrc.includes("SHQueryUserNotificationState") &&
+      presenceSrc.includes("GetForegroundWindow") &&
+      presenceSrc.includes("GetSystemMetrics") &&
+      presenceSrc.includes("engtype_Video") &&
+      (presenceSrc.match(/Sample-Gpu/g) || []).length >= 3 &&
+      presenceSrc.includes("Start-Sleep -Milliseconds ${SAMPLE_GAP_MS}") &&
+      // 注释里会解释「为什么不用 Get-Counter」，只检查实际下发给 PS 的脚本段
+      !/Get-Counter/.test(presenceSrc.slice(presenceSrc.indexOf("const PROBE_SCRIPT"))),
+    "用户要「看视频/全屏高负载跳过弹窗」；好办法 = 系统勿扰状态 + GPU 视频引擎双采样 + 解码 PID 归因到前台应用；动态壁纸（wallpaper64/lively 等）持续硬解必须排除、其 GPU 占用也要剔除，否则视频壁纸会让 notify 永久不弹窗；全屏前提下 CPU/GPU 是**或**；探针读不到必须 fail-open"
+  );
+  checkTrue(
+    "设置页新增开关「1小时内多次未响应弹窗自动运行」：默认关、仅 notify 显示、挂实验性徽标",
+    sfGuard.includes('label="1小时内多次未响应弹窗自动运行"') &&
+      /desktopTaskMode === "notify"[\s\S]{0,400}?desktopMissAutoRun/.test(sfGuard) &&
+      sfGuard.includes("value.desktopTask?.missAutoRun === true") &&
+      sfGuard.includes("desktopTask: { missAutoRun: v }") &&
+      /label="1小时内多次未响应弹窗自动运行"[\s\S]{0,700}?badge="实验性功能"/.test(sfGuard),
+    "开关必须默认关闭（用户明确要求）；auto/manual 不弹窗所以不该显示；旧配置缺字段要回落 false 不白屏；实验性功能要标注"
+  );
+  checkTrue(
+    "两套新逻辑都有独立离线回归入口（test:notify-guard / test:presence）",
+    pkgGuard.scripts["test:notify-guard"] === "node scripts/test-desktop-notify-guard.js" &&
+      pkgGuard.scripts["test:presence"] === "node scripts/test-desktop-presence.js" &&
+      guardTest.includes("MISS_LIMIT") && guardTest.includes("SUPPRESS_MS") && guardTest.includes("跨天") &&
+      presenceTest.includes("evaluatePresence") && presenceTest.includes("parseProbeOutput") &&
+      presenceTest.includes("fail-open"),
+    "真机才能暴露的时序/阈值逻辑必须有离线回归兜底，不能只靠肉眼看通知弹不弹"
+  );
+}
+
+/* ============ 原生 Toast 协议激活：修「点通知没反应 / 不打开软件」（2026-11-24） ============ */
+{
+  const toastMod = fs.readFileSync(path.join(ROOT, "src", "desktop-toast.js"), "utf8");
+  const toastAct = fs.readFileSync(path.join(ROOT, "src", "toast-activation.js"), "utf8");
+  const mainToast = fs.readFileSync(path.join(ROOT, "src", "electron-main.js"), "utf8");
+  const toastTest = fs.readFileSync(path.join(ROOT, "scripts", "test-desktop-toast.js"), "utf8");
+  const actTest = fs.readFileSync(path.join(ROOT, "scripts", "test-toast-activation.js"), "utf8");
+  const pkgToast = require(path.join(ROOT, "package.json"));
+
+  checkTrue(
+    "原生 Toast 必须带 launch + activationType=protocol；URL 协议只在打包版注册",
+    toastMod.includes('const PROTOCOL_LAUNCH = "msrewards://desktop-authorize";') &&
+      toastMod.includes('<toast launch="${launch}" activationType="protocol">') &&
+      toastMod.includes('CreateToastNotifier("${aumid}")') &&
+      toastMod.includes("WindowsRuntime") &&
+      toastMod.includes("$notifier.Show($toast)") &&
+      toastMod.includes('"%1"') &&
+      /HKCU.{0,4}Software.{0,4}Classes/.test(toastMod) &&
+      // ⚠️ 源码模式注册协议会把 dev 的 electron.exe 写进 HKCU，劫持正式版点击
+      toastMod.includes("opts.isPackaged !== true") &&
+      toastMod.includes("setToastRunner") &&
+      !toastMod.includes('require("electron")'),
+    "0.17.0 的 Electron 通知没有 launch，Windows 点击找不到激活器 → 既不执行也不打开软件；改用协议激活绕开 COM(-Embedding) 死路，但协议注册必须限定打包版"
+  );
+  checkTrue(
+    "主进程接好协议激活：whenReady 注册 / 发通知优先原生 Toast / 第二实例与冷启动都认协议",
+    mainToast.includes("desktopToast.ensureProtocol(") &&
+      mainToast.includes("isPackaged: app.isPackaged") &&
+      mainToast.includes("await desktopToast.showAuthorizationToast()") &&
+      mainToast.includes("原生 Toast 发送失败，回落 Electron 通知") &&
+      mainToast.includes("isProtocolActivationArgv(process.argv)") &&
+      toastAct.includes("function isProtocolActivationArgv(") &&
+      toastAct.includes("isToastActivationArgv(argv) || isProtocolActivationArgv(argv)") &&
+      (() => {
+        const start = mainToast.indexOf("async function sendDesktopIdleNotification");
+        const body = mainToast.slice(start, start + 4000);
+        return (
+          start > 0 &&
+          body.indexOf("desktopToast.showAuthorizationToast()") < body.indexOf("new Notification({")
+        );
+      })(),
+    "点击通知必须能拉起应用（activateApp）并授权；原生 Toast 失败要回落 Electron 通知而不是静默不弹；冷启动没有第二实例可转发，也要认协议参数"
+  );
+  checkTrue(
+    "协议激活有独立离线回归入口（test:desktop-toast），激活回归也覆盖协议",
+    pkgToast.scripts["test:desktop-toast"] === "node scripts/test-desktop-toast.js" &&
+      toastTest.includes('activationType="protocol"') &&
+      toastTest.includes("not-packaged") &&
+      actTest.includes("msrewards://desktop-authorize") &&
+      actTest.includes("协议激活"),
+    "这套链路在真机只有装了新版才能验，必须有离线回归锁住 XML、注册限制与 argv 识别"
+  );
+  const verifyPackSrc = fs.readFileSync(path.join(ROOT, "scripts", "verify-pack.js"), "utf8");
+  checkTrue(
+    "verify:pack 的资源索引取自被核对侧（asar 内部），不读工作区 gui-react/index.html",
+    /const html = fs\.readFileSync\(path\.join\(outDir, "gui-react", "index\.html"\)/.test(verifyPackSrc) &&
+      !/readFileSync\("gui-react\/index\.html"/.test(verifyPackSrc) &&
+      verifyPackSrc.includes("useSrc ? process.cwd()"),
+    "2026-11-24 踩到：本地 build:web 换了哈希但 dist 仍是上一版包，旧写法拿工作区新文件名去 asar 里找 → ENOENT 直接崩；校验包就该读包内索引，反例模式仍读工作区"
+  );
+}
+
+/* ============ 每日额度动态归一化（2026-11-24，月度计划封顶会压缩当日上限） ============ */
+{
+  const quotaMod = fs.readFileSync(path.join(ROOT, "src", "daily-quota.js"), "utf8");
+  const rewardsQuota = fs.readFileSync(path.join(ROOT, "src", "rewards.js"), "utf8");
+  const tasksQuota = fs.readFileSync(path.join(ROOT, "src", "tasks.js"), "utf8");
+  const quotaTest = fs.readFileSync(path.join(ROOT, "scripts", "test-daily-quota.js"), "utf8");
+  const pkgQuota = require(path.join(ROOT, "package.json"));
+
+  checkTrue(
+    "每日阅读/搜索次数必须由服务器额度换算：区分「明确 0」与「字段缺失」",
+    quotaMod.includes("capped: explicit && max === 0") &&
+      quotaMod.includes('source: explicit ? "server" : "fallback"') &&
+      quotaMod.includes("unitsRequired: Math.ceil(remainingPoints / ppu)") &&
+      quotaMod.includes("summarizeCounters") &&
+      quotaMod.includes("planSearchUnits") &&
+      rewardsQuota.includes("dailyQuota.normalizeReadQuota") &&
+      rewardsQuota.includes("explicitMax") &&
+      !/const max = num\(readTask\.attributes\.max\) \|\| 30;/.test(rewardsQuota) &&
+      !/let max = readPro\.max \|\| 30;/.test(tasksQuota) &&
+      !tasksQuota.includes("强制开始阅读"),
+    "真机日志里同一账号上限出现过 60/30/15，必应 Star 月度计划拿满后还会压到 1/1；`max||30`、进度已满就强制 cur=0/max=30 都会在封顶后白跑 10 篇"
+  );
+  checkTrue(
+    "搜索本轮次数以服务器剩余为硬上界，明确 0 绝不回落 DEFAULT_PC_SEARCH_MAX",
+    tasksQuota.includes("dailyQuota.normalizeCounter(dashboard.pc") &&
+      tasksQuota.includes("dailyQuota.planSearchUnits(") &&
+      tasksQuota.includes("limit = quotaPlan.count") &&
+      tasksQuota.includes("服务器返回今日搜索额度为 0") &&
+      /if \(readPro\.capped \|\| readPro\.max <= 0\)/.test(tasksQuota) &&
+      !/const pcMax = dashboard\.pc\.max > 0 \? dashboard\.pc\.max : DEFAULT_PC_SEARCH_MAX/.test(tasksQuota),
+    "用户设定 6 次而服务器只剩 1 次时，旧日志会说「计划 6 次（剩余 3 次）」并空转；服务器明确 0 时被当成 15 次去白搜"
+  );
+  checkTrue(
+    "动态额度有独立离线回归入口（test:daily-quota）",
+    pkgQuota.scripts["test:daily-quota"] === "node scripts/test-daily-quota.js" &&
+      quotaTest.includes("明确 0 ≠ 字段缺失") &&
+      quotaTest.includes("summarizeCounters") &&
+      quotaTest.includes("planSearchUnits"),
+    "额度换算只有真机隔天才能验，必须有离线回归锁住 0 / 缺失 / 压缩 / 脏数据"
+  );
+}
+
+/* ============ 月度额度耗尽后的每日保活（2026-11-24，用户定） ============ */
+{
+  const quotaKeep = fs.readFileSync(path.join(ROOT, "src", "daily-quota.js"), "utf8");
+  const tasksKeep = fs.readFileSync(path.join(ROOT, "src", "tasks.js"), "utf8");
+  const stateKeep = fs.readFileSync(path.join(ROOT, "src", "state.js"), "utf8");
+  const runnerKeep = fs.readFileSync(path.join(ROOT, "src", "runner.js"), "utf8");
+  const keepTest = fs.readFileSync(path.join(ROOT, "scripts", "test-keep-alive.js"), "utf8");
+  const pkgKeep = require(path.join(ROOT, "package.json"));
+  const kaSearch = tasksKeep.slice(
+    tasksKeep.indexOf("async function runKeepAliveSearch"),
+    tasksKeep.indexOf("async function runKeepAliveRead")
+  );
+  const kaRead = tasksKeep.slice(
+    tasksKeep.indexOf("async function runKeepAliveRead"),
+    tasksKeep.indexOf("function searchProgressSnapshot")
+  );
+
+  checkTrue(
+    "封顶不再跳过：本月额度耗尽仍维持每日随机 10~20 次搜索与阅读（保活，不计分）",
+    quotaKeep.includes("const KEEP_ALIVE_MIN = 10") &&
+      quotaKeep.includes("const KEEP_ALIVE_MAX = 20") &&
+      quotaKeep.includes("function isQuotaExhausted") &&
+      quotaKeep.includes("function planKeepAlive") &&
+      quotaKeep.includes("keptSearch ? clampDone") &&
+      tasksKeep.includes("dailyQuota.isQuotaExhausted([pcQ, mQ])") &&
+      tasksKeep.includes("return await runKeepAliveSearch(ctx)") &&
+      tasksKeep.includes("return await runKeepAliveRead(ctx, token)") &&
+      !tasksKeep.includes("本轮跳过，不白跑"),
+    "用户定：服务器返回「当月无需执行搜索任务」也不能整月零行为；封顶必须转保活，字段缺失（解析失败）才走 fallback"
+  );
+  checkTrue(
+    "保活与计分路径隔离：按天账本逐字段补齐、跑满即收工、不伪造服务器进度",
+    kaSearch.includes("planKeepAlive") &&
+      kaRead.includes("planKeepAlive") &&
+      !kaSearch.includes("search.pc.progress =") &&
+      !kaSearch.includes("getRewardsInfo(") &&
+      !kaRead.includes("readPoint =") &&
+      kaSearch.includes('state.setTaskDone("search"') &&
+      kaRead.includes('state.setTaskDone("read"') &&
+      stateKeep.includes("keepAlive: {") &&
+      stateKeep.includes("cache.keepAlive = { ...DEFAULT_STATE.keepAlive"),
+    "主循环强耦合 progress<max 护栏，max=0 时一次都进不去且收尾会误标完成；保活必须独立，且不能写积分进度污染仪表盘"
+  );
+  checkTrue(
+    "汇总如实写「当月无需执行搜索/阅读任务」并列出当日保活次数",
+    runnerKeep.includes("当月无需执行搜索任务 · 每日保活") &&
+      runnerKeep.includes("当月无需执行阅读任务 · 每日保活") &&
+      runnerKeep.includes("rSearch.keepAlive") &&
+      runnerKeep.includes("rRead.keepAlive"),
+    "推送/汇总里要能区分「本月不用计分」与「软件什么都没干」"
+  );
+  checkTrue(
+    "保活有独立离线回归入口（test:keep-alive），且打桩驱动真实产品路径",
+    pkgKeep.scripts["test:keep-alive"] === "node scripts/test-keep-alive.js" &&
+      keepTest.includes("loadTasks") &&
+      keepTest.includes("runKeepAliveSearch") &&
+      keepTest.includes("runKeepAliveRead") &&
+      keepTest.includes("跨天重置") &&
+      keepTest.includes("不计分"),
+    "封顶只在月末出现，必须离线锁住 10~20 目标、按天固定、中断续跑与不写积分"
+  );
+}
+
+/* ============ 统一搜索池（2026-11-25 手机 Reqable 抓包定案） ============ */
+{
+  const mobileMod = fs.readFileSync(path.join(ROOT, "src", "mobile-quota.js"), "utf8");
+  const rewardsMobile = fs.readFileSync(path.join(ROOT, "src", "rewards.js"), "utf8");
+  const tasksMobile = fs.readFileSync(path.join(ROOT, "src", "tasks.js"), "utf8");
+  const mobileTest = fs.readFileSync(path.join(ROOT, "scripts", "test-mobile-quota.js"), "utf8");
+  const pkgMobile = require(path.join(ROOT, "package.json"));
+
+  checkTrue(
+    "国区是统一搜索池：dapi/me 的 type=search 任务卡是唯一真值，禁止再补拉 getuserinfo/flyout 的 mobileSearch[]",
+    mobileMod.includes("function parseSearchCards") &&
+      mobileMod.includes('type === "search"') &&
+      mobileMod.includes("WW_NewLevel3_search_PC") &&
+      mobileMod.includes("hasMobileCard") &&
+      mobileMod.includes("unifiedPool") &&
+      mobileMod.includes("!Number.isFinite(maxNum)") &&
+      !mobileMod.includes('url: "https://rewards.bing.com/api/getuserinfo"') &&
+      !mobileMod.includes("panelflyout/getuserinfo?channel=BingFlyout") &&
+      !mobileMod.includes("function fetchMobileQuota"),
+    "2026-11-25 本人账号真机抓包：dapi/me promotions 只有一张 WW_NewLevel3_search_PC(max=60,progress=51)，与软件日志 PC搜索=51/60 完全一致；counters 里 search_mobile* 只是行为统计。上一版按 MRS助手 PC 脚本补拉 counters.mobileSearch[] 属张冠李戴，会把搜索切到未验证的移动 UA 路径"
+  );
+  checkTrue(
+    "统一搜索池接线：rewards 不再补拉、m 明确 0/0、earn 页解析失败用 dapi/me 兜底、明确给 0 不被覆盖",
+    rewardsMobile.includes('const searchQuota = require("./mobile-quota")') &&
+      !rewardsMobile.includes("mobileQuota.fetchMobileQuota") &&
+      rewardsMobile.includes("m: mobileProgress") &&
+      rewardsMobile.includes("mobileProgress = { progress: 0, max: 0, explicitMax: true }") &&
+      rewardsMobile.includes("searchQuota.parseSearchCards(data)") &&
+      rewardsMobile.includes("searchQuota.readSearchQuota(ctx)") &&
+      rewardsMobile.includes("if (!pcProgress.explicitMax)") &&
+      rewardsMobile.includes("统一搜索池，无独立移动额度") &&
+      tasksMobile.includes("dailyQuota.normalizeCounter(dashboard.m") &&
+      tasksMobile.includes("search.m = { progress: mPro, max: mMax }"),
+    "m 恒 0/0 是正确值（不是漏解析）；只有 earn 页 pc 字段缺失时才用同账号 dapi/me 搜索卡兜底，服务器明确给 0 的封顶信号必须原样保留"
+  );
+  checkTrue(
+    "统一搜索池有独立离线回归入口（test:mobile-quota），且用真机卡打桩驱动真实 getRewardsInfo/getReadPro",
+    pkgMobile.scripts["test:mobile-quota"] === "node scripts/test-mobile-quota.js" &&
+      mobileTest.includes("WW_NewLevel3_search_PC") &&
+      mobileTest.includes("loadRewards") &&
+      mobileTest.includes("getRewardsInfo") &&
+      mobileTest.includes("getReadPro") &&
+      mobileTest.includes("只应该请求 earn 页，绝不补拉") &&
+      mobileTest.includes("明确给 0（封顶）不能被缓存覆盖") &&
+      mobileTest.includes("误触发封顶保活"),
+    "这条链路必须锁死真机卡结构、脏数据排除、按账户缓存、不再发外部请求、兜底与封顶不被覆盖"
   );
 }
 

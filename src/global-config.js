@@ -53,6 +53,7 @@ const GLOBAL_DEFAULTS = {
   desktopTask: {
     mode: "notify",   // notify（默认）| auto | manual
     idleMinutes: 5, // 空闲多少分钟后触发（1~60）；manual 模式不看此项
+    missAutoRun: false, // 1 小时内多次无响应弹窗 → 自动运行（默认关闭，仅 notify 有意义）
   },
   region: {
     lock: true,

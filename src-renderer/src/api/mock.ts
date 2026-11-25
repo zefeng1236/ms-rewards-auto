@@ -32,7 +32,7 @@ const DEFAULT_CONFIG: AppConfig = {
   // 定期收取积分节奏 —— 必须与 config.js / global-config.js / types 逐字段对齐
   claimSchedule: { mode: "threshold", everyDays: 7, dailyAt: "09:00", threshold: 300 },
   // 桌面任务触发方式 —— 必须与 config.js / global-config.js / types 逐字段对齐
-  desktopTask: { mode: "notify", idleMinutes: 5 },
+  desktopTask: { mode: "notify", idleMinutes: 5, missAutoRun: false },
   region: { lock: true, ipProvider: "bing" },
   search: { span: 30, api: "offline" },
   limits: { random: false, read: 6, promos: 0, search: 6, allowExceed: false },

@@ -11,6 +11,7 @@ const path = require("node:path");
 const ROOT = path.resolve(__dirname, "..");
 const {
   isToastActivationArgv,
+  isProtocolActivationArgv,
   shouldAuthorizeFromSecondInstance,
   TOAST_ACTIVATION_RE,
   PENDING_WINDOW_MS,
@@ -100,9 +101,11 @@ async function main() {
       "判定为授权后必须真的执行（true）"
     );
     // 发通知处必须记时间
+    // 2026-11-22 起发通知前多了「场景抑制 + 无响应限流」两道前置判定，函数体变长，
+    // 截取窗口相应放大（断言本身不放宽：仍要求 show() 后记待授权时间）。
     const notifyBlock = mainSrc.slice(
       mainSrc.indexOf("function sendDesktopIdleNotification()"),
-      mainSrc.indexOf("function sendDesktopIdleNotification()") + 1400
+      mainSrc.indexOf("function sendDesktopIdleNotification()") + 3200
     );
     assert.match(notifyBlock, /\.show\(\);[\s\S]{0,400}?desktopNotifyPendingAt = Date\.now\(\);/);
     // 执行入口清空
@@ -119,6 +122,31 @@ async function main() {
     const tail = mainSrc.slice(idx, idx + 320);
     assert.match(tail, /executeDesktopIdleRun\(true\)/, "冷启动分支必须调用授权执行");
     assert.match(tail, /冷启动/, "冷启动分支要有可检索的日志标识");
+  });
+
+  await test("⑨ 协议激活（点原生 Toast）是明确的用户授权，不受时间窗限制", async () => {
+    assert.equal(isProtocolActivationArgv(["msrewards://desktop-authorize"]), true);
+    assert.equal(isProtocolActivationArgv(["C:\\app.exe", "MSREWARDS://desktop-authorize/"]), true);
+    assert.equal(isProtocolActivationArgv(["msrewards://other"]), false);
+    assert.equal(isProtocolActivationArgv([]), false);
+    assert.equal(isProtocolActivationArgv(null), false);
+    assert.equal(shouldAuthorizeFromSecondInstance(["msrewards://desktop-authorize"], 0, 1e12), true);
+    assert.equal(shouldAuthorizeFromSecondInstance(["普通参数"], 0, 1e12), false);
+  });
+
+  await test("⑩ 主进程：协议注册 / 原生 Toast 优先 / 冷启动认协议都接上了", async () => {
+    const src = fs.readFileSync(path.join(ROOT, "src", "electron-main.js"), "utf8");
+    assert.ok(src.includes("isProtocolActivationArgv(process.argv)"), "冷启动要认协议参数");
+    assert.ok(src.includes("desktopToast.ensureProtocol("), "whenReady 要注册协议");
+    assert.ok(src.includes("isPackaged: app.isPackaged"), "协议注册必须限定打包版");
+    const start = src.indexOf("async function sendDesktopIdleNotification");
+    assert.ok(start > 0);
+    const body = src.slice(start, start + 4000);
+    assert.ok(body.includes("desktopToast.showAuthorizationToast()"));
+    assert.ok(
+      body.indexOf("desktopToast.showAuthorizationToast()") < body.indexOf("new Notification({"),
+      "原生 Toast 必须在 Electron 兜底之前"
+    );
   });
 
   console.log(lines.join("\n"));

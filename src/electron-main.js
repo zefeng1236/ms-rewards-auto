@@ -32,6 +32,9 @@ const desktopApp = require("./desktop-app");
 const desktopRuntime = require("./desktop-runtime");
 const desktopIdle = require("./desktop-idle");
 const toastActivation = require("./toast-activation");
+const desktopNotifyGuard = require("./desktop-notify-guard");
+const desktopPresence = require("./desktop-presence");
+const desktopToast = require("./desktop-toast");
 const appUpdate = require("./app-update");
 const appearance = require("./appearance");
 const uapi = require("./uapi");
@@ -77,6 +80,31 @@ let desktopIdleStop = null;
  * 于是只要这条通知还在有效期内，用户把应用唤回前台就当作「授权执行」。
  */
 let desktopNotifyPendingAt = 0;
+/**
+ * 「无响应弹窗」限流状态（2026-11-22 用户定）。
+ * 持久化到 storage/desktop-notify-guard.json —— 不落盘的话重启一次软件就能
+ * 绕过「2 小时停止弹窗」。状态机本身不碰磁盘 / 不读时钟（见 desktop-notify-guard.js）。
+ */
+const DESKTOP_NOTIFY_GUARD_FILE = "desktop-notify-guard.json";
+function loadDesktopNotifyGuard() {
+  try {
+    return JSON.parse(fs.readFileSync(sp.resolve(DESKTOP_NOTIFY_GUARD_FILE), "utf8"));
+  } catch {
+    return {};
+  }
+}
+const desktopNotifyGuardState = desktopNotifyGuard.createDesktopNotifyGuard(loadDesktopNotifyGuard());
+function saveDesktopNotifyGuard() {
+  try {
+    fs.writeFileSync(
+      sp.resolve(DESKTOP_NOTIFY_GUARD_FILE),
+      JSON.stringify(desktopNotifyGuardState.snapshot(), null, 2),
+      "utf8"
+    );
+  } catch (e) {
+    logger.warn(`保存桌面通知限流状态失败: ${String((e && e.message) || e).slice(0, 80)}`);
+  }
+}
 let tray = null;
 /** 托盘「退出」时置位，允许窗口真正关闭（否则会被 close 拦截到托盘） */
 let forceQuit = false;
@@ -966,6 +994,8 @@ function desktopIdleConfig() {
           // 三模式原样透传（manual 由触发器直接不动作）；非法值回落默认 notify
           mode: dt.mode === "auto" || dt.mode === "manual" ? dt.mode : "notify",
           idleMinutes: desktopRuntime.normalizeIdleMinutes(dt.idleMinutes),
+          // 1 小时内多次无响应弹窗 → 自动运行（默认关闭；旧配置缺字段回落 false）
+          missAutoRun: dt.missAutoRun === true,
           accountId: a.id,
         };
       }
@@ -983,6 +1013,11 @@ function desktopIdleConfig() {
 async function executeDesktopIdleRun(authorized) {
   if (running) return; // 有任务在跑，不插队
   desktopNotifyPendingAt = 0; // 授权已兑现，待授权窗口随任务一起失效
+  // 用户点通知 / 唤回应用完成授权 → 中断「连续无响应」计数（auto 自动跑不算响应）
+  if (authorized) {
+    desktopNotifyGuardState.noteResponded(Date.now());
+    saveDesktopNotifyGuard();
+  }
   const info = desktopIdleConfig();
   if (!info.enabled || !info.accountId) return;
   let ctx;
@@ -1014,9 +1049,49 @@ async function executeDesktopIdleRun(authorized) {
   }
 }
 
-/** notify 方案：空闲达标时发系统通知，点击 → 打开软件并授权执行。 */
-function sendDesktopIdleNotification() {
+/**
+ * notify 方案：空闲达标时发系统通知，点击 → 打开软件并授权执行。
+ * 2026-11-22 起前置两道抑制（只在「准备弹窗」时判一次，探针约 5 秒，不做常驻轮询）：
+ *   ① 用户场景：前台全屏且 CPU 或 GPU 任一过高、GPU 视频引擎持续工作（在看视频）、
+ *      系统勿扰 / 全屏放映 / 专注助手 → 跳过弹窗（见 desktop-presence.js）；
+ *   ② 无响应限流：当日 1 小时内连续超过 3 次无人理 → 2 小时停止弹窗；
+ *      开了「1小时内多次未响应弹窗自动运行」则触发时改为自动执行一次（仍不弹窗）。
+ */
+async function sendDesktopIdleNotification() {
+  // 探针要跑约 5 秒，这期间可能已有账户任务开跑：别白跑探针，也别白消耗限流状态
+  if (running) return;
   try {
+    const snap = await desktopPresence.readPresence();
+    const pv = desktopPresence.evaluatePresence(snap);
+    if (pv.suppress) {
+      logger.info(`桌面任务通知已跳过（${pv.reason}）：${pv.detail}`);
+      return;
+    }
+    // 动态壁纸 / 后台播放器的持续解码不算「用户在看视频」，明确记一条便于真机排查
+    if (pv.reason === "background-video") logger.info(`桌面任务：${pv.detail}（按正常流程弹窗）`);
+    const decision = desktopNotifyGuardState.decide(Date.now(), desktopIdleConfig().missAutoRun === true);
+    saveDesktopNotifyGuard();
+    if (decision.action === "auto-run") {
+      logger.info("桌面任务：1 小时内多次通知无响应（已开启自动运行）→ 本次不弹窗，直接自动执行");
+      void executeDesktopIdleRun(false);
+      return;
+    }
+    if (decision.action === "suppress") {
+      logger.info(`桌面任务：1 小时内多次通知无响应 → 2 小时内停止弹窗（${decision.reason}）`);
+      return;
+    }
+    // 2026-11-24：优先发「带 launch 的原生 Toast」。点击后 Windows 用 msrewards://
+    // 协议把应用拉起并传参，能同时解决「没反应」和「没打开软件」（见 desktop-toast.js）。
+    // Electron 的 Notification 只作为原生 Toast 发不出去时的兜底。
+    const toastOk = await desktopToast.showAuthorizationToast();
+    if (toastOk) {
+      desktopNotifyPendingAt = Date.now();
+      desktopNotifyGuardState.noteShown(Date.now());
+      saveDesktopNotifyGuard();
+      logger.info("桌面任务空闲达标（notify 模式），已发送原生通知（协议激活）等待授权");
+      return;
+    }
+    logger.warn("原生 Toast 发送失败，回落 Electron 通知（点击可能无效，可手动打开软件授权）");
     if (!Notification.isSupported()) {
       logger.warn("系统不支持通知，notify 方案退化为自动执行");
       void executeDesktopIdleRun(false);
@@ -1038,6 +1113,8 @@ function sendDesktopIdleNotification() {
     // 记下「待授权」时间：Windows 走 COM 激活会杀掉新进程（exit 9），click 回调多数
     // 场合收不到，用户的「授权」只能靠「唤回应用」这个动作来判定（见 second-instance）。
     desktopNotifyPendingAt = Date.now();
+    desktopNotifyGuardState.noteShown(Date.now());
+    saveDesktopNotifyGuard();
     logger.info("桌面任务空闲达标（notify 模式），已发送系统通知等待授权");
   } catch (e) {
     logger.warn(`发送桌面任务通知失败: ${String((e && e.message) || e).slice(0, 80)}`);
@@ -1072,6 +1149,12 @@ function startDesktopIdleWatcher() {
     isBusy: () => running,
   });
   const timer = setInterval(() => {
+    // 通知挂了 30 分钟还没人理 → 结算成一次「无响应」（只在状态变化时写盘）
+    try {
+      if (desktopNotifyGuardState.settle(Date.now())) saveDesktopNotifyGuard();
+    } catch {
+      /* 限流状态异常不该拖垮空闲触发器 */
+    }
     let d;
     try {
       d = watcher.tick();
@@ -1080,7 +1163,7 @@ function startDesktopIdleWatcher() {
       return;
     }
     if (!d || d.action === "none") return;
-    if (d.action === "notify") sendDesktopIdleNotification();
+    if (d.action === "notify") void sendDesktopIdleNotification();
     else if (d.action === "run") void executeDesktopIdleRun(false);
   }, 30 * 1000);
   if (timer.unref) timer.unref();
@@ -1131,12 +1214,12 @@ function startBackgroundWork() {
   if (!IS_SMOKE) startDesktopIdleWatcher();
 
   /**
-   * 冷启动的通知激活（2026-11-21）：应用本来没在跑时，用户点通知会直接把应用起来并带
-   * `-Embedding` / `-ToastActivated`。这种情况下没有「第二实例」可转发，必须自己执行，
-   * 否则用户点了通知只会看到主界面、任务不动。
+   * 冷启动的通知激活（2026-11-21，2026-11-24 加协议）：应用本来没在跑时，用户点通知
+   * 会直接把应用起来并带 `-Embedding` / `-ToastActivated` / `msrewards://desktop-authorize`。
+   * 这种情况下没有「第二实例」可转发，必须自己执行，否则用户点了通知只会看到主界面、任务不动。
    * 延迟 3 秒：等保险库/账户上下文就绪（executeDesktopIdleRun 内部读不到账户会直接返回）。
    */
-  if (!IS_SMOKE && toastActivation.isToastActivationArgv(process.argv)) {
+  if (!IS_SMOKE && (toastActivation.isProtocolActivationArgv(process.argv) || toastActivation.isToastActivationArgv(process.argv))) {
     logger.info("检测到通知激活（冷启动），按用户授权执行桌面任务");
     setTimeout(() => void executeDesktopIdleRun(true), 3000);
   }
@@ -2928,6 +3011,24 @@ app.whenReady().then(() => {
     desktopRuntime.setIdleReader(() => Math.floor(powerMonitor.getSystemIdleTime() / 60));
   } catch (e) {
     console.warn("powerMonitor 空闲时间注入失败，回落 query.exe：", e && e.message ? e.message : e);
+  }
+
+  /**
+   * 注册用户级 URL 协议 msrewards://（2026-11-24，修「点通知没反应」）。
+   * 原生 Toast 用 activationType="protocol"，点击后靠这个协议把应用拉起来；
+   * 不注册的话 Windows 找不到激活目标，点击仍然是「没反应、也不打开软件」。
+   * ⚠️ 只在打包版注册：源码模式会把 dev 的 electron.exe 写进 HKCU，
+   * 正式版点击通知会被 dev 进程劫持（同 2026-11-21 的 Electron.lnk 坑）。
+   */
+  try {
+    const pr = desktopToast.ensureProtocol({
+      platform: process.platform,
+      isPackaged: app.isPackaged,
+      exePath: process.execPath,
+    });
+    if (!pr.skipped) logger.info(`URL 协议注册${pr.ok ? "成功" : "失败"}：msrewards:// (${pr.reason || "ok"})`);
+  } catch (e) {
+    logger.warn(`URL 协议注册异常: ${String((e && e.message) || e).slice(0, 80)}`);
   }
 
   // 彻底移除 File/Edit/View/Window/Help 菜单栏。

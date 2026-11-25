@@ -351,6 +351,8 @@ export function SettingsForm({
     if (raw === undefined || raw === null || raw === "" || !Number.isFinite(n)) return 5;
     return Math.min(60, Math.max(1, Math.floor(n)));
   })();
+  // 2026-11-22：旧配置可能缺 missAutoRun 段，显式 false 才关，未定义一律回落默认「关闭」
+  const desktopMissAutoRun = value.desktopTask?.missAutoRun === true;
 
   return (
     <div className="settings-form">
@@ -430,6 +432,21 @@ export function SettingsForm({
                         return Math.min(60, Math.max(1, Math.floor(n)));
                       })(),
                     },
+                  } as DeepPartial<AppConfig>)
+                }
+              />
+            )}
+            {/* 2026-11-22 用户定：1 小时内多次弹窗无人响应 → 2 小时停弹（可选自动运行）。
+                只有 notify 模式会弹窗，auto / manual 没有「无响应弹窗」这回事，故隐藏。 */}
+            {desktopTaskMode === "notify" && (
+              <SwitchField
+                label="1小时内多次未响应弹窗自动运行"
+                hint="默认关闭。当日 1 小时内累计超过 3 次通知无人响应后，接下来 2 小时停止弹窗；开启则在触发时改为自动执行一次桌面任务（仍不弹窗），关闭则只静默跳过。另外检测到全屏且 CPU 或 GPU 任一占用过高、正在播放视频或系统处于勿扰状态时，也会自动跳过弹窗"
+                badge="实验性功能"
+                checked={desktopMissAutoRun}
+                onChange={(v) =>
+                  onChange({
+                    desktopTask: { missAutoRun: v },
                   } as DeepPartial<AppConfig>)
                 }
               />

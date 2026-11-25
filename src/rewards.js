@@ -2,6 +2,8 @@ const logger = require("./logger");
 const { httpRequest } = require("./http");
 const ipLookup = require("./ip-lookup");
 const riskSignals = require("./risk-signals");
+const dailyQuota = require("./daily-quota");
+const searchQuota = require("./mobile-quota");
 
 const UA_PC = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0";
 const UA_MOBILE = "Mozilla/5.0 (Linux; Android 12; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Mobile Safari/537.36 EdgA/130.0.0.0";
@@ -326,8 +328,8 @@ function emptyInfo() {
   return {
     ok: false,
     balance: 0,
-    pc: { progress: 0, max: 0 },
-    m: { progress: 0, max: 0 },
+    pc: { progress: 0, max: 0, explicitMax: false },
+    m: { progress: 0, max: 0, explicitMax: false },
     dailyPoint: 0,
     todayTotal: 0,
     monthEarn: 0,
@@ -341,13 +343,21 @@ function emptyInfo() {
  * - 旧版：{ pointProgress: { progress: n, max: n } }
  */
 function normProgress(obj) {
-  if (!obj || typeof obj !== "object") return { progress: 0, max: 0 };
+  if (!obj || typeof obj !== "object") return { progress: 0, max: 0, explicitMax: false };
   const pp = obj.pointProgress && typeof obj.pointProgress === "object" ? obj.pointProgress : null;
-  if (pp) return { progress: num(pp.progress), max: num(pp.max !== undefined ? pp.max : pp.originalMax) };
-  return {
-    progress: num(obj.progress),
-    max: num(obj.max !== undefined ? obj.max : obj.originalMax),
-  };
+  const src = pp || obj;
+  // ⚠️ 2026-11-24：必须保留「服务器是否明确给了 max」这个信息。
+  // max=0（月度计划拿满后当日额度被压成 0）与「字段缺失」是两回事：
+  // 前者是法定额度 0，不能回落到 DEFAULT_PC_SEARCH_MAX=15 去白跑。
+  const explicitMax =
+    src.max !== undefined || src.originalMax !== undefined || src.pointProgressMax !== undefined;
+  const maxRaw = src.max !== undefined
+    ? src.max
+    : src.originalMax !== undefined
+      ? src.originalMax
+      : src.pointProgressMax;
+  const progressRaw = src.progress !== undefined ? src.progress : src.pointProgress;
+  return { progress: num(progressRaw), max: num(maxRaw), explicitMax };
 }
 
 /**
@@ -357,8 +367,14 @@ function normProgress(obj) {
  *   { "dailyOffer": 115, "pc": {"max":15,"progress":0,"originalMax":15},
  *     "totalPoints": 115, "boostActivated": false }
  * 其中 dailyOffer 已由对象变为数字（= 今日已得积分），旧版的 todayTotal /
- * pointProgress / mobileSearch 字段均已不存在，移动搜索额度需从 pc 之外单独判断
- * （国区当前不下发 mobile 节点，缺失时按 0 处理）。
+ * pointProgress / mobileSearch 字段均已不存在 —— **earn 页只下发 PC 节点**。
+ * ⚠️ 2026-11-25 手机真机抓包定案：earn 页看不到 mobile 节点是**正常的**，
+ * 因为国区（Level3 金牌）只有一个「统一搜索池」：手机 Bing App 的 dapi/me
+ * `promotions[]` 里仅一张 `WW_NewLevel3_search_PC`（max=60/progress=51），
+ * 与同一时刻 earn 页 `PC搜索=51/60` 完全一致，两者是同一个额度。
+ * 旧版按 MRS助手 PC 脚本去 `/api/getuserinfo` 补拉 `counters.mobileSearch[]`
+ * 是别的区服的两池结构，张冠李戴，已移除（详见 mobile-quota.js 真机证据）。
+ * ⇒ `m` 恒 0/0 是正确值；earn 页 pc 节点解析失败时才用 dapi/me 搜索卡兜底。
  *
  * @returns {Promise<{ok:boolean, balance:number, pc:{progress:number,max:number}, m:{progress:number,max:number}, dailyPoint:number, todayTotal:number, monthEarn:number, boostActivated:boolean}>}
  */
@@ -394,6 +410,29 @@ async function getRewardsInfo(ctx) {
   const pcNode = pc.pcSearch !== undefined ? pc.pcSearch : pc.pc;
   const mNode = pc.mobileSearch !== undefined ? pc.mobileSearch : pc.mobile;
 
+  // earn 页的 pc 上限本来就是动态的（Level2=30 / Level3=60 / 月末被压缩时更小）。
+  // 只有「字段缺失 / 解析失败」才用 getReadPro 顺手缓存的 dapi/me 搜索卡兜底；
+  // 服务器**明确给 0**（封顶）必须原样保留，不能被旧缓存覆盖成非 0（会漏掉保活）。
+  let pcProgress = normProgress(pcNode);
+  let pcSource = pcProgress.explicitMax ? "earn" : "unavailable";
+  if (!pcProgress.explicitMax) {
+    const cached = searchQuota.readSearchQuota(ctx);
+    if (cached && cached.ok && cached.max > 0) {
+      pcProgress = { progress: cached.progress, max: cached.max, explicitMax: true };
+      pcSource = "dapi/me";
+    }
+  }
+
+  // 2026-11-25 真机实证：国区是统一搜索池，不存在独立的「手机端每日 60 分」。
+  // 不再补拉任何外部接口 —— 一旦给出非 0 的 m.max，taskSearch 会把搜索切到
+  // 从未验证过的移动 UA 路径，重复计同一个池甚至触发风控。
+  // 别的用户/区服若真有两池结构，earn 页会直接下发 mobile 节点，这里照常采信。
+  let mobileProgress = normProgress(mNode);
+  let mobileSource = mobileProgress.explicitMax ? "earn" : "unified-pool";
+  if (!mobileProgress.explicitMax) {
+    mobileProgress = { progress: 0, max: 0, explicitMax: true };
+  }
+
   // 今日已得积分：
   // - 新版 pointsCounters.totalPoints = 今日积分（dailyOffer + pc 进度），实测 = 82
   // - 旧版取 dailyOffer.todayTotal / pc.todayTotal
@@ -409,8 +448,8 @@ async function getRewardsInfo(ctx) {
     ok: true,
     // 总积分优先用页面独立字段（真实可用积分），找不到再回退 pointsCounters.totalPoints
     balance: realBalance != null ? realBalance : num(pc.totalPoints !== undefined ? pc.totalPoints : pc.balance),
-    pc: normProgress(pcNode),
-    m: normProgress(mNode),
+    pc: pcProgress,
+    m: mobileProgress,
     dailyPoint: dailyOfferIsNum ? 0 : num(dailyOffer.dailyPoint !== undefined ? dailyOffer.dailyPoint : pc.dailyPoint),
     todayTotal,
     monthEarn,
@@ -420,7 +459,7 @@ async function getRewardsInfo(ctx) {
     risk: riskSignals.parseRiskSignals(res.text),
   };
   logger.info(
-    `积分信息: 总积分=${info.balance}, PC搜索=${info.pc.progress}/${info.pc.max}, 移动搜索=${info.m.progress}/${info.m.max}, 今日已得=${info.todayTotal}, 本月累计=${info.monthEarn}${info.boostActivated ? ", 2倍搜索已激活" : ""}`
+    `积分信息: 总积分=${info.balance}, PC搜索=${info.pc.progress}/${info.pc.max}（来源 ${pcSource}）, 移动搜索=${info.m.progress}/${info.m.max}（${mobileSource === "unified-pool" ? "统一搜索池，无独立移动额度" : "来源 " + mobileSource}）, 今日已得=${info.todayTotal}, 本月累计=${info.monthEarn}${info.boostActivated ? ", 2倍搜索已激活" : ""}`
   );
   return info;
 }
@@ -441,7 +480,7 @@ const POINTS_PER_ARTICLE = 3;
  *          ok=false 表示获取失败（progress=-1）
  */
 async function getReadPro(ctx, token) {
-  const fail = { ok: false, progress: -1, max: 30, articlesDone: 0, articlesTotal: 10, articlesLeft: 10 };
+  const fail = { ok: false, progress: -1, max: 30, articlesDone: 0, articlesTotal: 10, articlesLeft: 10, capped: false, explicitMax: false, source: "unavailable" };
   if (!token) return fail;
   try {
     const res = await httpRequest({
@@ -457,19 +496,43 @@ async function getReadPro(ctx, token) {
     });
     if (!res.text) return fail;
     const data = JSON.parse(res.text);
+    // 同一个 dapi/me 响应里就有搜索任务卡（2026-11-25 真机实证）：顺手解析成
+    // 「统一搜索池」真值并缓存，供 getRewardsInfo 在 earn 页解析失败时兜底，
+    // 不多发一次请求，也不改变阅读逻辑。
+    const sq = searchQuota.parseSearchCards(data);
+    if (sq.ok) {
+      searchQuota.noteSearchQuota(ctx, sq);
+      logger.info(
+        `统一搜索池(dapi/me): ${sq.progress}/${sq.max} 分（${sq.unifiedPool ? "无独立移动端额度" : "存在独立移动端卡"}，卡 ${sq.cardNames.join(",")}）`
+      );
+    }
     const promos = (data.response && data.response.promotions) || [];
     const readTask = promos.find((x) => x.attributes && x.attributes.offerid === READ_OFFER_ID);
     if (!readTask) {
       logger.warn("未在 dapi/me 中找到阅读任务节点");
       return fail;
     }
-    const progress = num(readTask.attributes.progress);
-    const max = num(readTask.attributes.max) || 30;
-    const articlesTotal = Math.ceil(max / POINTS_PER_ARTICLE);
-    const articlesDone = Math.floor(progress / POINTS_PER_ARTICLE);
-    const articlesLeft = Math.max(0, Math.ceil((max - progress) / POINTS_PER_ARTICLE));
-    logger.info(`阅读进度: ${progress}/${max} 分（已读 ${articlesDone}/${articlesTotal} 篇，还需 ${articlesLeft} 篇）`);
-    return { ok: true, progress, max, articlesDone, articlesTotal, articlesLeft };
+    // 2026-11-24：篇数一律由服务器返回的 max/progress 换算，不再 `|| 30` 写死。
+    // 服务器明确给 0 时 articlesTotal/Left 都是 0，任务侧据此跳过，不再白跑 10 篇。
+    const q = dailyQuota.normalizeReadQuota(readTask.attributes, {
+      fallbackMax: dailyQuota.FALLBACK_READ_MAX,
+      pointsPerArticle: POINTS_PER_ARTICLE,
+    });
+    logger.info(
+      `阅读进度: ${q.progressPoints}/${q.maxPoints} 分（已读 ${q.articlesDone}/${q.articlesTotal} 篇，还需 ${q.articlesLeft} 篇，来源 ${q.source}${q.capped ? "，今日额度为 0" : ""}${q.compressed ? "，额度已被压缩" : ""}）`
+    );
+    return {
+      ok: true,
+      progress: q.progressPoints,
+      max: q.maxPoints,
+      articlesDone: q.articlesDone,
+      articlesTotal: q.articlesTotal,
+      articlesLeft: q.articlesLeft,
+      capped: q.capped,
+      compressed: q.compressed,
+      explicitMax: q.explicit,
+      source: q.source,
+    };
   } catch (e) {
     logger.warn(`阅读进度获取出错: ${e.message}`);
     return fail;

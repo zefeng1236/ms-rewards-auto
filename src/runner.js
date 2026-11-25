@@ -625,7 +625,9 @@ async function runOnce(ctxRaw, opts = {}) {
   const readDone = state.isTaskDoneToday("read");
   lines.push(
     `📖 阅读: ${
-      readDone || raDone > 0
+      rRead.keepAlive
+        ? `当月无需执行阅读任务 · 每日保活 ${Number(rRead.keepAliveDone) || 0}/${Number(rRead.keepAliveTarget) || 0} 篇`
+        : readDone || raDone > 0
         ? raTotal > 0
           ? `${raDone}/${raTotal} 篇`
           : `${raDone} 篇`
@@ -708,7 +710,11 @@ async function runOnce(ctxRaw, opts = {}) {
   const sp2 = (rSearch && rSearch.progress) || tasks.searchProgressSnapshot(state);
   const searchDone = state.isTaskDoneToday("search");
   let searchText;
-  if (sp2 && sp2.total > 0) {
+  if (rSearch && rSearch.keepAlive) {
+    // 2026-11-24：本月额度已耗尽，如实写「当月无需执行搜索任务」，
+    // 同时把每日保活次数带上，别让用户以为整月零行为。
+    searchText = `当月无需执行搜索任务 · 每日保活 ${Number(rSearch.keepAliveDone) || 0}/${Number(rSearch.keepAliveTarget) || 0} 次`;
+  } else if (sp2 && sp2.total > 0) {
     const detail =
       sp2.m.max > 0
         ? `PC ${sp2.pc.progress}/${sp2.pc.max}，移动 ${sp2.m.progress}/${sp2.m.max}`

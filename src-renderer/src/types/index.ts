@@ -131,6 +131,11 @@ export interface AppConfig {
     mode: "notify" | "auto" | "manual";
     /** 键鼠空闲多少分钟后触发（1~60），默认 5；manual 模式不看此项 */
     idleMinutes: number;
+    /**
+     * 「1小时内多次未响应弹窗自动运行」（2026-11-22，默认关闭，仅 notify 模式有意义）。
+     * 关 = 触发限流后只停止弹窗；开 = 触发限流时改为自动执行一次（仍不弹窗）。
+     */
+    missAutoRun: boolean;
   };
   region: {
     lock: boolean;

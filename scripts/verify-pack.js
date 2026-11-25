@@ -27,9 +27,6 @@ const expectedName = String(pkg.buildNumber) === "0" ? `MS-Rewards-Auto-Setup-${
 const exePath = path.join("dist", expectedName);
 
 const asarPath = "dist/win-unpacked/resources/app.asar";
-const allAssets = fs.readdirSync("gui-react/assets");
-const html = fs.readFileSync("gui-react/index.html", "utf8");
-const assets = [...html.matchAll(/assets\/([^"']+)/g)].map((m) => m[1]);
 const listed = asar.listPackage(asarPath);
 const has = (name) => listed.some((p) => p.split(/[\\/]/).pop() === name);
 
@@ -40,6 +37,15 @@ const has = (name) => listed.some((p) => p.split(/[\\/]/).pop() === name);
 const useSrc = process.env.VERIFY_PACK_SRC === "1";
 const outDir = useSrc ? process.cwd() : fs.mkdtempSync(path.join(os.tmpdir(), "asar-verify-"));
 if (!useSrc) asar.extractAll(asarPath, outDir);
+
+/**
+ * ⚠️ 资源索引必须来自「被核对的那一侧」：校验 asar 就读包内 index.html。
+ * 2026-11-24 踩到：本地跑过 build:web 后 gui-react 换了哈希，而 dist 仍是上一版
+ * 已发布的包，旧代码拿工作区的新文件名去 asar 里找 → ENOENT 直接崩。
+ * useSrc（反例模式）时 outDir=process.cwd()，下面这行自然就读工作区，语义不变。
+ */
+const html = fs.readFileSync(path.join(outDir, "gui-react", "index.html"), "utf8");
+const assets = [...html.matchAll(/assets\/([^"']+)/g)].map((m) => m[1]);
 const cssDir = path.join(outDir, "gui-react", "assets");
 const cssName = assets.find((a) => a.endsWith(".css"));
 const css = fs.readFileSync(path.join(cssDir, cssName), "utf8");

@@ -5,8 +5,13 @@
  * 那一条）**不是**直接调用创建 toast 的那个进程里的 click 回调，而是走激活：
  *   ① COM 激活 —— 系统启动 exe 并带 `-Embedding`（LocalServer32 当 COM 服务器拉起）；
  *   ② 快捷方式激活 —— 系统按 AUMID 找到开始菜单快捷方式，用它的参数启动，通常带
- *      `-ToastActivated`。
- * 两种方式都会**新起一个进程**。也就是说，持有 toast 的那个老进程永远收不到
+ *      `-ToastActivated`；
+ *   ③ 协议激活（2026-11-24 起，取代前两种）—— 原生 toast 带
+ *      `activationType="protocol" launch="msrewards://desktop-authorize"`，
+ *      Windows 用 URL 协议启动 exe，参数就是这个 URL，**不带 `-Embedding`**，
+ *      进程能正常跑到 JS。前两条在本机实测都走不通（COM 会被 Chromium exit 9 杀掉，
+ *      快捷方式又缺 ToastActivatorCLSID），见 desktop-toast.js 顶部复盘。
+ * 三种方式都会**新起一个进程**。也就是说，持有 toast 的那个老进程永远收不到
  * `notification.on("click")`；真正能感知「用户点了通知」的只有这个新进程。
  *
  * 所以新进程必须把「我被通知激活了」这件事转告给已有实例（second-instance），
@@ -30,6 +35,27 @@ function isToastActivationArgv(argv) {
   return argv.some((a) => TOAST_ACTIVATION_RE.test(String(a == null ? "" : a).trim()));
 }
 
+/**
+ * 「用户点了原生 Toast」的协议激活参数（2026-11-24）。
+ *
+ * 0.17.0 的 Electron 通知不带 launch，Windows 点击时找不到激活器 —— 既没有
+ * click 回调也没有 second-instance。改用 `activationType="protocol"` 的原生
+ * Toast 后，Windows 会用 ShellExecute 打开 `msrewards://desktop-authorize`，
+ * 启动时把这个 URL 作为普通参数传进来（**不带 -Embedding**，进程能正常跑到 JS）。
+ * 这是明确的「用户点了通知」信号，优先级与 -ToastActivated 相同。
+ * ⚠️ 正则与 desktop-toast.js 的 PROTOCOL_RE 保持一致（selfcheck 有守卫）。
+ */
+const PROTOCOL_ACTIVATION_RE = /^msrewards:\/\/desktop-authorize\/?$/i;
+
+/**
+ * @param {string[]} argv 进程启动参数
+ * @returns {boolean}
+ */
+function isProtocolActivationArgv(argv) {
+  if (!Array.isArray(argv) || argv.length === 0) return false;
+  return argv.some((a) => PROTOCOL_ACTIVATION_RE.test(String(a == null ? "" : a).trim()));
+}
+
 /** 「通知待授权」有效期：用户点通知的动作通常发生在通知发出后的这段时间内 */
 const PENDING_WINDOW_MS = 30 * 60 * 1000;
 
@@ -49,7 +75,8 @@ const PENDING_WINDOW_MS = 30 * 60 * 1000;
  * @returns {boolean}
  */
 function shouldAuthorizeFromSecondInstance(argv, pendingAt, now, windowMs) {
-  if (isToastActivationArgv(argv)) return true; // 明确的激活参数优先
+  // 明确的激活参数优先：老的 COM / 快捷方式标记 + 新的协议激活 URL
+  if (isToastActivationArgv(argv) || isProtocolActivationArgv(argv)) return true;
   const at = Number(pendingAt);
   if (!Number.isFinite(at) || at <= 0) return false;
   const t = Number(now);
@@ -62,7 +89,9 @@ function shouldAuthorizeFromSecondInstance(argv, pendingAt, now, windowMs) {
 
 module.exports = {
   isToastActivationArgv,
+  isProtocolActivationArgv,
   shouldAuthorizeFromSecondInstance,
   TOAST_ACTIVATION_RE,
+  PROTOCOL_ACTIVATION_RE,
   PENDING_WINDOW_MS,
 };

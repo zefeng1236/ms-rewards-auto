@@ -8,6 +8,7 @@ const { randomUUID, randomUUIDHex, randInt, randArr, getRandomSubstring, getDate
 const { resolveTaskCount, normalizeLimits } = require("./task-limit");
 const querySources = require("./query-sources");
 const humanize = require("./humanize");
+const dailyQuota = require("./daily-quota");
 
 // 使用可被「停止任务」中断的 sleep（中止时立即抛出 AbortError）
 const sleep = cancel.sleep;
@@ -157,19 +158,30 @@ async function taskRead(ctx, token) {
       // 同上：retry 必须带 reason，否则界面上只剩「需要注意」
       return { status: "retry", reason: "阅读进度接口获取失败" };
     }
-    let cur = readPro.progress || 0;
-    let max = readPro.max || 30;
-
-    if (cur >= max) {
-      logger.log("📖", "接口返回进度已满，但本地无今日记录，强制开始阅读...");
-      cur = 0;
-      max = 30;
+    // 2026-11-24：每天要读几篇完全以服务器额度为准。
+    // 旧代码 `max || 30` 把服务器明确的 0 写成 30；「进度已满就强制 cur=0/max=30」
+    // 更会在月度计划拿满后反过来重跑 10 篇。现在这两种情况都直接收工。
+    if (readPro.capped || readPro.max <= 0) {
+      // 2026-11-24 用户定：本月额度耗尽也要维持每日随机 10~20 次阅读（保活，不计分）。
+      // 汇总里仍如实注明「当月无需执行计分阅读任务」，但账号行为不能整月归零。
+      logger.log("📖", "服务器返回今日阅读额度为 0（月度计划可能已拿满），转入每日保活");
+      return await runKeepAliveRead(ctx, token);
+    }
+    const cur = readPro.progress;
+    const max = readPro.max;
+    const readsNeeded = readPro.articlesLeft;
+    const articlesTotal = readPro.articlesTotal;
+    let articlesDone = readPro.articlesDone;
+    if (readPro.compressed) logger.log("📖", `服务器压缩了今日阅读额度：${max} 分（共 ${articlesTotal} 篇）`);
+    if (readsNeeded <= 0) {
+      logger.log("📖", "服务器显示今日阅读已满额，补齐本地完成标记");
+      state.setTaskDone("read", state.getDateNum());
+      state.get().readArticles = { done: articlesTotal, total: articlesTotal };
+      state.save();
+      return { status: "skip", point: cur, articles: articlesTotal, articlesTotal, doneToday: true, reason: "今日阅读已满额" };
     }
 
     const region = getRegion();
-    const readsNeeded = Math.ceil((max - cur) / rewards.POINTS_PER_ARTICLE);
-    const articlesTotal = Math.ceil(max / rewards.POINTS_PER_ARTICLE);
-    let articlesDone = Math.floor(cur / rewards.POINTS_PER_ARTICLE);
     // 单次数量限制：把剩余篇数摊到多轮里读，随机开关打开时还会小幅波动
     const limits = normalizeLimits(cfg.limits);
     // 一次性完成模式（首页红色按钮）：base=0 即不限制、并关掉随机，
@@ -1436,6 +1448,179 @@ async function taskPromos(ctx) {
 /* ============ 搜索 ============ */
 
 /** 从 state 里取搜索进度快照，供汇总输出「完成多少 / 还剩多少」 */
+/* ============ 月度额度耗尽后的日常保活（2026-11-24，用户定） ============
+ * 服务器明确把当日额度压成 0（必应 Star 月度计划 2,100/2,100 拿满）时，
+ * 汇总里应如实写「当月无需执行计分搜索/阅读任务」，但**不能真的零行为**：
+ * 用户要求仍维持每日随机 10~20 次搜索与阅读，保持账号日常活跃度。
+ *
+ * 这两条路径刻意与主循环分开：主循环强耦合服务器进度（progress<max 护栏、
+ * 满额 short-circuit、收尾 dashboard 复核），封顶时 max=0 会一次都进不去，
+ * 收尾还会把任务误标成「已完成」。保活只发真实请求，不写 pc/m 积分进度、
+ * 不做积分复核，也不会触发「收入受限」告警。
+ * ====================================================================== */
+async function runKeepAliveSearch(ctx) {
+  const state = ctx.state;
+  const cfg = ctx.config.get();
+  const plan = dailyQuota.planKeepAlive(state.get().keepAlive, state.getDateNum(), Math.random);
+  const ledger = {
+    date: plan.date,
+    searchTarget: plan.searchTarget,
+    readTarget: plan.readTarget,
+    searchDone: plan.searchDone,
+    readDone: plan.readDone,
+  };
+  state.get().keepAlive = ledger;
+  state.save();
+  if (plan.searchLeft <= 0) {
+    state.setTaskDone("search", state.getDateNum());
+    state.save();
+    return {
+      status: "skip", searched: 0, keepAlive: true, capped: true,
+      keepAliveDone: ledger.searchDone, keepAliveTarget: ledger.searchTarget,
+      reason: "当月无需执行计分搜索任务（今日保活已达目标）",
+      progress: searchProgressSnapshot(state),
+    };
+  }
+  const host = await rewards.resolveHost(ctx);
+  const total = plan.searchLeft;
+  let searched = 0;
+  const pcRatio = normalizeLimits(cfg.limits).random
+    ? humanize.randomRatio({ min: 0.5, max: 0.75 })
+    : 0.6;
+  logger.log("🔍", `本月额度已耗尽（当月无需执行计分搜索任务），转入每日保活：今日目标 ${ledger.searchTarget} 次，本轮执行 ${total} 次（不计分）`);
+  for (let i = 0; i < total; i++) {
+    cancel.throwIfAborted();
+    const keyword = await getQueryWord(ctx);
+    const pcorm = Math.random() <= pcRatio;
+    const dateHyphen = state.getDateHyphen();
+    const baseCookie = state.buildCookieHeader(host);
+    const rwho = pcorm ? "u=d" : "u=m";
+    const cookie = baseCookie ? `${baseCookie}; _Rwho=${rwho}&ts=${dateHyphen}` : `_Rwho=${rwho}&ts=${dateHyphen}`;
+    const ua = pcorm ? rewards.UA_PC : rewards.UA_MOBILE;
+    const regionMKT = cfg.region.lock ? "&mkt=zh-CN" : "";
+    const params = `q=${encodeURIComponent(keyword)}&form=QBLH${regionMKT}`;
+    const query = `https://${host}/search?${params}`;
+    try {
+      const result = await httpRequest({
+        url: query,
+        headers: {
+          "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+          "user-agent": ua,
+          cookie,
+          referer: `https://${host}/?form=QBLH`,
+        },
+        cookie, // 覆盖自动组装（保留 _Rwho）
+        ctx,
+      });
+      if (result.text) {
+        const res = result.text.replace(/\s/g, "");
+        const data0 = res.match(/,IG:"([^"]+)"/);
+        const guid = data0 ? data0[1] : randomUUIDHex();
+        const data = res.match(/class="b_algo(.*?)href="(.*?)"h="ID=(.*?)">(.*?)<\/h2/);
+        const ncheader = `https://${host}/rewardsapp/ncheader?ver=88888888&IID=SERP.5047&IG=${guid}&ajaxreq=1`;
+        const report = `https://${host}/rewardsapp/reportActivity?IG=${guid}&IID=SERP.5047&${params}&ajaxreq=1`;
+        const headers = { "content-type": "application/x-www-form-urlencoded; charset=UTF-8", "user-agent": ua, cookie, referer: query };
+        await httpRequest({ method: "POST", url: ncheader, headers, data: "wb=1%3bi%3d1%3bv%3d1", ctx });
+        await httpRequest({ method: "POST", url: report, headers, data: `url=${encodeURIComponent(query)}&V=web`, ctx });
+        if (data) {
+          const click = `https://${host}/fd/ls/GLinkPingPost.aspx?IG=${guid}&ID=${data[3]}&url=${data[2]}`;
+          await httpRequest({ url: click, headers, timeout: 10000, ctx }).catch(() => {});
+        }
+      }
+      searched++;
+      ledger.searchDone++;
+      state.save();
+      logger.log("🔍", `保活第 ${searched}/${total} 次完成（${pcorm ? "Desktop" : "Mobile"}），今日累计 ${ledger.searchDone}/${ledger.searchTarget} 次（不计分）`);
+    } catch (e) {
+      if (e && e.isAbort) throw e;
+      logger.error(`保活搜索出错！${e.message}`);
+    }
+    const span = Number(cfg.search.span) || 30;
+    await sleep(randInt(Math.max(span - 15, 5), span + 15) * 1000);
+  }
+  if (ledger.searchDone >= ledger.searchTarget) state.setTaskDone("search", state.getDateNum());
+  state.save();
+  const reason = `当月无需执行计分搜索任务（额度已耗尽），今日已维持保活 ${ledger.searchDone}/${ledger.searchTarget} 次`;
+  logger.log("🔍", reason);
+  return {
+    status: "done", searched, keepAlive: true, capped: true,
+    keepAliveDone: ledger.searchDone, keepAliveTarget: ledger.searchTarget,
+    reason, progress: searchProgressSnapshot(state),
+  };
+}
+
+async function runKeepAliveRead(ctx, token) {
+  const state = ctx.state;
+  const plan = dailyQuota.planKeepAlive(state.get().keepAlive, state.getDateNum(), Math.random);
+  const ledger = {
+    date: plan.date,
+    searchTarget: plan.searchTarget,
+    readTarget: plan.readTarget,
+    searchDone: plan.searchDone,
+    readDone: plan.readDone,
+  };
+  state.get().keepAlive = ledger;
+  state.save();
+  if (plan.readLeft <= 0) {
+    state.setTaskDone("read", state.getDateNum());
+    state.save();
+    return {
+      status: "skip", point: 0, articles: ledger.readDone, articlesTotal: ledger.readTarget,
+      keepAlive: true, capped: true,
+      keepAliveDone: ledger.readDone, keepAliveTarget: ledger.readTarget,
+      reason: "当月无需执行计分阅读任务（今日保活已达目标）",
+    };
+  }
+  const total = plan.readLeft;
+  const region = getRegion();
+  logger.log("📖", `本月额度已耗尽（今日阅读额度为 0），转入每日保活：今日目标 ${ledger.readTarget} 篇，本轮执行 ${total} 篇（不计分）`);
+  for (let i = 0; i < total; i++) {
+    cancel.throwIfAborted();
+    try {
+      // 与计分阅读完全相同的上报形态：微软统计的是「完成 N 次阅读行为」，
+      // 封顶后拿不到分但行为仍会被记录（借鉴 MRS助手 11-23 的 attempts 改动）。
+      await httpRequest({
+        method: "POST",
+        url: "https://prod.rewardsplatform.microsoft.com/dapi/me/activities",
+        headers: {
+          "content-type": "application/json; charset=UTF-8",
+          "user-agent": rewards.UA_MOBILE,
+          authorization: `Bearer ${token}`,
+          "x-rewards-appid": "SAAndroid/31.4.2110003555",
+          "x-rewards-ismobile": "true",
+          "x-rewards-country": region,
+        },
+        data: JSON.stringify({
+          amount: 1,
+          country: region,
+          id: randomUUID(),
+          type: 101,
+          attributes: { offerid: rewards.READ_OFFER_ID },
+        }),
+        ctx,
+      });
+      ledger.readDone++;
+      state.get().readArticles = { done: ledger.readDone, total: ledger.readTarget };
+      state.save();
+      logger.log("📖", `保活阅读第 ${i + 1}/${total} 篇...（今日累计 ${ledger.readDone}/${ledger.readTarget} 篇，不计分）`);
+    } catch (e) {
+      if (e && e.isAbort) throw e;
+      logger.error(`保活阅读出错！${e.message}`);
+    }
+    await sleep(randInt(3000, 7000));
+  }
+  if (ledger.readDone >= ledger.readTarget) state.setTaskDone("read", state.getDateNum());
+  state.save();
+  const reason = `当月无需执行计分阅读任务（额度已耗尽），今日已维持保活 ${ledger.readDone}/${ledger.readTarget} 篇`;
+  logger.log("📖", reason);
+  return {
+    status: "done", point: 0, articles: ledger.readDone, articlesTotal: ledger.readTarget,
+    keepAlive: true, capped: true,
+    keepAliveDone: ledger.readDone, keepAliveTarget: ledger.readTarget,
+    reason,
+  };
+}
+
 function searchProgressSnapshot(state) {
   const g = state.get();
   const pc = g.pc || { progress: 0, max: 0 };
@@ -1476,12 +1661,30 @@ async function taskSearch(ctx) {
     }
     logger.warn("搜索进度拉取失败，本轮沿用本地计数继续（下一轮会重试服务器）");
   } else {
-    // 新版 earn 页 PC 搜索上限为 15（旧版 60），必须采用服务器返回值，
-    // 只有在服务器完全没给上限时才退回默认值，否则会一直搜不完
-    const pcMax = dashboard.pc.max > 0 ? dashboard.pc.max : DEFAULT_PC_SEARCH_MAX;
-    const mMax = dashboard.m.max > 0 ? dashboard.m.max : 0;
-    const pcPro = dashboard.pc.progress;
-    const mPro = dashboard.m.progress;
+    // 2026-11-24：上限完全以服务器为准，且必须区分「明确 0」与「字段缺失」。
+    // 真机日志里同一账号出现过 60 / 30 / 15；必应 Star 月度计划拿满后还会被压到 1/1。
+    // 只有解析失败（explicitMax=false）才回落兜底值，明确 0 绝不能当 15 去白搜。
+    const pcQ = dailyQuota.normalizeCounter(dashboard.pc, {
+      fallbackMax: DEFAULT_PC_SEARCH_MAX,
+      pointsPerUnit: dailyQuota.POINTS_PER_SEARCH,
+    });
+    const mQ = dailyQuota.normalizeCounter(dashboard.m, {
+      fallbackMax: 0,
+      pointsPerUnit: dailyQuota.POINTS_PER_SEARCH,
+    });
+    const pcMax = pcQ.max;
+    const mMax = mQ.max;
+    const pcPro = pcQ.progress;
+    const mPro = mQ.progress;
+    if (dailyQuota.isQuotaExhausted([pcQ, mQ])) {
+      // 2026-11-24 用户定：本月额度耗尽 → 汇总写「当月无需执行计分搜索任务」，
+      // 但仍要维持每日随机 10~20 次搜索（保活，不计分），不能整月零行为。
+      logger.log("🔍", "服务器返回今日搜索额度为 0（月度计划可能已拿满），转入每日保活");
+      return await runKeepAliveSearch(ctx);
+    }
+    if (pcQ.compressed || mQ.compressed) {
+      logger.log("🔍", `服务器压缩了今日搜索额度：PC ${pcMax} / 移动 ${mMax} 分（按压缩后的值执行）`);
+    }
     const currentTotal = pcPro + mPro;
 
     // 连续两轮服务器进度纹丝不动且未满额 → 收入受限/账号异常，中止今日搜索
@@ -1518,11 +1721,7 @@ async function taskSearch(ctx) {
   // 允许随机多于当天的剩余额度：多出来的几次在下方 while 的满额判定里会被
   // 安全短路，拿不到额外分，但从「每次刚好接到额度上限」的规律性中走了出来。
   // 循环内仍保留 `progress < max` 的硬护栏，绝不可能无限搜或打爆接口。
-  const remaining =
-    Math.max(0, (search.pc.max || 0) - (search.pc.progress || 0)) +
-    Math.max(0, (search.m.max || 0) - (search.m.progress || 0));
   // limit 来源优先级：limit.search >0（用户显式设了固定值）> force（一次性完成，6–9）> 默认随机（4–7）。
-  // 不再受 remaining 截断 —— 多出来的几次在循环满额判定里自然短路。
   const setBase = normalizeLimits(cfg.limits).search;
   let limit;
   if (setBase > 0) {
@@ -1533,7 +1732,19 @@ async function taskSearch(ctx) {
     limit = randInt(4, 7);
   }
   const source = setBase > 0 ? "用户设定" : ctx.force ? "force" : "随机";
-  logger.log("🔍", `服务器进度已同步，本轮计划搜索 ${limit} 次（来源 ${source}，剩余 ${remaining} 次，PC:${search.pc.progress}/${search.pc.max} Mobile:${search.m.progress}/${search.m.max}）`);
+  // 2026-11-24：以服务器「今天还需要的次数」为硬上界。
+  // 旧日志会出现「计划 6 次（剩余 3 次）」这种自相矛盾的话，多出来的几次只是空转。
+  const quotaPlan = dailyQuota.planSearchUnits(
+    dailyQuota.normalizeCounter(search.pc, { fallbackMax: 0, pointsPerUnit: dailyQuota.POINTS_PER_SEARCH }),
+    dailyQuota.normalizeCounter(search.m, { fallbackMax: 0, pointsPerUnit: dailyQuota.POINTS_PER_SEARCH }),
+    limit
+  );
+  limit = quotaPlan.count;
+  logger.log("🔍", `服务器进度已同步，本轮计划搜索 ${limit} 次（来源 ${source}，今日还需 ${quotaPlan.remaining} 次${quotaPlan.truncated ? "，已按服务器上界截断" : ""}，PC:${search.pc.progress}/${search.pc.max} Mobile:${search.m.progress}/${search.m.max}）`);
+  if (limit <= 0) {
+    logger.log("🔍", "按服务器进度今日已无剩余搜索次数，本轮不再执行");
+    return { status: "skip", searched: 0, progress: searchProgressSnapshot(state) };
+  }
   let searched = 0;
   // 拟人化（2026-11-17）：随机开关打开时，每轮的 PC/Mobile 占比不再固定 60%，
   // 「设备选择概率恒定」本身就是一条能被拟合出来的行为特征。
@@ -1648,6 +1859,9 @@ module.exports = {
   shouldRunClaim,
   taskSearch,
   searchProgressSnapshot,
+  // 额度耗尽保活：导出供离线打桩回归直接驱动（验证按天账本与「不计分」语义）
+  runKeepAliveSearch,
+  runKeepAliveRead,
   reportActivityFallback,
   fetchRequestToken,
   // 确认按钮匹配：导出供门禁/打桩断言驱动（函数体可序列化后投进真实页面执行）
