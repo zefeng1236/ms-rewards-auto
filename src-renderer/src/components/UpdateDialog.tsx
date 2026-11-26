@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { GlassButton } from "@ttqtt/liquid-glass-react";
+import { CloseButton } from "./CloseButton";
 import { api } from "../api/ipc";
 import { renderNotes } from "../utils/releaseNotes";
 import { DISPLAY_VERSION } from "../version";
@@ -8,7 +9,7 @@ import type { CheckAppUpdateResult, UpdateDownloadProgress, UpdateDownloadResult
 
 /**
  * 「自动更新」弹窗（对齐参考设计）：
- *   - 头部：标题「自动更新」+ 频道 pill（正式版 / 测试版）+ 关闭 ×
+ *   - 头部：标题「自动更新」+ 频道 pill（正式版 / 测试版）+ 统一关闭按钮
  *   - 检查中：居中琥珀色转圈 + 「正在检查更新...」+ 当前版本
  *   - 有更新：圆形 accent 图标 + 「版本更新可用」+ 旧 → 新 版本行 +
  *     可上下滚动的更新日志（Markdown-lite：标题 / 列表 / 行内代码 / 加粗）
@@ -170,14 +171,7 @@ export function UpdateDialog({
           <span className={`upd-channel${channel ? " is-pre" : ""}`}>
             {channel ? "测试版" : "正式版"}
           </span>
-          <button
-            type="button"
-            className="upd-close"
-            aria-label="关闭"
-            onClick={() => onOpenChange(false)}
-          >
-            ×
-          </button>
+          <CloseButton size="sm" style={{ marginLeft: "auto" }} onClick={() => onOpenChange(false)} />
         </div>
 
         {/* 主体 */}

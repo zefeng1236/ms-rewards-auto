@@ -52,13 +52,20 @@ import {
   useId,
   useRef,
   useState,
+  useSyncExternalStore,
   type CSSProperties,
   type HTMLAttributes,
   type InputHTMLAttributes,
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import { GlassProvider, MaterialView, type MaterialViewProps } from "@ttqtt/liquid-glass-react";
+import {
+  GlassButton,
+  GlassProvider,
+  MaterialView,
+  type MaterialViewProps,
+} from "@ttqtt/liquid-glass-react";
+import { CloseButton, CloseGlyph } from "./CloseButton";
 import "./liquidGlassCompat.css";
 
 export type LegacySize = "sm" | "md" | "lg";
@@ -242,8 +249,8 @@ export function Tag({ color = "default", size = "md", icon, closable, onClose, c
       {icon}
       {children}
       {closable && (
-        <button type="button" className="compat-tag-close" onClick={onClose} aria-label="关闭">
-          ×
+        <button type="button" className="compat-tag-close" onClick={onClose} aria-label="移除">
+          <CloseGlyph />
         </button>
       )}
     </span>
@@ -475,9 +482,7 @@ function ModalBase({
       <div className="compat-modal-panel">
         <div className="compat-modal-head">
           <h2>{title}</h2>
-          <button type="button" onClick={() => onOpenChange(false)} aria-label="关闭">
-            ×
-          </button>
+          <CloseButton size="sm" onClick={() => onOpenChange(false)} />
         </div>
         <div className="compat-modal-body">{children}</div>
         {footer && <div className="compat-modal-footer">{footer}</div>}
@@ -487,11 +492,147 @@ function ModalBase({
   );
 }
 
-async function confirm(options: ConfirmOptions = {}): Promise<boolean> {
-  return window.confirm(
-    `${typeof options.title === "string" ? options.title + "\n\n" : ""}${
-      typeof options.content === "string" ? options.content : "确定继续吗？"
-    }`
+// ---------------------------------------------------------------------------
+// imperative confirm（2026-11-25 用户要求「和主体 UI 统一」）
+//
+// 旧实现直接调 window.confirm 拼字符串：Electron 会弹一个白底系统对话框
+// （标题栏是 app 名、系统按钮、无玻璃材质），okText / cancelText / danger
+// 全部被忽略，和主体的液态玻璃界面完全是两套语言。
+//
+// 现在仍保持 `await Modal.confirm(...)` 的 Promise 接口，但由 <ModalConfirmHost>
+// 用项目自己的 .compat-modal 玻璃面板渲染。confirm() 不在 React 树里，所以用
+// 模块级队列 + useSyncExternalStore 通知 Host；Host 挂在 LiquidGlassConfig
+// （GlassProvider）内，GlassButton 才能拿到当前主题。
+// ---------------------------------------------------------------------------
+
+interface ConfirmRequest {
+  id: number;
+  options: ConfirmOptions;
+  resolve: (ok: boolean) => void;
+}
+
+type ConfirmListener = () => void;
+const confirmListeners = new Set<ConfirmListener>();
+/** 快照必须是稳定引用：每次变更都换成新数组，useSyncExternalStore 才能检测到。 */
+let confirmQueue: ConfirmRequest[] = [];
+let confirmSeq = 0;
+
+function subscribeConfirm(listener: ConfirmListener) {
+  confirmListeners.add(listener);
+  return () => {
+    confirmListeners.delete(listener);
+  };
+}
+
+function getConfirmQueue() {
+  return confirmQueue;
+}
+
+function notifyConfirm() {
+  for (const fn of confirmListeners) fn();
+}
+
+function settleConfirm(id: number, ok: boolean) {
+  const target = confirmQueue.find((q) => q.id === id);
+  if (!target) return; // Esc 与按钮连点时只结算一次，不重复 resolve
+  confirmQueue = confirmQueue.filter((q) => q.id !== id);
+  notifyConfirm();
+  target.resolve(ok);
+}
+
+function confirm(options: ConfirmOptions = {}): Promise<boolean> {
+  // 宿主没挂载时（例如加载态的 early-return 分支）不能让 Promise 永远悬着：
+  // 明确按「取消」结算，绝不退回 window.confirm 把系统弹窗又放回来。
+  if (confirmListeners.size === 0) {
+    console.warn("Modal.confirm: 未挂载 ModalConfirmHost，已按「取消」处理");
+    return Promise.resolve(false);
+  }
+  return new Promise<boolean>((resolve) => {
+    confirmQueue = [...confirmQueue, { id: ++confirmSeq, options, resolve }];
+    notifyConfirm();
+  });
+}
+
+const CONFIRM_BULLET_RE = /^\s*[·•\-]\s*/;
+
+/** 把 `\n\n` 分段、`· ` 行排成列表，避免原生 confirm 那种一整坨纯文本。 */
+function ConfirmContent({ content, danger }: { content?: ReactNode; danger?: boolean }) {
+  if (content == null || typeof content !== "string") {
+    return <div className="cp-body confirm-body">{content ?? "确定继续吗？"}</div>;
+  }
+  const blocks = content
+    .split(/\n\s*\n/)
+    .map((b) => b.trim())
+    .filter(Boolean);
+  return (
+    <div className="cp-body confirm-body" data-danger={danger ? "true" : undefined}>
+      {blocks.map((block, bi) => {
+        const lines = block
+          .split("\n")
+          .map((l) => l.trim())
+          .filter(Boolean);
+        const bullets = lines.filter((l) => CONFIRM_BULLET_RE.test(l));
+        const texts = lines.filter((l) => !CONFIRM_BULLET_RE.test(l));
+        return (
+          <div className="confirm-block" key={bi}>
+            {texts.length > 0 && (
+              <p className={bullets.length > 0 ? "confirm-label" : undefined}>
+                {texts.map((t, ti) => (
+                  <span key={ti}>
+                    {ti > 0 && <br />}
+                    {t}
+                  </span>
+                ))}
+              </p>
+            )}
+            {bullets.length > 0 && (
+              <ul className="confirm-list">
+                {bullets.map((b, i) => (
+                  <li key={i}>{b.replace(CONFIRM_BULLET_RE, "")}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** 挂在 GlassProvider 内；整棵应用只需一个实例（LiquidGlassConfig 已自带）。 */
+export function ModalConfirmHost() {
+  const queue = useSyncExternalStore(subscribeConfirm, getConfirmQueue, getConfirmQueue);
+  const current = queue[0];
+  const settle = (ok: boolean) => {
+    if (current) settleConfirm(current.id, ok);
+  };
+  return (
+    <Modal
+      open={!!current}
+      onOpenChange={(o) => {
+        if (!o) settle(false);
+      }}
+      title={current?.options.title ?? ""}
+      size="md"
+      footer={
+        <div className="confirm-footer">
+          {/* 次要操作沿用主体的 plain 文字按钮；主操作必须有填充，
+              否则两个纯文字并排时看不出哪个是确认（实测 destructive 是红字无底）。 */}
+          <GlassButton variant="plain" controlSize="small" onClick={() => settle(false)}>
+            {current?.options.cancelText ?? "取消"}
+          </GlassButton>
+          <GlassButton
+            variant={current?.options.danger ? "destructiveProminent" : "glassProminent"}
+            controlSize="small"
+            onClick={() => settle(true)}
+          >
+            {current?.options.okText ?? "确定"}
+          </GlassButton>
+        </div>
+      }
+    >
+      <ConfirmContent content={current?.options.content} danger={current?.options.danger} />
+    </Modal>
   );
 }
 
@@ -557,7 +698,13 @@ export function LiquidGlassConfig({
       transparency={forceFallback || forceReducedTransparency ? "reduced" : "system"}
       theme={appearance}
     >
-      <div className="compat-provider" data-lg-theme={appearance} style={theme}>{children}</div>
+      <div className="compat-provider" data-lg-theme={appearance} style={theme}>
+        {children}
+        {/* imperative Modal.confirm 的渲染宿主：必须位于 GlassProvider 内，
+            否则 footer 的 GlassButton 拿不到当前主题。Modal 自身用 portal
+            挂到 body，放进这个 display:contents 容器不影响页面布局。 */}
+        <ModalConfirmHost />
+      </div>
     </GlassProvider>
   );
 }
@@ -620,13 +767,10 @@ export function Toaster({ position = "bottom-right", max = 3 }: ToasterProps) {
       {items.map((item) => (
         <div key={item.id} className={joinClass("compat-toast", `compat-toast-${item.kind}`)}>
           <span>{item.content}</span>
-          <button
-            type="button"
+          <CloseButton
+            size="sm"
             onClick={() => setItems((current) => current.filter((entry) => entry.id !== item.id))}
-            aria-label="关闭"
-          >
-            ×
-          </button>
+          />
         </div>
       ))}
     </div>,

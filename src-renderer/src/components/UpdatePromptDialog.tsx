@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { GlassButton } from "@ttqtt/liquid-glass-react";
+import { CloseButton } from "./CloseButton";
 import { api } from "../api/ipc";
 import { renderNotes } from "../utils/releaseNotes";
 import type { UpdatePromptPayload } from "../types";
@@ -14,7 +15,7 @@ import type { UpdatePromptPayload } from "../types";
  *   - mode="available"：未开静默下载时的告知 → 展示新版本日志 + 「知道了」
  *     （想装可以让用户开启静默下载，或去 Release 页面）
  *
- * 关闭（× 或「知道了」）都要调 dismissUpdatePrompt：
+ * 关闭（右上角关闭按钮或「知道了」）都要调 dismissUpdatePrompt：
  * 主进程据此记「当天已弹过 + 该版本已忽略」，当天不再来烦。
  */
 export function UpdatePromptDialog({
@@ -77,9 +78,7 @@ export function UpdatePromptDialog({
           <div style={{ flex: 1, fontSize: 16, fontWeight: 600 }}>
             {ready ? `新版本 ${payload.version} 已就绪` : `发现新版本 ${payload.version}`}
           </div>
-          <GlassButton variant="plain" controlSize="small" onClick={dismiss}>
-            ×
-          </GlassButton>
+          <CloseButton size="sm" onClick={dismiss} />
         </div>
 
         <div className="hint" style={{ marginBottom: 10 }}>

@@ -3,6 +3,7 @@ import { GlassButton, GlassSwitch } from "@ttqtt/liquid-glass-react";
 import { Input, InputNumber, Modal, Select, SelectOption } from "./liquidGlassCompat";
 import { NumberField, Section, SelectField, SwitchField, TextField, TimeField } from "./fields";
 import { DesktopAppMissingDialog } from "./DesktopAppMissingDialog";
+import { CloseGlyph } from "./CloseButton";
 import { api } from "../api/ipc";
 import type { AppConfig, DeepPartial, GoalItem, ScheduleWindow } from "../types";
 
@@ -830,7 +831,7 @@ export function SettingsForm({
                   onChange={(v) => setGoal(i, { showDashboard: v })}
                 />
                 <GlassButton variant="destructive" controlSize="small" onClick={() => delGoal(i)} title="删除此目标">
-                  ×
+                  <CloseGlyph size={14} />
                 </GlassButton>
               </div>
             ))}

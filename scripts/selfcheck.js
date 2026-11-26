@@ -9707,6 +9707,154 @@ checkTrue(
   );
 }
 
+/* ============ imperative 确认弹窗必须与主体 UI 统一（2026-11-25 用户截图报障） ============ */
+{
+  const compatPath = path.join(ROOT, "src-renderer", "src", "components", "liquidGlassCompat.tsx");
+  const compatSrc = fs.readFileSync(compatPath, "utf8");
+  const compatCss = fs.readFileSync(
+    path.join(ROOT, "src-renderer", "src", "components", "liquidGlassCompat.css"),
+    "utf8"
+  );
+  // 扫渲染层全部源码，防别处再冒出原生确认框。只匹配「调用」（带左括号），
+  // 注释里解释旧实现的 window.confirm 字样不算命中。
+  const nativeConfirm = [];
+  const walkRenderer = (dir) => {
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, ent.name);
+      if (ent.isDirectory()) walkRenderer(p);
+      else if (/\.(tsx?|jsx?)$/.test(ent.name) && /window\.confirm\s*\(/.test(fs.readFileSync(p, "utf8"))) {
+        nativeConfirm.push(path.relative(ROOT, p));
+      }
+    }
+  };
+  walkRenderer(path.join(ROOT, "src-renderer", "src"));
+
+  checkTrue(
+    "渲染层不允许 window.confirm 调用（Electron 会弹白底系统对话框，与液态玻璃主体割裂）",
+    nativeConfirm.length === 0,
+    `仍在使用原生确认弹窗：${nativeConfirm.join(", ")}`
+  );
+  checkTrue(
+    "Modal.confirm 保持 Promise 接口但改走 <Modal> 玻璃面板 + 外部存储订阅，取消/确定/Esc/关闭都结算",
+    compatSrc.includes("function confirm(options: ConfirmOptions = {}): Promise<boolean>") &&
+      compatSrc.includes("useSyncExternalStore(subscribeConfirm") &&
+      compatSrc.includes("function settleConfirm(id: number, ok: boolean)") &&
+      compatSrc.includes("confirmListeners.size === 0") &&
+      compatSrc.includes("export function ModalConfirmHost()") &&
+      compatSrc.includes("<Modal\n      open={!!current}") &&
+      compatSrc.includes("onOpenChange={(o) => {") &&
+      compatSrc.includes("if (!o) settle(false);") &&
+      compatSrc.includes("settle(true)"),
+    "用户点截图里的白底系统弹窗报障；原生框会忽略 okText/cancelText/danger，且 Promise 必须能被取消/Esc 结算，宿主缺失时不能永久 pending"
+  );
+  checkTrue(
+    "确认弹窗宿主必须挂在 GlassProvider 内（LiquidGlassConfig），按钮才能拿到当前主题",
+    /export function LiquidGlassConfig\([\s\S]{0,900}?<ModalConfirmHost \/>/.test(compatSrc) &&
+      compatSrc.includes("GlassProvider"),
+    "Host 挂到 Provider 外面 → GlassButton 退化成无主题样式，深浅色切换时对不上"
+  );
+  checkTrue(
+    "确认弹窗必须采信 okText/cancelText/danger，危险主操作用填充变体且宽度取 md 档",
+    compatSrc.includes('variant="plain"') &&
+      compatSrc.includes('variant={current?.options.danger ? "destructiveProminent" : "glassProminent"}') &&
+      compatSrc.includes("current?.options.okText") &&
+      compatSrc.includes("current?.options.cancelText") &&
+      compatSrc.includes('size="md"'),
+    "实测 destructive 是「红字无底」的纯文字按钮，两个纯文字并排看不出主次；sm(420) 会把长风险文案挤成多行"
+  );
+  checkTrue(
+    "长风险文案拆成段落/小标题/项目符号列表，样式全部走主题 token",
+    compatSrc.includes("CONFIRM_BULLET_RE") &&
+      compatSrc.includes("confirm-list") &&
+      compatSrc.includes("confirm-label") &&
+      compatSrc.includes('data-danger={danger ? "true" : undefined}') &&
+      compatCss.includes('.confirm-body[data-danger="true"] .confirm-label') &&
+      compatCss.includes(".confirm-footer{"),
+    "原生 confirm 是一整坨纯文本；结构化排版与危险色小标题要和主体玻璃卡片同一套 CSS 变量"
+  );
+}
+
+/* ============ 全局关闭按钮统一（2026-11-25 用户「太丑了」重做） ============ */
+{
+  const R = path.join(ROOT, "src-renderer", "src");
+  const cbFile = path.join(R, "components", "CloseButton.tsx");
+  const cbSrc = fs.existsSync(cbFile) ? fs.readFileSync(cbFile, "utf8") : "";
+  const compatCss2 = fs.readFileSync(path.join(R, "components", "liquidGlassCompat.css"), "utf8");
+  const globalCss2 = fs.readFileSync(path.join(R, "styles", "global.css"), "utf8");
+  const read = (rel) => fs.readFileSync(path.join(R, rel), "utf8");
+  const compatTsx2 = read("components/liquidGlassCompat.tsx");
+  const updDlg = read("components/UpdateDialog.tsx");
+  const updPrompt = read("components/UpdatePromptDialog.tsx");
+  const settingsForm = read("components/SettingsForm.tsx");
+
+  // `×` 文本字符当按钮内容：只允许出现在注释/说明里，不允许独占一行作为 JSX 内容
+  const rawXFiles = [];
+  const walkX = (dir) => {
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, ent.name);
+      if (ent.isDirectory()) walkX(p);
+      else if (/\.tsx$/.test(ent.name) && /^\s*×\s*$/m.test(fs.readFileSync(p, "utf8"))) {
+        rawXFiles.push(path.relative(ROOT, p));
+      }
+    }
+  };
+  walkX(R);
+
+  checkTrue(
+    "渲染层不允许再用 `×` 文本字符当关闭按钮（字体粗细/基线随系统变）",
+    rawXFiles.length === 0,
+    `仍在用裸 ×：${rawXFiles.join(", ")}`
+  );
+  checkTrue(
+    "Modal/Toast/Tag 与三个自绘弹窗、删除按钮全部统一引用 CloseButton 或 CloseGlyph",
+    cbSrc.length > 0 &&
+      compatTsx2.includes('import { CloseButton, CloseGlyph } from "./CloseButton"') &&
+      compatTsx2.includes("<CloseButton size=\"sm\" onClick={() => onOpenChange(false)} />") &&
+      compatTsx2.includes("<CloseGlyph />") &&
+      updDlg.includes("<CloseButton size=\"sm\" style={{ marginLeft: \"auto\" }}") &&
+      updPrompt.includes("<CloseButton size=\"sm\" onClick={dismiss} />") &&
+      settingsForm.includes("<CloseGlyph size={14} />"),
+    "旧版有 4 套各自为政的关闭按钮；漏改一处就会在对应弹窗里露出旧样式"
+  );
+  checkTrue(
+    "CloseButton 组件契约：SVG 描边字形 / 三档尺寸 / 无障碍名称 / type=button / danger 色调",
+    cbSrc.includes("export function CloseGlyph") &&
+      cbSrc.includes("export function CloseButton") &&
+      cbSrc.includes("M6 6 L18 18 M18 6 L6 18") &&
+      cbSrc.includes("app-close-btn--${size}") &&
+      cbSrc.includes("app-close-btn--${tone}") &&
+      cbSrc.includes('aria-label={label}') &&
+      cbSrc.includes("type={type}") &&
+      cbSrc.includes("tone?: \"neutral\" | \"danger\""),
+    "字形必须可控线宽，且键盘/读屏可达；尺寸与危险态要由令牌而非散落内联样式决定"
+  );
+  checkTrue(
+    "关闭按钮样式令牌完整（默认/hover/active/focus/disabled/三档/减少动效/高对比），旧元素选择器已移除",
+    compatCss2.includes(".app-close-btn{--acb-size:30px") &&
+      compatCss2.includes(".app-close-btn:hover{") &&
+      compatCss2.includes(".app-close-btn:active{") &&
+      compatCss2.includes(".app-close-btn:focus-visible{") &&
+      compatCss2.includes(".app-close-btn:disabled{") &&
+      compatCss2.includes(".app-close-btn--xs{") &&
+      compatCss2.includes(".app-close-btn--sm{") &&
+      compatCss2.includes(".app-close-btn--md{") &&
+      compatCss2.includes(".app-close-btn--danger:hover{") &&
+      compatCss2.includes("@media (prefers-reduced-motion:reduce){") &&
+      compatCss2.includes("@media (forced-colors:active){") &&
+      compatCss2.includes(".compat-tag-close svg{") &&
+      !compatCss2.includes(".compat-modal-head button,.compat-toast button{") &&
+      !globalCss2.includes(".upd-close {"),
+    "`.compat-modal-head button`（特异性 0,1,1）会盖掉 .app-close-btn 的尺寸与圆角；`.upd-close` 是另一套 18px 文字按钮，两者都必须清掉"
+  );
+  checkTrue(
+    "焦点环必须跟随按钮圆角（box-shadow），不能用直角 outline",
+    compatCss2.includes(".app-close-btn:focus-visible{outline:2px solid transparent") &&
+      compatCss2.includes("box-shadow:0 0 0 2px color-mix(in srgb,var(--lg-accent") &&
+      compatCss2.includes("@media (forced-colors:active)"),
+    "原生 dialog 打开时会自动聚焦第一个可聚焦元素；直角蓝 outline 会常驻且和 10px 圆角面板不协调，高对比模式另给 outline 回退"
+  );
+}
+
 /* ============ 汇总 ============ */
 console.log(`\n${"=".repeat(46)}`);
 console.log(`结果: ${pass} 通过 / ${fail} 失败`);

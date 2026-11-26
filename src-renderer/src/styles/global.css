@@ -441,21 +441,8 @@ body::before {
   color: #e8b04b;
   background: rgba(232, 176, 75, 0.16);
 }
-.upd-close {
-  margin-left: auto;
-  border: none;
-  background: transparent;
-  color: var(--lg-text-secondary);
-  font-size: 18px;
-  line-height: 1;
-  cursor: pointer;
-  padding: 4px 6px;
-  border-radius: 6px;
-}
-.upd-close:hover {
-  color: var(--lg-text-primary);
-  background: rgba(255, 255, 255, 0.08);
-}
+/* 自动更新弹窗头部的关闭按钮已统一为 <CloseButton />（.app-close-btn），
+   原先自绘的 .upd-close（18px 文字 × + 6px 方角）已移除，避免两套语言并存。 */
 .upd-body {
   flex: 1;
   min-height: 0;

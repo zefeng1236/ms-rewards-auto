@@ -9,7 +9,7 @@ import { api } from "../api/ipc";
  * 布局约定（用户明确要求）：
  *   - 「记住我的选择」复选框在最左边；
  *   - 「退出到托盘」在最右边、用主题色（accent）强调——这是推荐路径；
- *   - 「完全退出」放次右；右上角的 ×（Modal 自带）仅关闭本弹窗，窗口保持打开。
+ *   - 「完全退出」放次右；右上角的关闭按钮（Modal 自带）仅关闭本弹窗，窗口保持打开。
  * 勾选记住后，选择会写入 launch.json 的 closeAction，之后点 × 不再询问。
  */
 export function ClosePrompt({ onClose }: { onClose: () => void }) {
