@@ -839,7 +839,15 @@ async function runBatch(ids, opts = {}) {
     }
 
     emit(acc.id, acc.name, "start");
-    const r = await runAccountGuarded(ctx, { interactive: opts.interactive });
+    // force 必须原样下传：手动「立即完成」的链路是
+    //   account:run / app:runAll → app-core.runIds → runner.runBatch → runAccountGuarded → runOnce。
+    // 这里少传一层，runOnce 就收不到 force，整轮会退回「单次执行数量」分批模式
+    // （2026-11-27 真机日志：点「立即完成」后只读了 3 篇、只搜了 6 次，日志里没有
+    //  「已进入一次性完成模式」）。按钮与二次确认弹窗承诺的是「忽略分批、一轮做完」。
+    const r = await runAccountGuarded(ctx, {
+      interactive: opts.interactive,
+      force: opts.force === true,
+    });
     if (r.result) {
       results.push(r.result);
       emit(acc.id, acc.name, "end", {

@@ -1717,28 +1717,38 @@ async function taskSearch(ctx) {
     }
   }
 
-  // 本轮计划次数 = 随机节奏 4–7（不再与服务器剩余额度取小）。
-  // 允许随机多于当天的剩余额度：多出来的几次在下方 while 的满额判定里会被
-  // 安全短路，拿不到额外分，但从「每次刚好接到额度上限」的规律性中走了出来。
-  // 循环内仍保留 `progress < max` 的硬护栏，绝不可能无限搜或打爆接口。
-  // limit 来源优先级：limit.search >0（用户显式设了固定值）> force（一次性完成，6–9）> 默认随机（4–7）。
+  // 本轮计划次数：
+  //   · 普通轮 = 用户设定（limits.search > 0）或随机节奏 4–7，按「单次执行数量」分批；
+  //     允许略多于当日剩余额度，多余次数在下方 while 的满额判定里安全短路（反自动化特征）。
+  //   · force（「立即完成」）= 服务器今日剩余次数，一轮做完，不受分批限制。
+  //     ⚠️ force 必须优先于用户设定：按钮与二次确认弹窗承诺的是「忽略单次执行数量」，
+  //     若还按用户设定的 6 次跑，当天还差 12 次时一轮结束依旧显示「未完成」。
+  //   · 循环内仍保留 `progress < max` 的硬护栏，绝不可能无限搜或打爆接口。
+  const pcQuota = dailyQuota.normalizeCounter(search.pc, {
+    fallbackMax: 0,
+    pointsPerUnit: dailyQuota.POINTS_PER_SEARCH,
+  });
+  const mQuota = dailyQuota.normalizeCounter(search.m, {
+    fallbackMax: 0,
+    pointsPerUnit: dailyQuota.POINTS_PER_SEARCH,
+  });
+  const remainingUnits = Math.max(0, pcQuota.unitsRequired) + Math.max(0, mQuota.unitsRequired);
   const setBase = normalizeLimits(cfg.limits).search;
   let limit;
-  if (setBase > 0) {
+  let source;
+  if (ctx.force) {
+    limit = remainingUnits;
+    source = "force（一轮完成）";
+  } else if (setBase > 0) {
     limit = setBase;
-  } else if (ctx.force) {
-    limit = randInt(6, 9);
+    source = "用户设定";
   } else {
     limit = randInt(4, 7);
+    source = "随机";
   }
-  const source = setBase > 0 ? "用户设定" : ctx.force ? "force" : "随机";
   // 2026-11-24：以服务器「今天还需要的次数」为硬上界。
   // 旧日志会出现「计划 6 次（剩余 3 次）」这种自相矛盾的话，多出来的几次只是空转。
-  const quotaPlan = dailyQuota.planSearchUnits(
-    dailyQuota.normalizeCounter(search.pc, { fallbackMax: 0, pointsPerUnit: dailyQuota.POINTS_PER_SEARCH }),
-    dailyQuota.normalizeCounter(search.m, { fallbackMax: 0, pointsPerUnit: dailyQuota.POINTS_PER_SEARCH }),
-    limit
-  );
+  const quotaPlan = dailyQuota.planSearchUnits(pcQuota, mQuota, limit);
   limit = quotaPlan.count;
   logger.log("🔍", `服务器进度已同步，本轮计划搜索 ${limit} 次（来源 ${source}，今日还需 ${quotaPlan.remaining} 次${quotaPlan.truncated ? "，已按服务器上界截断" : ""}，PC:${search.pc.progress}/${search.pc.max} Mobile:${search.m.progress}/${search.m.max}）`);
   if (limit <= 0) {

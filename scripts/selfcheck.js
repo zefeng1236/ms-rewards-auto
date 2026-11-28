@@ -1875,15 +1875,18 @@ checkTrue(
   "taskSearch 拉取失败时续轮沿用本地计数（不许冲 0）",
   /搜索进度拉取失败，本轮沿用本地计数继续/.test(tasksSrcSearch)
 );
-// 需求变更：搜索允许随机「多于当日剩余任务数」，计划次数不再与 remaining 取小。
-// limit 来源优先级：limit.search >0（用户固定值）> force（一次性完成）> 默认随机。
+// 普通轮：搜索允许随机「多于当日剩余任务数」，计划次数不与 remaining 取小，
+// 来源优先级 limit.search >0（用户固定值）> 默认随机（4–7）。
+// force（「立即完成」）优先于两者，直接按服务器剩余次数一轮做完。
 checkTrue(
-  "taskSearch 优先用 setBase = normalizeLimits(cfg.limits).search",
+  "taskSearch 普通轮用 setBase = normalizeLimits(cfg.limits).search",
   /const setBase = normalizeLimits\(cfg\.limits\)\.search;/.test(tasksSrcSearch)
 );
 checkTrue(
-  "taskSearch force 模式放大到 randInt(6, 9)",
-  /else if \(ctx\.force\) \{[\s\S]*?randInt\(6, 9\)/.test(tasksSrcSearch)
+  "taskSearch force 轮按服务器剩余次数一轮完成（优先于用户设定）",
+  /if \(ctx\.force\) \{[\s\S]{0,120}?limit = remainingUnits;/.test(tasksSrcSearch) &&
+    /const remainingUnits = Math\.max\(0, pcQuota\.unitsRequired\) \+ Math\.max\(0, mQuota\.unitsRequired\);/.test(tasksSrcSearch) &&
+    tasksSrcSearch.indexOf("if (ctx.force)") < tasksSrcSearch.indexOf("} else if (setBase > 0)")
 );
 checkTrue(
   "taskSearch 默认随机 randInt(4, 7)",
@@ -6500,11 +6503,31 @@ checkTrue("测试推送同样 force 刷新一言", /notice: cfg, force: true/.te
 const tasksForceSrc = fs.readFileSync(path.join(ROOT, "src", "tasks.js"), "utf8");
 const runnerForceSrc = fs.readFileSync(path.join(ROOT, "src", "runner.js"), "utf8");
 checkTrue("runner 用派生 ctx 传递 force（不污染原账户上下文）", /opts\.force === true \? \{ \.\.\.ctxRaw, force: true \} : ctxRaw/.test(runnerForceSrc));
+checkTrue(
+  "runBatch 把 force 传给 runAccountGuarded（断一层就退化成普通立即运行）",
+  /runAccountGuarded\(ctx, \{[\s\S]{0,180}?force: opts\.force === true,/.test(runnerForceSrc)
+);
+checkTrue(
+  "立即完成链路：preload → IPC → runIds → runBatch 全程带 force",
+  /run: \(id, opts\) => ipcRenderer\.invoke\("account:run", id, opts\)/.test(
+    fs.readFileSync(path.join(ROOT, "src", "electron-preload.js"), "utf8")
+  ) &&
+    /ipcMain\.handle\("account:run", async \(_e, id, opts\)/.test(
+      fs.readFileSync(path.join(ROOT, "src", "electron-main.js"), "utf8")
+    ) &&
+    /runIds\(\[id\], true, opts \|\| \{\}\)/.test(
+      fs.readFileSync(path.join(ROOT, "src", "electron-main.js"), "utf8")
+    ) &&
+    /force: opts\.force === true/.test(
+      fs.readFileSync(path.join(ROOT, "src", "app-core.js"), "utf8")
+    )
+);
 checkTrue("阅读任务在 force 时按 base=0（不限制）", /ctx\.force \? 0 : limits\.read/.test(tasksForceSrc));
 checkTrue("活动任务在 force 时按 base=0（不限制）", /ctx\.force \? 0 : limits\.promos/.test(tasksForceSrc));
 checkTrue(
-  "搜索不再按服务器剩余额度硬截断（setBase 优先，否则 force/随机）",
-  /const setBase = normalizeLimits\(cfg\.limits\)\.search;/.test(tasksForceSrc) &&
+  "force 轮按服务器剩余次数做完，普通轮仍按分批节奏",
+  /if \(ctx\.force\) \{[\s\S]{0,120}?limit = remainingUnits;/.test(tasksForceSrc) &&
+    /const setBase = normalizeLimits\(cfg\.limits\)\.search;/.test(tasksForceSrc) &&
     !/const limit = Math\.max\(1, Math\.min\(randInt\(4, 7\), remaining\)\)/.test(tasksForceSrc)
 );
 
